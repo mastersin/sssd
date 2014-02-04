@@ -123,7 +123,6 @@ if HAVE_CHECK
         files-tests \
         refcount-tests \
         fail_over-tests \
-        find_uid-tests \
         auth-tests \
         ipa_ldap_opt-tests \
         ad_ldap_opt-tests \
@@ -134,6 +133,9 @@ if HAVE_CHECK
         ipa_hbac-tests \
         sss_idmap-tests \
         responder_socket_access-tests
+
+# disable tests
+#         find_uid-tests
 
 if BUILD_SSH
     non_interactive_check_based_tests += sysdb_ssh-tests
@@ -1072,22 +1074,22 @@ fail_over_tests_LDADD = \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_test_common.la
 
-find_uid_tests_SOURCES = \
-    src/tests/find_uid-tests.c \
-    src/util/find_uid.c \
-    src/util/atomic_io.c \
-    src/util/strtonum.c
-find_uid_tests_CFLAGS = \
-    $(AM_CFLAGS) \
-    $(TALLOC_CFLAGS) \
-    $(DHASH_CFLAGS) \
-    $(CHECK_CFLAGS)
-find_uid_tests_LDADD = \
-    libsss_debug.la \
-    $(TALLOC_LIBS) \
-    $(DHASH_LIBS) \
-    $(CHECK_LIBS) \
-    libsss_test_common.la
+#find_uid_tests_SOURCES = \
+#    src/tests/find_uid-tests.c \
+#    src/util/find_uid.c \
+#    src/util/atomic_io.c \
+#    src/util/strtonum.c
+#find_uid_tests_CFLAGS = \
+#    $(AM_CFLAGS) \
+#    $(TALLOC_CFLAGS) \
+#    $(DHASH_CFLAGS) \
+#    $(CHECK_CFLAGS)
+#find_uid_tests_LDADD = \
+#    libsss_debug.la \
+#    $(TALLOC_LIBS) \
+#    $(DHASH_LIBS) \
+#    $(CHECK_LIBS) \
+#    libsss_test_common.la
 
 auth_tests_SOURCES = \
     src/tests/auth-tests.c
