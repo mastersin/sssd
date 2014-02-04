@@ -978,6 +978,7 @@ krb5_utils_tests_SOURCES = \
     $(SSSD_FAILOVER_OBJ)
 krb5_utils_tests_CFLAGS = \
     $(AM_CFLAGS) \
+    $(KRB5_CFLAGS) \
     $(CHECK_CFLAGS)
 krb5_utils_tests_LDADD = \
     $(SSSD_LIBS)\
@@ -1238,6 +1239,7 @@ krb5_child_test_SOURCES = \
     $(SSSD_FAILOVER_OBJ)
 krb5_child_test_CFLAGS = \
     $(AM_CFLAGS) \
+    $(KRB5_CFLAGS) \
     -DKRB5_CHILD_DIR=\"$(builddir)\" \
     $(CHECK_CFLAGS)
 krb5_child_test_LDADD = \
@@ -1677,6 +1679,7 @@ libsss_krb5_la_SOURCES = \
     src/util/sss_krb5.c
 libsss_krb5_la_CFLAGS = \
     $(AM_CFLAGS) \
+    $(KRB5_CFLAGS) \
     $(DHASH_CFLAGS)
 libsss_krb5_la_LIBADD = \
     $(DHASH_LIBS) \
