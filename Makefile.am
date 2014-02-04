@@ -1622,6 +1622,8 @@ libsss_krb5_common_la_SOURCES = \
     src/providers/krb5/krb5_init_shared.c
 libsss_krb5_common_la_LDFLAGS = \
     -avoid-version
+libsss_krb5_common_la_CFLAGS = \
+    $(KRB5_CFLAGS)
 
 libsss_ldap_la_SOURCES = \
     src/util/find_uid.c \
