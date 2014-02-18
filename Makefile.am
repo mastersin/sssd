@@ -1593,6 +1593,8 @@ libsss_ldap_common_la_SOURCES = \
     src/providers/ldap/sdap.c
 libsss_ldap_common_la_LDFLAGS = \
     -avoid-version
+libsss_ldap_common_la_CFLAGS = \
+    $(KRB5_CFLAGS)
 
 if BUILD_SUDO
 libsss_ldap_common_la_SOURCES += \
@@ -1894,7 +1896,7 @@ sssd_pac_plugin_la_CFLAGS = \
     $(KRB5_CFLAGS)
 sssd_pac_plugin_la_LIBADD = \
     $(CLIENT_LIBS) \
-    -lkrb5
+    $(KRB5_LIBS)
 sssd_pac_plugin_la_LDFLAGS = \
     -avoid-version \
     -module
