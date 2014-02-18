@@ -1,6 +1,6 @@
 
 Name: sssd
-Version: 1.11.3
+Version: 1.11.4
 Release: alt1
 Group: System/Servers
 Summary: System Security Services Daemon
@@ -477,5 +477,8 @@ unset CK_TIMEOUT_MULTIPLIER
 %python_sitelibdir/pysss_nss_idmap.so
 
 %changelog
+* Tue Feb 18 2014 Alexey Shabalin <shaba@altlinux.ru> 1.11.4-alt1
+- 1.11.4
+
 * Tue Feb 04 2014 Alexey Shabalin <shaba@altlinux.ru> 1.11.3-alt1
 - initial build
