@@ -65,6 +65,7 @@ BuildRequires: systemd-devel
 BuildRequires: selinux-policy-targeted
 BuildRequires: cifs-utils-devel
 BuildRequires: libsasl2-devel
+BuildRequires: libcmocka-devel
 BuildRequires: nscd
 
 #%%ifarch %ix86 x86_64 %arm
