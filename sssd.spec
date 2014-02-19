@@ -442,7 +442,8 @@ unset CK_TIMEOUT_MULTIPLIER
 %exclude %_man8dir/sss_cache*
 
 %files -n python-module-sssdconfig
-%python_sitelibdir_noarch/*
+%dir %python_sitelibdir_noarch/SSSDConfig
+%python_sitelibdir_noarch/SSSDConfig/*.py
 
 %files -n libsss_idmap
 %_libdir/libsss_idmap.so.*
