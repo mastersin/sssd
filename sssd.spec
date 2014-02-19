@@ -29,7 +29,7 @@ Requires: %name-client = %version-%release
 Requires: libsss_idmap = %version-%release
 
 ### Build Dependencies ###
-
+BuildRequires: /proc
 BuildRequires: libpopt-devel
 BuildRequires: libtalloc-devel
 BuildRequires: libtevent-devel
