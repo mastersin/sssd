@@ -132,6 +132,7 @@ Summary: SSSD helpers needed for Kerberos and GSSAPI authentication
 Group: System/Servers
 License: GPLv3+
 Requires: %name = %version-%release
+Requires: libsasl2-plugin-gssapi
 
 %description krb5-common
 Provides helper processes that the LDAP and Kerberos back ends can use for
