@@ -8,6 +8,9 @@ License: GPLv3+
 Url: http://fedorahosted.org/sssd/
 Source: %name-%version.tar
 Source2: %name.init
+Source3: system-auth-sss.pam
+Source4: system-auth-use_first_pass-sss.pam
+
 Patch: %name-%version-%release.patch
 
 ### Patches ###
@@ -311,6 +314,8 @@ touch %buildroot%mcpath/group
 
 install -D -m644 src/sysv/systemd/sssd.service %buildroot%_unitdir/%name.service
 install -D -m755 %SOURCE2 %buildroot%_initdir/%name
+install -D -m644 %SOURCE3 %buildroot%_pamdir/system-auth-sss
+install -D -m644 %SOURCE4 %buildroot%_pamdir/system-auth-use_first_pass-sss
 
 # Remove .la files created by libtool
 find %buildroot -name "*.la" -exec rm -f {} \;
@@ -428,6 +433,7 @@ unset CK_TIMEOUT_MULTIPLIER
 %_datadir/%name/sssd.api.d/sssd-proxy.conf
 
 %files client
+%config(noreplace) %_pamdir/*-sss
 /%_lib/libnss_sss.so.2
 /%_lib/security/pam_sss.so
 %_libdir/krb5/plugins/libkrb5/sssd_krb5_locator_plugin.so
