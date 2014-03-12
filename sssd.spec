@@ -102,6 +102,8 @@ Summary: Userspace tools for use with the SSSD
 Group: System/Configuration/Networking
 License: GPLv3+
 Requires: %name = %version-%release
+Requires: python-module-sssdconfig = %version-%release
+Requires: python-module-sss = %version-%release
 
 %description tools
 Provides userspace tools for manipulating users, groups, and nested groups in
@@ -168,6 +170,7 @@ Group: System/Servers
 License: GPLv3+
 Requires: %name-krb5-common = %version-%release
 Requires: %name-pac = %version-%release
+Requires: libipa_hbac = %version-%release
 
 %description ipa
 Provides the IPA back end that the SSSD can utilize to fetch identity data
@@ -269,6 +272,7 @@ be used by Python applications.
 Summary: Python bindings for sss
 Group: Development/Python
 License: LGPLv3+
+Requires: %name = %version-%release
 
 %description -n python-module-sss
 The python-module-sss contains the bindings so that sss can
