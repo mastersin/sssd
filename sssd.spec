@@ -495,7 +495,6 @@ unset CK_TIMEOUT_MULTIPLIER
 - add pam config files
 - add libsasl2-plugin-gssapi to Requires for krb5-common
 
-
 * Tue Feb 18 2014 Alexey Shabalin <shaba@altlinux.ru> 1.11.4-alt1
 - 1.11.4
 
