@@ -223,6 +223,9 @@ static errno_t get_active_uid_linux(hash_table_t *table, uid_t search_uid)
         }
 
         ret = get_uid_from_pid(pid, &uid);
+        if (ret == EPERM) {
+            continue;
+        }
         if (ret != EOK) {
             DEBUG(1, ("get_uid_from_pid failed.\n"));
             goto done;
