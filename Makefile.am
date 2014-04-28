@@ -123,7 +123,6 @@ if HAVE_CHECK
         files-tests \
         refcount-tests \
         fail_over-tests \
-        find_uid-tests \
         auth-tests \
         ipa_ldap_opt-tests \
         ad_ldap_opt-tests \
@@ -135,6 +134,9 @@ if HAVE_CHECK
         sss_idmap-tests \
         responder_socket_access-tests
 
+# disable tests
+#         find_uid-tests
+
 if BUILD_SSH
     non_interactive_check_based_tests += sysdb_ssh-tests
 endif
@@ -144,7 +146,6 @@ endif
 if HAVE_CMOCKA
     non_interactive_cmocka_based_tests = \
         nss-srv-tests \
-        test-find-uid \
         test-io \
         sss_nss_idmap-tests \
         dyndns-tests \
@@ -156,6 +157,10 @@ if HAVE_CMOCKA
         ad_common_tests \
         dp_opt_tests \
         test_search_bases
+
+# disable tests
+#        test-find-uid
+
 endif
 
 check_PROGRAMS = \
@@ -1075,22 +1080,22 @@ fail_over_tests_LDADD = \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_test_common.la
 
-find_uid_tests_SOURCES = \
-    src/tests/find_uid-tests.c \
-    src/util/find_uid.c \
-    src/util/atomic_io.c \
-    src/util/strtonum.c
-find_uid_tests_CFLAGS = \
-    $(AM_CFLAGS) \
-    $(TALLOC_CFLAGS) \
-    $(DHASH_CFLAGS) \
-    $(CHECK_CFLAGS)
-find_uid_tests_LDADD = \
-    libsss_debug.la \
-    $(TALLOC_LIBS) \
-    $(DHASH_LIBS) \
-    $(CHECK_LIBS) \
-    libsss_test_common.la
+#find_uid_tests_SOURCES = \
+#    src/tests/find_uid-tests.c \
+#    src/util/find_uid.c \
+#    src/util/atomic_io.c \
+#    src/util/strtonum.c
+#find_uid_tests_CFLAGS = \
+#    $(AM_CFLAGS) \
+#    $(TALLOC_CFLAGS) \
+#    $(DHASH_CFLAGS) \
+#    $(CHECK_CFLAGS)
+#find_uid_tests_LDADD = \
+#    libsss_debug.la \
+#    $(TALLOC_LIBS) \
+#    $(DHASH_LIBS) \
+#    $(CHECK_LIBS) \
+#    libsss_test_common.la
 
 auth_tests_SOURCES = \
     src/tests/auth-tests.c
@@ -1286,22 +1291,22 @@ nss_srv_tests_LDADD = \
     libsss_test_common.la \
     libsss_idmap.la
 
-test_find_uid_DEPENDENCIES = \
-    $(ldblib_LTLIBRARIES)
-test_find_uid_SOURCES = \
-    src/tests/cmocka/test_find_uid.c \
-    src/util/find_uid.c \
-    src/util/atomic_io.c \
-    src/util/strtonum.c
-test_find_uid_CFLAGS = \
-    $(AM_CFLAGS) \
-    $(TALLOC_CFLAGS) \
-    $(DHASH_CFLAGS)
-test_find_uid_LDADD = \
-    $(TALLOC_LIBS) \
-    $(DHASH_LIBS) \
-    $(CMOCKA_LIBS) \
-    libsss_debug.la
+#test_find_uid_DEPENDENCIES = \
+#    $(ldblib_LTLIBRARIES)
+#test_find_uid_SOURCES = \
+#    src/tests/cmocka/test_find_uid.c \
+#    src/util/find_uid.c \
+#    src/util/atomic_io.c \
+#    src/util/strtonum.c
+#test_find_uid_CFLAGS = \
+#    $(AM_CFLAGS) \
+#    $(TALLOC_CFLAGS) \
+#    $(DHASH_CFLAGS)
+#test_find_uid_LDADD = \
+#    $(TALLOC_LIBS) \
+#    $(DHASH_LIBS) \
+#    $(CMOCKA_LIBS) \
+#    libsss_debug.la
 
 test_io_SOURCES = \
     src/tests/cmocka/test_io.c \
