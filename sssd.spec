@@ -1,7 +1,7 @@
 
 Name: sssd
-Version: 1.11.4
-Release: alt2
+Version: 1.11.5.1
+Release: alt1
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -491,6 +491,9 @@ unset CK_TIMEOUT_MULTIPLIER
 %python_sitelibdir/pysss_nss_idmap.so
 
 %changelog
+* Mon Apr 28 2014 Alexey Shabalin <shaba@altlinux.ru> 1.11.5.1-alt1
+- 1.11.5.1
+
 * Wed Mar 12 2014 Alexey Shabalin <shaba@altlinux.ru> 1.11.4-alt2
 - add pam config files
 - add libsasl2-plugin-gssapi to Requires for krb5-common
