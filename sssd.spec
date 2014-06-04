@@ -520,20 +520,20 @@ unset CK_TIMEOUT_MULTIPLIER
 %files dbus
 %doc COPYING
 %_libexecdir/%name/sssd_ifp
-%_libdir/%name/libsss_config.so
+# %_libdir/%name/libsss_config.so
 %_man5dir/sssd-ifp.5*
 # InfoPipe DBus plumbing
 %_sysconfdir/dbus-1/system.d/org.freedesktop.sssd.infopipe.conf
 
-%files -n libsss_simpleifp
-%_libdir/libsss_simpleifp.so.*
+# %files -n libsss_simpleifp
+# %_libdir/libsss_simpleifp.so.*
 
-%files -n libsss_simpleifp-devel
-%doc sss_simpleifp_doc/html
-%_includedir/sss_sifp.h
-%_includedir/sss_sifp_dbus.h
-%_libdir/libsss_simpleifp.so
-%_pkgconfigdir/sss_simpleifp.pc
+# %files -n libsss_simpleifp-devel
+# %doc sss_simpleifp_doc/html
+# %_includedir/sss_sifp.h
+# %_includedir/sss_sifp_dbus.h
+# %_libdir/libsss_simpleifp.so
+# %_pkgconfigdir/sss_simpleifp.pc
 
 %files -n python-module-sss_nss_idmap
 %python_sitelibdir/pysss_nss_idmap.so
