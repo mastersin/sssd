@@ -2,6 +2,8 @@
 #
 #
 # chkconfig: - 12 88
+# processname: sssd
+# pidfile: /var/run/sssd.pid
 # description: Provides a set of daemons to manage access to remote directories
 #              and authentication mechanisms. It provides an NSS and PAM
 #              interface toward the system and a pluggable backend system to
@@ -15,6 +17,7 @@
 # Should-Start: $syslog
 # Should-Stop: $null
 # Required-Stop: $null
+# Default-Start: 3 4 5
 # Default-Stop: 0 1 6
 # Short-Description: System Security Services Daemon
 # Description: Provides a set of daemons to manage access to remote directories
