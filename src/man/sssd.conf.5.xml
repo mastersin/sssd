@@ -320,6 +320,29 @@
                             </para>
                         </listitem>
                     </varlistentry>
+                    <varlistentry>
+                        <term>override_space (string)</term>
+                        <listitem>
+                            <para>
+                                This parameter will replace spaces (space bar)
+                                with the given character for user and group names.
+                                e.g. (_). User name &quot;john doe&quot; will
+                                be &quot;john_doe&quot; This feature was added to
+                                help compatibility with shell scripts that have
+                                difficulty handling spaces, due to the
+                                default field separator in the shell.
+                            </para>
+                            <para>
+                                Please note it is a configuration error to use
+                                a replacement character that might be used by
+                                another LDAP object. In that case, result of
+                                a lookup is undefined.
+                            </para>
+                            <para>
+                                Default: not set (spaces will not be replaced)
+                            </para>
+                        </listitem>
+                    </varlistentry>
                 </variablelist>
             </para>
         </refsect2>
@@ -406,10 +429,28 @@
                     <term>offline_timeout (integer)</term>
                     <listitem>
                         <para>
-                            If SSSD is in offline mode, and last attempt to go
-                            online was less than number of seconds specified
-                            in this option ago, new requests for data will not
-                            result in attempt to go online.
+                            When SSSD switches to offline mode the amount of
+                            time before it tries to go back online will
+                            increase based upon the time spent disconnected.
+                            This value is in seconds and calculated by the
+                            following:
+                        </para>
+                        <para>
+                             offline_timeout + random_offset
+                        </para>
+                        <para>
+                            The random offset can increment up to 30 seconds.
+                            After each unsuccessful attempt to go online,
+                            the new interval is recalculated by the following:
+                        </para>
+                        <para>
+                            new_interval = old_interval*2 + random_offset
+                        </para>
+                        <para>
+                            Note that the maximum length of each interval
+                            is currently limited to one hour. If the
+                            calculated length of new_interval is greater
+                            than an hour, it will be forced to one hour.
                         </para>
                         <para>
                             Default: 60
@@ -1381,6 +1422,10 @@ fallback_homedir = /home/%u
                             <quote>proxy</quote> for relaying authentication to some other PAM target.
                         </para>
                         <para>
+                            <quote>local</quote>: SSSD internal provider for
+                            local users
+                        </para>
+                        <para>
                             <quote>none</quote> disables authentication explicitly.
                         </para>
                         <para>
@@ -1817,15 +1862,42 @@ fallback_homedir = /home/%u
                 </varlistentry>
 
                 <varlistentry>
-                    <term>case_sensitive (boolean)</term>
+                    <term>case_sensitive (string)</term>
                     <listitem>
                         <para>
                             Treat user and group names as case sensitive. At
                             the moment, this option is not supported in
-                            the local provider.
+                            the local provider. Possible option values are:
+                        <variablelist>
+                            <varlistentry>
+                                <term>True</term>
+                                <listitem>
+                                    <para>
+                                        Case sensitive. This value is invalid
+                                        for AD provider.
+                                    </para>
+                                </listitem>
+                            </varlistentry>
+                            <varlistentry>
+                                <term>False</term>
+                                <listitem>
+                                    <para>Case insensitive.</para>
+                                </listitem>
+                            </varlistentry>
+                            <varlistentry>
+                                <term>Preserving</term>
+                                <listitem>
+                                    <para>
+                                        Same as False (case insensitive), but
+                                        does not lowercase names in the output
+                                        of getpwnam and getgrnam.
+                                    </para>
+                                </listitem>
+                            </varlistentry>
+                        </variablelist>
                         </para>
                         <para>
-                            Default: True
+                            Default: True (False for AD provider)
                         </para>
                     </listitem>
                 </varlistentry>

@@ -35,13 +35,17 @@
 #include "providers/dp_backend.h"
 #include "sss_cli.h"
 
-#define RIGHTS_SECTION "Privilege Rights"
-#define ALLOW_LOGON_LOCALLY "SeInteractiveLogonRight"
-#define DENY_LOGON_LOCALLY "SeDenyInteractiveLogonRight"
 #define SMB_BUFFER_SIZE 65536
+#define GPT_INI "/GPT.INI"
+#define INI_GENERAL_SECTION "General"
+#define GPT_INI_VERSION "Version"
 
 struct input_buffer {
-    const char *smb_uri;
+    int cached_gpt_version;
+    const char *smb_server;
+    const char *smb_share;
+    const char *smb_path;
+    const char *smb_cse_suffix;
 };
 
 static errno_t
@@ -51,21 +55,62 @@ unpack_buffer(uint8_t *buf,
 {
     size_t p = 0;
     uint32_t len;
+    uint32_t cached_gpt_version;
 
-    DEBUG(SSSDBG_TRACE_FUNC, "total buffer size: %zu\n", size);
+    /* cached_gpt_version */
+    SAFEALIGN_COPY_UINT32_CHECK(&cached_gpt_version, buf + p, size, &p);
+    DEBUG(SSSDBG_TRACE_FUNC, "cached_gpt_version: %d\n", cached_gpt_version);
+    ibuf->cached_gpt_version = cached_gpt_version;
 
-    /* smb_uri size and length */
+    /* smb_server */
     SAFEALIGN_COPY_UINT32_CHECK(&len, buf + p, size, &p);
-
-    DEBUG(SSSDBG_TRACE_FUNC, "smb_uri size: %d\n", len);
-
+    DEBUG(SSSDBG_TRACE_ALL, "smb_server length: %d\n", len);
     if (len == 0) {
         return EINVAL;
     } else {
         if ((p + len ) > size) return EINVAL;
-        ibuf->smb_uri = talloc_strndup(ibuf, (char *)(buf + p), len);
-        if (ibuf->smb_uri == NULL) return ENOMEM;
-        DEBUG(SSSDBG_TRACE_FUNC, "got smb_uri: %s\n", ibuf->smb_uri);
+        ibuf->smb_server = talloc_strndup(ibuf, (char *)(buf + p), len);
+        if (ibuf->smb_server == NULL) return ENOMEM;
+        DEBUG(SSSDBG_TRACE_ALL, "smb_server: %s\n", ibuf->smb_server);
+        p += len;
+    }
+
+    /* smb_share */
+    SAFEALIGN_COPY_UINT32_CHECK(&len, buf + p, size, &p);
+    DEBUG(SSSDBG_TRACE_ALL, "smb_share length: %d\n", len);
+    if (len == 0) {
+        return EINVAL;
+    } else {
+        if ((p + len ) > size) return EINVAL;
+        ibuf->smb_share = talloc_strndup(ibuf, (char *)(buf + p), len);
+        if (ibuf->smb_share == NULL) return ENOMEM;
+        DEBUG(SSSDBG_TRACE_ALL, "smb_share: %s\n", ibuf->smb_share);
+        p += len;
+    }
+
+    /* smb_path */
+    SAFEALIGN_COPY_UINT32_CHECK(&len, buf + p, size, &p);
+    DEBUG(SSSDBG_TRACE_ALL, "smb_path length: %d\n", len);
+    if (len == 0) {
+        return EINVAL;
+    } else {
+        if ((p + len ) > size) return EINVAL;
+        ibuf->smb_path = talloc_strndup(ibuf, (char *)(buf + p), len);
+        if (ibuf->smb_path == NULL) return ENOMEM;
+        DEBUG(SSSDBG_TRACE_ALL, "smb_path: %s\n", ibuf->smb_path);
+        p += len;
+    }
+
+    /* smb_cse_suffix */
+    SAFEALIGN_COPY_UINT32_CHECK(&len, buf + p, size, &p);
+    DEBUG(SSSDBG_TRACE_ALL, "smb_cse_suffix length: %d\n", len);
+    if (len == 0) {
+        return EINVAL;
+    } else {
+        if ((p + len ) > size) return EINVAL;
+        ibuf->smb_cse_suffix = talloc_strndup(ibuf, (char *)(buf + p), len);
+        if (ibuf->smb_cse_suffix == NULL) return ENOMEM;
+        DEBUG(SSSDBG_TRACE_ALL, "smb_cse_suffix: %s\n", ibuf->smb_cse_suffix);
         p += len;
     }
 
@@ -75,91 +120,42 @@ unpack_buffer(uint8_t *buf,
 
 static errno_t
 pack_buffer(struct response *r,
-            int result,
-            int allowed_size,
-            char **allowed_sids,
-            int denied_size,
-            char **denied_sids)
+            int sysvol_gpt_version,
+            int result)
 {
-    int len = 0;
     size_t p = 0;
-    int i;
-    int sid_len = 0;
 
     /* A buffer with the following structure must be created:
+     *   uint32_t sysvol_gpt_version (required)
      *   uint32_t status of the request (required)
-     *   uint32_t allowed_size (required)
-     *   sid_message* (allowed_size instances)
-     *   uint32_t denied_size (required)
-     *   sid_message* (denied_size instances)
-     *
-     * A sid_message consists of:
-     *   uint32_t sid_len
-     *   uint8_t[sid_len] sid string
      */
-
-    DEBUG(SSSDBG_TRACE_FUNC, "entering pack_buffer\n");
-
-    for (i = 0; i < allowed_size; i++) {
-        len += strlen(allowed_sids[i]);
-    }
-
-    for (i = 0; i < denied_size; i++) {
-        len += strlen(denied_sids[i]);
-    }
-
-    r->size = (3 + allowed_size + denied_size) * sizeof(uint32_t) + len;
-
-    DEBUG(SSSDBG_TRACE_FUNC, "response size: %zu\n",r->size);
+    r->size = 2 * sizeof(uint32_t);
 
     r->buf = talloc_array(r, uint8_t, r->size);
     if(r->buf == NULL) {
         return ENOMEM;
     }
 
-    DEBUG(SSSDBG_TRACE_FUNC,
-          "result [%d] allowed_size [%d] denied_size [%d]\n",
-          result, allowed_size, denied_size);
+    DEBUG(SSSDBG_TRACE_FUNC, "result [%d]\n", result);
+
+    /* sysvol_gpt_version */
+    SAFEALIGN_SET_UINT32(&r->buf[p], sysvol_gpt_version, &p);
 
     /* result */
     SAFEALIGN_SET_UINT32(&r->buf[p], result, &p);
-
-    /* allowed_size */
-    SAFEALIGN_SET_UINT32(&r->buf[p], allowed_size, &p);
-
-    /* allowed_sids */
-    for (i = 0; i < allowed_size; i++) {
-        sid_len = strlen(allowed_sids[i]);
-        SAFEALIGN_SET_UINT32(&r->buf[p], sid_len, &p);
-        safealign_memcpy(&r->buf[p], allowed_sids[i], sid_len, &p);
-    }
-
-    /* denied_size */
-    SAFEALIGN_SET_UINT32(&r->buf[p], denied_size, &p);
-
-    /* denied_sids */
-    for (i = 0; i < denied_size; i++) {
-        sid_len = strlen(denied_sids[i]);
-        SAFEALIGN_SET_UINT32(&r->buf[p], sid_len, &p);
-        safealign_memcpy(&r->buf[p], denied_sids[i], sid_len, &p);
-    }
 
     return EOK;
 }
 
 static errno_t
 prepare_response(TALLOC_CTX *mem_ctx,
+                 int sysvol_gpt_version,
                  int result,
-                 int allowed_size,
-                 char **allowed_sids,
-                 int denied_size,
-                 char **denied_sids,
                  struct response **rsp)
 {
     int ret;
     struct response *r = NULL;
 
-    DEBUG(SSSDBG_TRACE_FUNC, "entering prepare_response.\n");
     r = talloc_zero(mem_ctx, struct response);
     if (r == NULL) {
         return ENOMEM;
@@ -168,191 +164,15 @@ prepare_response(TALLOC_CTX *mem_ctx,
     r->buf = NULL;
     r->size = 0;
 
-    ret = pack_buffer(r, result, allowed_size, allowed_sids, denied_size, denied_sids);
+    ret = pack_buffer(r, sysvol_gpt_version, result);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "pack_buffer failed\n");
         return ret;
     }
 
     *rsp = r;
-    DEBUG(SSSDBG_TRACE_FUNC, "r->size: %zu\n", r->size);
+    DEBUG(SSSDBG_TRACE_ALL, "r->size: %zu\n", r->size);
     return EOK;
-}
-
-/*
- * This function uses the input ini_config object to parse the logon right value
- * associated with the input name. This value is a list of sids, and is used
- * to populate the output parameters. The input name can be either
- * ALLOW_LOGON_LOCALLY or DENY_LOGON_LOCALLY.
- */
-static errno_t
-parse_logon_right_with_libini(TALLOC_CTX *mem_ctx,
-                              struct ini_cfgobj *ini_config,
-                              const char *name,
-                              int *_size,
-                              char ***_sids)
-{
-    int ret = 0;
-    struct value_obj *vobj = NULL;
-    char **ini_sids = NULL;
-    char *ini_sid = NULL;
-    int num_ini_sids = 0;
-    char **sids = NULL;
-    int i;
-    TALLOC_CTX *tmp_ctx = NULL;
-
-    tmp_ctx = talloc_new(NULL);
-    if (tmp_ctx == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
-
-    ret = ini_get_config_valueobj(RIGHTS_SECTION, name, ini_config,
-                                  INI_GET_FIRST_VALUE, &vobj);
-    if (ret != 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "ini_get_config_valueobj failed [%d][%s]\n", ret, strerror(ret));
-        goto done;
-    }
-    if (vobj == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "section/name not found: [%s][%s]\n",
-              RIGHTS_SECTION, name);
-        ret = EOK;
-        goto done;
-    }
-    ini_sids = ini_get_string_config_array(vobj, NULL, &num_ini_sids, &ret);
-
-    if (ret != 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "ini_get_string_config_array failed [%d][%s]\n", ret, strerror(ret));
-        goto done;
-    }
-
-    sids = talloc_array(tmp_ctx, char *, num_ini_sids + 1);
-    if (sids == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
-
-    for (i = 0; i < num_ini_sids; i++) {
-        ini_sid = ini_sids[i];
-
-        /* remove the asterisk prefix found on sids in the .inf policy file */
-        if (ini_sid[0] == '*') {
-            ini_sid++;
-        }
-        sids[i] = talloc_strdup(sids, ini_sid);
-        if (sids[i] == NULL) {
-            ret = ENOMEM;
-            goto done;
-        }
-    }
-    sids[i] = NULL;
-
-    *_size = num_ini_sids;
-    *_sids = talloc_steal(mem_ctx, sids);
-
-    ret = EOK;
-
- done:
-
-    ini_free_string_config_array(ini_sids);
-    talloc_free(tmp_ctx);
-    return ret;
-}
-
-/*
- * This function parses the cse-specific (GP_EXT_GUID_SECURITY) input data_buf,
- * and uses the results to populate the output parameters with the list of
- * allowed_sids and denied_sids
- */
-static errno_t
-ad_gpo_parse_security_cse_buffer(TALLOC_CTX *mem_ctx,
-                                 uint8_t *data_buf,
-                                 int data_len,
-                                 char ***allowed_sids,
-                                 int *allowed_size,
-                                 char ***denied_sids,
-                                 int *denied_size)
-{
-    struct ini_cfgfile *file_ctx = NULL;
-    struct ini_cfgobj *ini_config = NULL;
-    int ret;
-    char **allow_sids = NULL;
-    char **deny_sids = NULL;
-    int allow_size = 0;
-    int deny_size = 0;
-    const char *key = NULL;
-    TALLOC_CTX *tmp_ctx = NULL;
-
-    tmp_ctx = talloc_new(NULL);
-    if (tmp_ctx == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
-
-    ret = ini_config_create(&ini_config);
-    if (ret != 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "ini_config_create failed [%d][%s]\n", ret, strerror(ret));
-        goto done;
-    }
-
-    ret = ini_config_file_from_mem(data_buf, data_len, &file_ctx);
-    if (ret != 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "ini_config_file_from_mem failed [%d][%s]\n", ret, strerror(ret));
-        goto done;
-    }
-
-    ret = ini_config_parse(file_ctx, INI_STOP_ON_NONE, 0, 0, ini_config);
-    if (ret != 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "ini_config_parse failed [%d][%s]\n", ret, strerror(ret));
-        goto done;
-    }
-
-    key = ALLOW_LOGON_LOCALLY;
-    ret = parse_logon_right_with_libini(tmp_ctx,
-                                        ini_config,
-                                        key,
-                                        &allow_size,
-                                        &allow_sids);
-    if (ret != 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "parse_logon_right_with_libini failed for %s [%d][%s]\n",
-              key, ret, strerror(ret));
-        goto done;
-    }
-
-    key = DENY_LOGON_LOCALLY;
-    ret = parse_logon_right_with_libini(tmp_ctx,
-                                        ini_config,
-                                        DENY_LOGON_LOCALLY,
-                                        &deny_size,
-                                        &deny_sids);
-    if (ret != 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "parse_logon_right_with_libini failed for %s [%d][%s]\n",
-              key, ret, strerror(ret));
-        goto done;
-    }
-
-    *allowed_sids = talloc_steal(mem_ctx, allow_sids);
-    *allowed_size = allow_size;
-    *denied_sids = talloc_steal(mem_ctx, deny_sids);
-    *denied_size = deny_size;
-
- done:
-
-    if (ret != EOK) {
-      DEBUG(SSSDBG_CRIT_FAILURE, "Error encountered: %d.\n", ret);
-    }
-
-    ini_config_file_destroy(file_ctx);
-    ini_config_destroy(ini_config);
-    talloc_free(tmp_ctx);
-    return ret;
 }
 
 static void
@@ -369,29 +189,320 @@ sssd_krb_get_auth_data_fn(const char * pServer,
     return;
 }
 
+/*
+ * This function prepares the gpo_cache by:
+ * - parsing the input_smb_path into its component directories
+ * - creating each component directory (if it doesn't already exist)
+ */
+static errno_t prepare_gpo_cache(TALLOC_CTX *mem_ctx,
+                                 const char *cache_dir,
+                                 const char *input_smb_path_with_suffix)
+{
+    char *current_dir;
+    char *ptr;
+    const char delim = '/';
+    int num_dirs = 0;
+    int i;
+    char *first = NULL;
+    char *last = NULL;
+    char *smb_path_with_suffix = NULL;
+
+    smb_path_with_suffix = talloc_strdup(mem_ctx, input_smb_path_with_suffix);
+    if (smb_path_with_suffix == NULL) {
+        return ENOMEM;
+    }
+
+    DEBUG(SSSDBG_TRACE_ALL, "smb_path_with_suffix: %s\n", smb_path_with_suffix);
+
+    current_dir = talloc_strdup(mem_ctx, cache_dir);
+    if (current_dir == NULL) {
+        return ENOMEM;
+    }
+
+    ptr = smb_path_with_suffix + 1;
+    while ((ptr = strchr(ptr, delim))) {
+        ptr++;
+        num_dirs++;
+    }
+
+    ptr = smb_path_with_suffix + 1;
+
+    for (i = 0; i < num_dirs; i++) {
+        first = ptr;
+        last = strchr(first, delim);
+        if (last == NULL) {
+            return EINVAL;
+        }
+        *last = '\0';
+        last++;
+
+        current_dir = talloc_asprintf(mem_ctx, "%s/%s", current_dir, first);
+        if (current_dir == NULL) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
+            return ENOMEM;
+        }
+
+        if ((mkdir(current_dir, 0644)) < 0 && errno != EEXIST) {
+            return EINVAL;
+        }
+
+        ptr = last;
+    }
+
+    return EOK;
+
+}
 
 /*
- * This cse-specific function (GP_EXT_GUID_SECURITY) opens an SMB connection,
- * retrieves the data referenced by the input smb_uri, and then closes the SMB
- * connection. The data is then parsed and the results are used to populate the
- * output parameters with the list of allowed_sids and denied_sids
+ * This function stores the input buf to a local file, whose file path
+ * is constructed by concatenating:
+ *   GPO_CACHE_PATH,
+ *   input smb_path,
+ *   input smb_cse_suffix
+ * Note that the backend will later read the file from the same file path.
+ */
+static errno_t gpo_cache_store_file(const char *smb_path,
+                                    const char *smb_cse_suffix,
+                                    uint8_t *buf,
+                                    int buflen)
+{
+    int ret;
+    int fd = -1;
+    char *tmp_name = NULL;
+    ssize_t written;
+    mode_t old_umask;
+    char *filename = NULL;
+    char *smb_path_with_suffix = NULL;
+    TALLOC_CTX *tmp_ctx = NULL;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    smb_path_with_suffix =
+        talloc_asprintf(tmp_ctx, "%s%s", smb_path, smb_cse_suffix);
+    if (smb_path_with_suffix == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    /* create component directories of smb_path, if needed */
+    ret = prepare_gpo_cache(tmp_ctx, GPO_CACHE_PATH, smb_path_with_suffix);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "prepare_gpo_cache failed [%d][%s]\n",
+              ret, strerror(ret));
+        goto done;
+    }
+
+    filename = talloc_asprintf(tmp_ctx, GPO_CACHE_PATH"%s", smb_path_with_suffix);
+    if (filename == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    tmp_name = talloc_asprintf(tmp_ctx, "%sXXXXXX", filename);
+    if (tmp_name == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    old_umask = umask(077);
+    fd = mkstemp(tmp_name);
+    umask(old_umask);
+    if (fd == -1) {
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "mkstemp failed [%d][%s].\n", ret, strerror(ret));
+        goto done;
+    }
+
+    errno = 0;
+    written = sss_atomic_write_s(fd, buf, buflen);
+    if (written == -1) {
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "write failed [%d][%s].\n", ret, strerror(ret));
+        goto done;
+    }
+
+    if (written != buflen) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Write error, wrote [%zd] bytes, expected [%d]\n",
+               written, buflen);
+        ret = EIO;
+        goto done;
+    }
+
+    ret = fchmod(fd, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
+    if (ret == -1) {
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "fchmod failed [%d][%s].\n", ret, strerror(ret));
+        goto done;
+    }
+
+    ret = close(fd);
+    if (ret == -1) {
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "close failed [%d][%s].\n", ret, strerror(ret));
+        goto done;
+    }
+
+    ret = rename(tmp_name, filename);
+    if (ret == -1) {
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "rename failed [%d][%s].\n", ret, strerror(ret));
+        goto done;
+    }
+
+ done:
+
+    if (ret != EOK) {
+      DEBUG(SSSDBG_CRIT_FAILURE, "Error encountered: %d.\n", ret);
+    }
+
+    talloc_free(tmp_ctx);
+    return ret;
+}
+
+static errno_t
+parse_ini_file_with_libini(struct ini_cfgobj *ini_config,
+                           int *_gpt_version)
+{
+    int ret;
+    struct value_obj *vobj = NULL;
+    int gpt_version;
+
+    ret = ini_get_config_valueobj(INI_GENERAL_SECTION, GPT_INI_VERSION,
+                                  ini_config, INI_GET_FIRST_VALUE, &vobj);
+    if (ret != 0) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "ini_get_config_valueobj failed [%d][%s]\n", ret, strerror(ret));
+        goto done;
+    }
+    if (vobj == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "section/name not found: [%s][%s]\n",
+              INI_GENERAL_SECTION, GPT_INI_VERSION);
+        ret = EINVAL;
+        goto done;
+    }
+
+    gpt_version = ini_get_int32_config_value(vobj, 0, -1, &ret);
+    if (ret != 0) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "ini_get_int32_config_value failed [%d][%s]\n",
+              ret, strerror(ret));
+        goto done;
+    }
+
+    *_gpt_version = gpt_version;
+
+    ret = EOK;
+
+ done:
+
+    return ret;
+}
+
+/*
+ * This function parses the GPT_INI file stored in the gpo_cache, and uses the
+ * results to populate the output parameters ...
  */
 static errno_t
-process_security_settings_cse(TALLOC_CTX *mem_ctx,
-                              const char *smb_uri,
-                              char ***_allowed_sids,
-                              int *_allowed_size,
-                              char ***_denied_sids,
-                              int *_denied_size)
+ad_gpo_parse_ini_file(const char *smb_path,
+                      int *_gpt_version)
 {
-    SMBCCTX *context;
-    int ret = 0;
+    struct ini_cfgfile *file_ctx = NULL;
+    struct ini_cfgobj *ini_config = NULL;
+    const char *ini_filename;
+    int ret;
+    int gpt_version = -1;
+    TALLOC_CTX *tmp_ctx = NULL;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ini_filename = talloc_asprintf(tmp_ctx, GPO_CACHE_PATH"%s%s",
+                                   smb_path, GPT_INI);
+    if (ini_filename == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    DEBUG(SSSDBG_TRACE_FUNC, "ini_filename:%s\n", ini_filename);
+
+    ret = ini_config_create(&ini_config);
+    if (ret != 0) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "ini_config_create failed [%d][%s]\n", ret, strerror(ret));
+        goto done;
+    }
+
+    ret = ini_config_file_open(ini_filename, 0, &file_ctx);
+    if (ret != 0) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "ini_config_file_open failed [%d][%s]\n", ret, strerror(ret));
+        goto done;
+    }
+
+    ret = ini_config_parse(file_ctx, INI_STOP_ON_NONE, 0, 0, ini_config);
+    if (ret != 0) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "ini_config_parse failed [%d][%s]\n", ret, strerror(ret));
+        goto done;
+    }
+
+    ret = parse_ini_file_with_libini(ini_config, &gpt_version);
+    if (ret != 0) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "parse_ini_file_with_libini failed [%d][%s]\n",
+              ret, strerror(ret));
+        goto done;
+    }
+
+    *_gpt_version = gpt_version;
+
+ done:
+
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Error encountered: %d.\n", ret);
+    }
+
+    ini_config_file_destroy(file_ctx);
+    ini_config_destroy(ini_config);
+    talloc_free(tmp_ctx);
+    return ret;
+}
+
+/*
+ * This function uses the input smb uri components to download a sysvol file
+ * (e.g. INI file, policy file, etc) and store it to the GPO_CACHE directory.
+ */
+static errno_t
+copy_smb_file_to_gpo_cache(SMBCCTX *smbc_ctx,
+                           const char *smb_server,
+                           const char *smb_share,
+                           const char *smb_path,
+                           const char *smb_cse_suffix)
+{
+    char *smb_uri = NULL;
+    SMBCFILE *file;
+    int ret;
     uint8_t *buf = NULL;
-    int bytesread = 0;
-    char **allowed_sids;
-    char **denied_sids;
-    int allowed_size = 0;
-    int denied_size = 0;
+    int buflen = 0;
+
     TALLOC_CTX *tmp_ctx = NULL;
 
     tmp_ctx = talloc_new(NULL);
@@ -399,72 +510,142 @@ process_security_settings_cse(TALLOC_CTX *mem_ctx,
         return ENOMEM;
     }
 
-    DEBUG(SSSDBG_TRACE_ALL, "%s\n", smb_uri);
+    smb_uri = talloc_asprintf(tmp_ctx, "%s%s%s%s", smb_server,
+                              smb_share, smb_path, smb_cse_suffix);
+    if (smb_uri == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
 
-    context = smbc_new_context();
-    if (context == NULL) {
+    DEBUG(SSSDBG_TRACE_FUNC, "smb_uri: %s\n", smb_uri);
+
+    errno = 0;
+    file = smbc_getFunctionOpen(smbc_ctx)(smbc_ctx, smb_uri, O_RDONLY, 0755);
+    if (file == NULL) {
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE, "smbc_getFunctionOpen failed [%d][%s]\n",
+              ret, strerror(ret));
+        goto done;
+    }
+
+    buf = talloc_array(tmp_ctx, uint8_t, SMB_BUFFER_SIZE);
+    if (buf == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_array failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    errno = 0;
+    buflen = smbc_getFunctionRead(smbc_ctx)(smbc_ctx, file, buf, SMB_BUFFER_SIZE);
+    if (buflen < 0) {
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE, "smbc_getFunctionRead failed [%d][%s]\n",
+              ret, strerror(ret));
+        goto done;
+    }
+
+    DEBUG(SSSDBG_TRACE_ALL, "smb_buflen: %d\n", buflen);
+
+    ret = gpo_cache_store_file(smb_path, smb_cse_suffix, buf, buflen);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "gpo_cache_store_file failed [%d][%s]\n",
+              ret, strerror(ret));
+        goto done;
+    }
+
+ done:
+    talloc_free(tmp_ctx);
+    return ret;
+}
+
+
+/*
+ * Using its smb_uri components and cached_gpt_version inputs, this function
+ * does several things:
+ * - it downloads the GPT_INI file to GPO_CACHE
+ * - it parses the sysvol_gpt_version field from the GPT_INI file
+ * - if the sysvol_gpt_version is greater than the cached_gpt_version
+ *   - it downloads the policy file to GPO_CACHE
+ * - else
+ *   - it doesn't retrieve the policy file
+ *   - in this case, the backend will use the existing policy file in GPO_CACHE
+ * - it returns the sysvol_gpt_version in the _sysvol_gpt_version output param
+ *
+ * Note that if the cached_gpt_version sent by the backend is -1 (to indicate
+ * that no gpt_version has been set in the cache for the corresponding gpo_guid),
+ * then the parsed sysvol_gpt_version (which must be at least 0) will be greater
+ * than the cached_gpt_version, thereby triggering a fresh download.
+ *
+ * Note that the backend will later do the following:
+ * - backend will save the the sysvol_gpt_version to sysdb cache
+ * - backend will read the policy file from the GPO_CACHE
+ */
+static errno_t
+perform_smb_operations(int cached_gpt_version,
+                       const char *smb_server,
+                       const char *smb_share,
+                       const char *smb_path,
+                       const char *smb_cse_suffix,
+                       int *_sysvol_gpt_version)
+{
+    SMBCCTX *smbc_ctx;
+    int ret;
+    int sysvol_gpt_version;
+
+    smbc_ctx = smbc_new_context();
+    if (smbc_ctx == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Could not allocate new smbc context\n");
         ret = ENOMEM;
         goto done;
     }
 
-    smbc_setFunctionAuthData(context, sssd_krb_get_auth_data_fn);
-    smbc_setOptionUseKerberos(context, 1);
+    smbc_setFunctionAuthData(smbc_ctx, sssd_krb_get_auth_data_fn);
+    smbc_setOptionUseKerberos(smbc_ctx, 1);
 
     /* Initialize the context using the previously specified options */
-    if (smbc_init_context(context) == NULL) {
+    if (smbc_init_context(smbc_ctx) == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Could not initialize smbc context\n");
         ret = ENOMEM;
         goto done;
     }
 
-    /* Tell the compatibility layer to use this context */
-    smbc_set_context(context);
-
-    int remotehandle = smbc_open(smb_uri, O_RDONLY, 0755);
-    if (remotehandle < 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "smbc_open failed\n");
-        ret = EPIPE;
-        goto done;
-    }
-
-    buf = talloc_array(tmp_ctx, uint8_t, SMB_BUFFER_SIZE);
-    bytesread = smbc_read(remotehandle, buf, SMB_BUFFER_SIZE);
-    if(bytesread < 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "smbc_read failed\n");
-        ret = EPIPE;
-        goto done;
-    }
-
-    DEBUG(SSSDBG_CRIT_FAILURE, "bytesread: %d\n", bytesread);
-
-    smbc_close(remotehandle);
-
-    ret = ad_gpo_parse_security_cse_buffer(tmp_ctx,
-                                           buf,
-                                           bytesread,
-                                           &allowed_sids,
-                                           &allowed_size,
-                                           &denied_sids,
-                                           &denied_size);
-
+    /* download ini file */
+    ret = copy_smb_file_to_gpo_cache(smbc_ctx, smb_server, smb_share, smb_path,
+                                     GPT_INI);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "ad_gpo_parse_security_cse_buffer failed [%d][%s]\n",
+              "copy_smb_file_to_gpo_cache failed [%d][%s]\n",
               ret, strerror(ret));
         goto done;
     }
 
-    /* TBD: allowed/denied_sids/size should be stored in cache */
+    ret = ad_gpo_parse_ini_file(smb_path, &sysvol_gpt_version);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Cannot parse ini file: [%d][%s]\n", ret, strerror(ret));
+        goto done;
+    }
 
-    *_allowed_sids = talloc_steal(mem_ctx, allowed_sids);
-    *_allowed_size = allowed_size;
-    *_denied_sids = talloc_steal(mem_ctx, denied_sids);
-    *_denied_size = denied_size;
+    DEBUG(SSSDBG_TRACE_FUNC, "sysvol_gpt_version: %d\n", sysvol_gpt_version);
+
+    if (sysvol_gpt_version > cached_gpt_version) {
+        /* download policy file */
+        ret = copy_smb_file_to_gpo_cache(smbc_ctx, smb_server, smb_share,
+                                         smb_path, smb_cse_suffix);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "copy_smb_file_to_gpo_cache failed [%d][%s]\n",
+                  ret, strerror(ret));
+            goto done;
+        }
+    }
+
+    *_sysvol_gpt_version = sysvol_gpt_version;
 
  done:
-    smbc_free_context(context, 0);
-    talloc_free(tmp_ctx);
+    smbc_free_context(smbc_ctx, 0);
     return ret;
 }
 
@@ -475,6 +656,7 @@ main(int argc, const char *argv[])
     poptContext pc;
     int debug_fd = -1;
     errno_t ret;
+    int sysvol_gpt_version;
     int result;
     TALLOC_CTX *main_ctx = NULL;
     uint8_t *buf = NULL;
@@ -482,11 +664,6 @@ main(int argc, const char *argv[])
     struct input_buffer *ibuf = NULL;
     struct response *resp = NULL;
     size_t written;
-    char **allowed_sids;
-    int allowed_size;
-    char **denied_sids;
-    int denied_size;
-    int j;
 
     struct poptOption long_options[] = {
         POPT_AUTOHELP
@@ -498,6 +675,9 @@ main(int argc, const char *argv[])
          _("Show timestamps with microseconds"), NULL},
         {"debug-fd", 0, POPT_ARG_INT, &debug_fd, 0,
          _("An open file descriptor for the debug logs"), NULL},
+        {"debug-to-stderr", 0, POPT_ARG_NONE | POPT_ARGFLAG_DOC_HIDDEN,
+         &debug_to_stderr, 0,
+         _("Send the debug output to stderr directly."), NULL },
         POPT_TABLEEND
     };
 
@@ -573,34 +753,22 @@ main(int argc, const char *argv[])
         goto fail;
     }
 
-    DEBUG(SSSDBG_TRACE_FUNC, "processing security settings\n");
+    DEBUG(SSSDBG_TRACE_FUNC, "performing smb operations\n");
 
-    result = process_security_settings_cse(main_ctx,
-                                           ibuf->smb_uri,
-                                           &allowed_sids,
-                                           &allowed_size,
-                                           &denied_sids,
-                                           &denied_size);
+    result = perform_smb_operations(ibuf->cached_gpt_version,
+                                    ibuf->smb_server,
+                                    ibuf->smb_share,
+                                    ibuf->smb_path,
+                                    ibuf->smb_cse_suffix,
+                                    &sysvol_gpt_version);
     if (result != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "process_security_settings_cse failed.[%d][%s].\n",
-              ret, strerror(ret));
+              "perform_smb_operations failed.[%d][%s].\n",
+              result, strerror(result));
         goto fail;
     }
 
-    DEBUG(SSSDBG_CRIT_FAILURE, "allowed_size = %d\n", allowed_size);
-    for (j= 0; j < allowed_size; j++) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "allowed_sids[%d] = %s\n", j,
-              allowed_sids[j]);
-    }
-
-    DEBUG(SSSDBG_CRIT_FAILURE, "denied_size = %d\n", denied_size);
-    for (j= 0; j < denied_size; j++) {
-        DEBUG(SSSDBG_CRIT_FAILURE, " denied_sids[%d] = %s\n", j,
-              denied_sids[j]);
-    }
-
-    ret = prepare_response(main_ctx, result, allowed_size, allowed_sids, denied_size, denied_sids, &resp);
+    ret = prepare_response(main_ctx, sysvol_gpt_version, result, &resp);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "prepare_response failed. [%d][%s].\n",
                     ret, strerror(ret));
@@ -608,7 +776,6 @@ main(int argc, const char *argv[])
     }
 
     errno = 0;
-    DEBUG(SSSDBG_TRACE_FUNC, "resp->size: %zu\n", resp->size);
 
     written = sss_atomic_write_s(STDOUT_FILENO, resp->buf, resp->size);
     if (written == -1) {

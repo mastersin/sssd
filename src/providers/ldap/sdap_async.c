@@ -1083,6 +1083,40 @@ static errno_t add_to_deref_reply(TALLOC_CTX *mem_ctx,
     return EOK;
 }
 
+static void sdap_print_server(struct sdap_handle *sh)
+{
+    int ret;
+    int fd;
+    struct sockaddr_storage ss;
+    socklen_t ss_len = sizeof(ss);
+    char ip[NI_MAXHOST];
+
+    if (!DEBUG_IS_SET(SSSDBG_TRACE_INTERNAL)) {
+        return;
+    }
+
+    ret = get_fd_from_ldap(sh->ldap, &fd);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE, "cannot get sdap fd\n");
+        return;
+    }
+
+    ret = getsockname(fd, (struct sockaddr *) &ss, &ss_len);
+    if (ret == -1) {
+        DEBUG(SSSDBG_MINOR_FAILURE, "getsockname failed\n");
+        return;
+    }
+
+    ret = getnameinfo((struct sockaddr *) &ss, ss_len,
+                      ip, sizeof(ip), NULL, 0, NI_NUMERICHOST);
+    if (ret != 0) {
+        DEBUG(SSSDBG_MINOR_FAILURE, "getnameinfo failed\n");
+        return;
+    }
+
+    DEBUG(SSSDBG_TRACE_INTERNAL, "Searching %s\n", ip);
+}
+
 /* ==Generic Search exposing all options======================= */
 typedef errno_t (*sdap_parse_cb)(struct sdap_handle *sh,
                                  struct sdap_msg *msg,
@@ -1171,6 +1205,8 @@ sdap_get_generic_ext_send(TALLOC_CTX *memctx,
         tevent_req_post(req, ev);
         return req;
     }
+
+    sdap_print_server(sh);
 
     /* Be extra careful and never allow paging for BASE searches,
      * even if requested.
@@ -1335,6 +1371,8 @@ static void sdap_get_generic_ext_done(struct sdap_op *op,
     struct sdap_get_generic_ext_state *state = tevent_req_data(req,
                                             struct sdap_get_generic_ext_state);
     char *errmsg = NULL;
+    int i;
+    char **refs = NULL;
     int result;
     int ret;
     int lret;
@@ -1370,7 +1408,7 @@ static void sdap_get_generic_ext_done(struct sdap_op *op,
 
     case LDAP_RES_SEARCH_RESULT:
         ret = ldap_parse_result(state->sh->ldap, reply->msg,
-                                &result, NULL, &errmsg, NULL,
+                                &result, NULL, &errmsg, &refs,
                                 &returned_controls, 0);
         if (ret != LDAP_SUCCESS) {
             DEBUG(SSSDBG_OP_FAILURE,
@@ -1382,6 +1420,13 @@ static void sdap_get_generic_ext_done(struct sdap_op *op,
         DEBUG(SSSDBG_TRACE_FUNC, "Search result: %s(%d), %s\n",
                   sss_ldap_err2string(result), result,
                   errmsg ? errmsg : "no errmsg set");
+
+        if (refs != NULL) {
+            for (i = 0; refs[i]; i++) {
+                DEBUG(SSSDBG_TRACE_LIBS, "Ref: %s\n", refs[i]);
+            }
+            ldap_memvfree((void **) refs);
+        }
 
         if (result == LDAP_SIZELIMIT_EXCEEDED) {
             /* Try to return what we've got */
@@ -1785,21 +1830,7 @@ done:
 
 static void sdap_x_deref_search_done(struct tevent_req *subreq)
 {
-    struct tevent_req *req = tevent_req_callback_data(subreq,
-                                                      struct tevent_req);
-    int ret;
-
-    ret = sdap_get_generic_ext_recv(subreq);
-    talloc_zfree(subreq);
-    if (ret) {
-        DEBUG(SSSDBG_CONF_SETTINGS,
-              "sdap_get_generic_ext_recv failed [%d]: %s\n",
-                  ret, sss_strerror(ret));
-        tevent_req_error(req, ret);
-        return;
-    }
-
-    tevent_req_done(req);
+    sdap_get_generic_done(subreq);
 }
 
 static int sdap_x_deref_search_ctrls_destructor(void *ptr)
@@ -1968,20 +1999,7 @@ static errno_t sdap_sd_search_parse_entry(struct sdap_handle *sh,
 
 static void sdap_sd_search_done(struct tevent_req *subreq)
 {
-    struct tevent_req *req = tevent_req_callback_data(subreq,
-                                                      struct tevent_req);
-    int ret;
-    ret = sdap_get_generic_ext_recv(subreq);
-    talloc_zfree(subreq);
-    if (ret) {
-        DEBUG(SSSDBG_MINOR_FAILURE,
-              "sdap_get_generic_ext_recv failed [%d]: %s\n",
-              ret, sss_strerror(ret));
-        tevent_req_error(req, ret);
-        return;
-    }
-
-    tevent_req_done(req);
+    sdap_get_generic_done(subreq);
 }
 
 static int sdap_sd_search_ctrls_destructor(void *ptr)
@@ -2225,21 +2243,7 @@ done:
 
 static void sdap_asq_search_done(struct tevent_req *subreq)
 {
-    struct tevent_req *req = tevent_req_callback_data(subreq,
-                                                      struct tevent_req);
-    int ret;
-
-    ret = sdap_get_generic_ext_recv(subreq);
-    talloc_zfree(subreq);
-    if (ret) {
-        DEBUG(SSSDBG_CONF_SETTINGS,
-              "sdap_get_generic_ext_recv failed [%d]: %s\n",
-                  ret, sss_strerror(ret));
-        tevent_req_error(req, ret);
-        return;
-    }
-
-    tevent_req_done(req);
+    sdap_get_generic_done(subreq);
 }
 
 static int sdap_asq_search_ctrls_destructor(void *ptr)

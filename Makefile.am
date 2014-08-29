@@ -61,6 +61,7 @@ systemdunitdir = @systemdunitdir@
 systemdconfdir = @systemdconfdir@
 logpath = @logpath@
 pubconfpath = @pubconfpath@
+gpocachepath = @gpocachepath@
 pkgconfigdir = $(libdir)/pkgconfig
 krb5rcachedir = @krb5rcachedir@
 sudolibdir = @sudolibpath@
@@ -577,8 +578,14 @@ dist_noinst_HEADERS = \
     src/tests/cmocka/common_mock_sysdb_objects.h \
     src/sss_client/ssh/sss_ssh_client.h \
     src/sss_client/sudo/sss_sudo.h \
+    src/sss_client/libwbclient/libwbclient.h \
+    src/sss_client/libwbclient/wbc_err_internal.h \
+    src/sss_client/libwbclient/wbclient_internal.h \
+    src/sss_client/libwbclient/wbc_sssd_internal.h \
     src/lib/idmap/sss_idmap_private.h \
-    src/lib/sifp/sss_sifp_private.h
+    src/lib/sifp/sss_sifp_private.h \
+    src/tests/cmocka/test_utils.h \
+    $(NULL)
 
 
 if HAVE_NSS
@@ -638,6 +645,7 @@ libsss_util_la_SOURCES = \
     src/db/sysdb_subdomains.c \
     src/db/sysdb_ranges.c \
     src/db/sysdb_idmap.c \
+    src/db/sysdb_gpo.c \
     src/monitor/monitor_sbus.c \
     src/providers/dp_auth_util.c \
     src/providers/dp_pam_data_util.c \
@@ -674,7 +682,9 @@ libsss_util_la_SOURCES = \
     src/util/sss_ini.c \
     src/util/io.c \
     src/util/util_sss_idmap.c \
-    src/util/well_known_sids.c
+    src/util/well_known_sids.c \
+    src/util/string_utils.c \
+    $(NULL)
 libsss_util_la_CFLAGS = \
     $(AM_CFLAGS) \
     $(SYSTEMD_LOGIN_CFLAGS)
@@ -716,7 +726,12 @@ libsss_config_la_LDFLAGS = \
 endif # BUILD_CONFIG_LIB
 endif # BUILD_IFP
 
-lib_LTLIBRARIES = libipa_hbac.la libsss_idmap.la libsss_nss_idmap.la
+lib_LTLIBRARIES = libipa_hbac.la \
+                  libsss_idmap.la \
+                  libsss_nss_idmap.la \
+                  libwbclient.la \
+                  $(NULL)
+
 pkgconfig_DATA += src/providers/ipa/ipa_hbac.pc
 libipa_hbac_la_DEPENDENCIES = src/providers/ipa/ipa_hbac.exports
 libipa_hbac_la_SOURCES = \
@@ -756,11 +771,37 @@ libsss_nss_idmap_la_LDFLAGS = \
 
 dist_noinst_DATA += src/sss_client/idmap/sss_nss_idmap.exports
 
+pkgconfig_DATA += src/sss_client/libwbclient/wbclient.pc
+EXTRA_libwbclient_la_DEPENDENCIES = src/sss_client/libwbclient/wbclient.exports
+libwbclient_la_SOURCES = \
+    src/sss_client/libwbclient/wbc_guid.c \
+    src/sss_client/libwbclient/wbc_idmap_common.c \
+    src/sss_client/libwbclient/wbc_idmap_sssd.c \
+    src/sss_client/libwbclient/wbclient_common.c \
+    src/sss_client/libwbclient/wbclient_sssd.c \
+    src/sss_client/libwbclient/wbc_pam_sssd.c \
+    src/sss_client/libwbclient/wbc_pwd_sssd.c \
+    src/sss_client/libwbclient/wbc_sid_common.c \
+    src/sss_client/libwbclient/wbc_sid_sssd.c \
+    src/sss_client/libwbclient/wbc_sssd_internal.h \
+    src/sss_client/libwbclient/wbc_util_common.c \
+    src/sss_client/libwbclient/wbc_util_sssd.c
+libwbclient_la_LIBADD = \
+    libsss_nss_idmap.la \
+    $(CLIENT_LIBS)
+libwbclient_la_LDFLAGS = \
+    -Wl,--version-script,$(srcdir)/src/sss_client/libwbclient/wbclient.exports \
+    -version-info 11:0:11
+
+dist_noinst_DATA += src/sss_client/libwbclient/wbclient.exports
+
 
 include_HEADERS = \
     src/providers/ipa/ipa_hbac.h \
     src/lib/idmap/sss_idmap.h \
-    src/sss_client/idmap/sss_nss_idmap.h
+    src/sss_client/idmap/sss_nss_idmap.h \
+    src/sss_client/libwbclient/wbclient.h \
+    $(NULL)
 
 if BUILD_IFP
 lib_LTLIBRARIES += libsss_simpleifp.la
@@ -1743,15 +1784,20 @@ fqnames_tests_LDADD = \
 nestedgroups_tests_SOURCES = \
     $(TEST_MOCK_OBJ) \
     $(TEST_MOCK_PROVIDER_OBJ) \
+    src/providers/ldap/sdap_idmap.c \
     src/tests/cmocka/test_nested_groups.c \
-    src/providers/ldap/sdap_async_nested_groups.c
+    src/providers/ldap/sdap_async_nested_groups.c \
+    $(NULL)
 nestedgroups_tests_CFLAGS = \
-    $(AM_CFLAGS)
+    $(AM_CFLAGS) \
+    $(NULL)
 nestedgroups_tests_LDADD = \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    libsss_test_common.la
+    libsss_idmap.la \
+    libsss_test_common.la \
+    $(NULL)
 
 test_sss_idmap_SOURCES = \
     src/tests/cmocka/test_sss_idmap.c
@@ -1780,8 +1826,9 @@ test_ipa_idmap_LDADD = \
 
 test_utils_SOURCES = \
     src/tests/cmocka/test_utils.c \
-    src/tests/cmocka/test_sss_ssh.c
-
+    src/tests/cmocka/test_sss_ssh.c \
+    src/tests/cmocka/test_string_utils.c \
+    $(NULL)
 test_utils_CFLAGS = \
     $(AM_CFLAGS)
 test_utils_LDADD = \
@@ -2610,6 +2657,7 @@ installsssddirs::
     $(DESTDIR)$(logpath) \
     $(DESTDIR)$(pubconfpath) \
     $(DESTDIR)$(pubconfpath)/krb5.include.d \
+    $(DESTDIR)$(gpocachepath) \
     $(DESTDIR)$(sudolibdir) \
     $(DESTDIR)$(autofslibdir)
 

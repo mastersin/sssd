@@ -294,10 +294,10 @@ done:
     return ret;
 }
 
-int confdb_set_bool(struct confdb_ctx *cdb,
-                     const char *section,
-                     const char *attribute,
-                     bool val)
+int confdb_set_string(struct confdb_ctx *cdb,
+                      const char *section,
+                      const char *attribute,
+                      char *val)
 {
     TALLOC_CTX *tmp_ctx;
     struct ldb_dn *dn;
@@ -306,8 +306,9 @@ int confdb_set_bool(struct confdb_ctx *cdb,
     int ret, lret;
 
     tmp_ctx = talloc_new(NULL);
-    if (!tmp_ctx)
+    if (!tmp_ctx) {
         return ENOMEM;
+    }
 
     ret = parse_section(tmp_ctx, section, &secdn, NULL);
     if (ret != EOK) {
@@ -336,18 +337,13 @@ int confdb_set_bool(struct confdb_ctx *cdb,
         goto done;
     }
 
-    if (val) {
-        lret = ldb_msg_add_string(msg, attribute, "True");
-    } else {
-        lret = ldb_msg_add_string(msg, attribute, "False");
-    }
+    lret = ldb_msg_add_string(msg, attribute, val);
     if (lret != LDB_SUCCESS) {
         DEBUG(SSSDBG_MINOR_FAILURE,
               "ldb_msg_add_string failed: [%s]\n", ldb_strerror(lret));
         ret = EIO;
         goto done;
     }
-
 
     lret = ldb_modify(cdb->ldb, msg);
     if (lret != LDB_SUCCESS) {
@@ -1147,12 +1143,27 @@ static int confdb_get_domain_internal(struct confdb_ctx *cdb,
         }
     }
 
-    ret = get_entry_as_bool(res->msgs[0], &domain->case_sensitive,
-                            CONFDB_DOMAIN_CASE_SENSITIVE, true);
-    if(ret != EOK) {
-        DEBUG(SSSDBG_FATAL_FAILURE,
-              "Invalid value for %s\n", CONFDB_DOMAIN_CASE_SENSITIVE);
-        goto done;
+    tmp = ldb_msg_find_attr_as_string(res->msgs[0],
+                                      CONFDB_DOMAIN_CASE_SENSITIVE, "true");
+    if (tmp != NULL) {
+        if (strcasecmp(tmp, "true") == 0) {
+            domain->case_sensitive = true;
+            domain->case_preserve = true;
+        } else if (strcasecmp(tmp, "false") == 0) {
+            domain->case_sensitive = false;
+            domain->case_preserve = false;
+        } else if (strcasecmp(tmp, "preserving") == 0) {
+            domain->case_sensitive = false;
+            domain->case_preserve = true;
+        } else {
+            DEBUG(SSSDBG_FATAL_FAILURE,
+                  "Invalid value for %s\n", CONFDB_DOMAIN_CASE_SENSITIVE);
+            goto done;
+        }
+    } else {
+        /* default */
+        domain->case_sensitive = true;
+        domain->case_preserve = true;
     }
     if (domain->case_sensitive == false &&
         strcasecmp(domain->provider, "local") == 0) {

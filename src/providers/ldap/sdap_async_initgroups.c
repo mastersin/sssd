@@ -1638,7 +1638,6 @@ static errno_t sdap_initgr_rfc2307bis_next_base(struct tevent_req *req)
             state->timeout,
             true);
     if (!subreq) {
-        talloc_zfree(req);
         return ENOMEM;
     }
     tevent_req_set_callback(subreq, sdap_initgr_rfc2307bis_process, req);
@@ -2404,6 +2403,33 @@ static errno_t rfc2307bis_nested_groups_next_base(struct tevent_req *req)
     return EOK;
 }
 
+static void
+rfc2307bis_nested_groups_iterate(struct tevent_req *req,
+                                 struct sdap_rfc2307bis_nested_ctx *state)
+{
+    errno_t ret;
+
+    state->group_iter++;
+    while (state->group_iter < state->num_groups) {
+        ret = rfc2307bis_nested_groups_step(req);
+        if (ret == EAGAIN) {
+            /* Looking up parent groups.. */
+            return;
+        } else if (ret != EOK) {
+            tevent_req_error(req, ret);
+            return;
+        }
+
+        /* EOK means this group has already been processed
+         * in another nesting level */
+        state->group_iter++;
+    }
+
+    if (state->group_iter == state->num_groups) {
+        /* All groups processed. Done. */
+        tevent_req_done(req);
+    }
+}
 
 static void rfc2307bis_nested_groups_done(struct tevent_req *subreq);
 static void rfc2307bis_nested_groups_process(struct tevent_req *subreq)
@@ -2507,26 +2533,7 @@ static void rfc2307bis_nested_groups_process(struct tevent_req *subreq)
         /* No parent groups for this group in LDAP
          * Move on to the next group
          */
-        state->group_iter++;
-        while (state->group_iter < state->num_groups) {
-            ret = rfc2307bis_nested_groups_step(req);
-            if (ret == EAGAIN) {
-                /* Looking up parent groups.. */
-                return;
-            } else if (ret != EOK) {
-                tevent_req_error(req, ret);
-                return;
-            }
-
-            /* EOK means this group has already been processed
-             * in another nesting level */
-            state->group_iter++;
-        }
-
-        if (state->group_iter == state->num_groups) {
-            /* All groups processed. Done. */
-            tevent_req_done(req);
-        }
+        rfc2307bis_nested_groups_iterate(req, state);
         return;
     }
 
@@ -2569,27 +2576,7 @@ static void rfc2307bis_nested_groups_done(struct tevent_req *subreq)
         return;
     }
 
-    state->group_iter++;
-    while (state->group_iter < state->num_groups) {
-        ret = rfc2307bis_nested_groups_step(req);
-        if (ret == EAGAIN) {
-            /* Looking up parent groups.. */
-            return;
-        } else if (ret != EOK) {
-            tevent_req_error(req, ret);
-            return;
-        }
-
-        /* EOK means this group has already been processed
-         * in another nesting level */
-        state->group_iter++;
-    }
-
-    if (state->group_iter == state->num_groups) {
-        /* All groups processed. Done. */
-        tevent_req_done(req);
-        return;
-    }
+    rfc2307bis_nested_groups_iterate(req, state);
 }
 
 /* ==Initgr-call-(groups-a-user-is-member-of)============================= */

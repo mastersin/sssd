@@ -75,10 +75,10 @@ struct tevent_req *ipa_get_subdom_acct_send(TALLOC_CTX *memctx,
         goto fail;
     }
 
-    state->domain = find_subdomain_by_name(state->ctx->be->domain,
-                                           ar->domain, true);
+    state->domain = find_domain_by_name(state->ctx->be->domain,
+                                        ar->domain, true);
     if (state->domain == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "find_subdomain_by_name failed.\n");
+        DEBUG(SSSDBG_OP_FAILURE, "find_domain_by_name failed.\n");
         ret = ENOMEM;
         goto fail;
     }
@@ -289,8 +289,8 @@ ipa_get_ad_acct_send(TALLOC_CTX *mem_ctx,
     state->ar = ar;
 
     /* This can only be a subdomain request, verify subdomain */
-    state->user_dom = find_subdomain_by_name(ipa_ctx->sdap_id_ctx->be->domain,
-                                             ar->domain, true);
+    state->user_dom = find_domain_by_name(ipa_ctx->sdap_id_ctx->be->domain,
+                                          ar->domain, true);
     if (state->user_dom == NULL) {
         ret = EINVAL;
         goto fail;
@@ -498,6 +498,9 @@ apply_subdomain_homedir(TALLOC_CTX *mem_ctx, struct sss_domain_info *dom,
 
     if (filter_type == BE_FILTER_NAME) {
         ret = sysdb_getpwnam(mem_ctx, dom, filter_value, &res);
+        if (res && res->count == 0) {
+            ret = ENOENT;
+        }
     } else if (filter_type == BE_FILTER_IDNUM) {
         errno = 0;
         uid = strtouint32(filter_value, NULL, 10);
@@ -506,6 +509,9 @@ apply_subdomain_homedir(TALLOC_CTX *mem_ctx, struct sss_domain_info *dom,
             goto done;
         }
         ret = sysdb_getpwuid(mem_ctx, dom, uid, &res);
+        if (res && res->count == 0) {
+            ret = ENOENT;
+        }
     } else if (filter_type == BE_FILTER_SECID) {
         ret = sysdb_search_user_by_sid_str(mem_ctx, dom, filter_value,
                                            attrs, &msg);
@@ -521,10 +527,9 @@ apply_subdomain_homedir(TALLOC_CTX *mem_ctx, struct sss_domain_info *dom,
               "Failed to make request to our cache: [%d]: [%s]\n",
                ret, sss_strerror(ret));
         goto done;
-    }
-
-    if ((res && res->count == 0) || (msg && msg->num_elements == 0)) {
-        ret = ENOENT;
+    } else if (ret == ENOENT) {
+        DEBUG(SSSDBG_TRACE_FUNC, "Cannot find [%s] with search type [%d]\n",
+              filter_value, filter_type);
         goto done;
     }
 

@@ -125,7 +125,7 @@ ad_handle_acct_info_step(struct tevent_req *req)
                                        state->sdom,
                                        state->conn[state->cindex],
                                        noexist_delete);
-    if (req == NULL) {
+    if (subreq == NULL) {
         return ENOMEM;
     }
     tevent_req_set_callback(subreq, ad_handle_acct_info_done, req);
@@ -299,7 +299,7 @@ static bool ad_account_can_shortcut(struct be_ctx *be_ctx,
     case BE_FILTER_SECID:
         csid = sid == NULL ? filter_value : sid;
 
-        req_dom = find_subdomain_by_sid(domain, csid);
+        req_dom = find_domain_by_sid(domain, csid);
         if (req_dom == NULL) {
             DEBUG(SSSDBG_OP_FAILURE, "Invalid domain\n");
             goto done;
@@ -360,7 +360,7 @@ ad_account_info_handler(struct be_req *be_req)
     dom = be_ctx->domain;
     if (strcasecmp(ar->domain, be_ctx->domain->name) != 0) {
         /* Subdomain request, verify subdomain */
-        dom = find_subdomain_by_name(be_ctx->domain, ar->domain, true);
+        dom = find_domain_by_name(be_ctx->domain, ar->domain, true);
     }
 
     if (dom == NULL) {

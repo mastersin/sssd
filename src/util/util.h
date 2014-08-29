@@ -265,8 +265,6 @@ void *sss_mem_attach(TALLOC_CTX *mem_ctx,
 int password_destructor(void *memctx);
 
 /* from usertools.c */
-char *get_username_from_uid(TALLOC_CTX *mem_ctx, uid_t uid);
-
 char *get_uppercase_realm(TALLOC_CTX *memctx, const char *name);
 
 struct sss_names_ctx {
@@ -511,14 +509,19 @@ struct sss_domain_info *get_domains_head(struct sss_domain_info *domain);
 
 struct sss_domain_info *get_next_domain(struct sss_domain_info *domain,
                                         bool descend);
-struct sss_domain_info *find_subdomain_by_name(struct sss_domain_info *domain,
-                                               const char *name,
-                                               bool match_any);
-struct sss_domain_info *find_subdomain_by_sid(struct sss_domain_info *domain,
-                                              const char *sid);
+struct sss_domain_info *find_domain_by_name(struct sss_domain_info *domain,
+                                            const char *name,
+                                            bool match_any);
+struct sss_domain_info *find_domain_by_sid(struct sss_domain_info *domain,
+                                           const char *sid);
+
+struct sss_domain_info*
+sss_get_domain_by_sid_ldap_fallback(struct sss_domain_info *domain,
+                                    const char* sid);
+
 struct sss_domain_info *
-find_subdomain_by_object_name(struct sss_domain_info *domain,
-                              const char *object_name);
+find_domain_by_object_name(struct sss_domain_info *domain,
+                           const char *object_name);
 
 bool subdomain_enumerates(struct sss_domain_info *parent,
                           const char *sd_name);
@@ -561,5 +564,13 @@ errno_t well_known_sid_to_name(const char *sid, const char **dom,
 
 errno_t name_to_well_known_sid(const char *dom, const char *name,
                                const char **sid);
+
+/* from string_utils.c */
+char * sss_replace_space(TALLOC_CTX *mem_ctx,
+                         const char *orig_name,
+                         const char replace_char);
+char * sss_reverse_replace_space(TALLOC_CTX *mem_ctx,
+                                 char *orig_name,
+                                 const char replace_char);
 
 #endif /* __SSSD_UTIL_H__ */

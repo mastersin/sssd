@@ -68,6 +68,7 @@
 #define CONFDB_MONITOR_TRY_INOTIFY "try_inotify"
 #define CONFDB_MONITOR_KRB5_RCACHEDIR "krb5_rcache_dir"
 #define CONFDB_MONITOR_DEFAULT_DOMAIN "default_domain_suffix"
+#define CONFDB_MONITOR_OVERRIDE_SPACE "override_space"
 
 /* Both monitor and domains */
 #define CONFDB_NAME_REGEX   "re_expression"
@@ -217,6 +218,7 @@ struct sss_domain_info {
     bool cache_credentials;
     bool legacy_passwords;
     bool case_sensitive;
+    bool case_preserve;
 
     gid_t override_gid;
     const char *override_homedir;
@@ -454,10 +456,27 @@ int confdb_get_bool(struct confdb_ctx *cdb,
                     const char *section, const char *attribute,
                     bool defval, bool *result);
 
-int confdb_set_bool(struct confdb_ctx *cdb,
-                     const char *section,
-                     const char *attribute,
-                     bool val);
+/**
+ * @brief Convenience function to set a single-valued attribute as a string
+ *
+ * @param[in] cdb The connection object to the confdb
+ * @param[in] section The ConfDB section to update. This is constructed from
+ *                    the format of the sssd.conf file. All sections start
+ *                    with 'config/'. Subsections are separated by slashes.
+ *                    e.g. [domain/LDAP] in sssd.conf would translate to
+ *                    config/domain/LDAP
+ * @param[in] attribute The name of the attribute to update
+ * @param[in] val New value of the attribute.
+ *
+ * @return 0 - Successfully retrieved the entry (or used the default)
+ * @return ENOMEM - There was insufficient memory to complete the operation
+ * @return EINVAL - The section could not be parsed
+ * @return EIO - An I/O error occurred while communicating with the ConfDB
+ */
+int confdb_set_string(struct confdb_ctx *cdb,
+                      const char *section,
+                      const char *attribute,
+                      char *val);
 
 /**
  * @brief Convenience function to retrieve a single-valued attribute as a

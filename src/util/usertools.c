@@ -35,18 +35,6 @@
 #define NAME_DOMAIN_PATTERN_OPTIONS (PCRE_DUPNAMES | PCRE_EXTENDED)
 #endif
 
-char *get_username_from_uid(TALLOC_CTX *mem_ctx, uid_t uid)
-{
-    char *username;
-    struct passwd *pwd;
-
-    pwd = getpwuid(uid);
-    if (!pwd) return NULL;
-
-    username = talloc_strdup(mem_ctx, pwd->pw_name);
-    return username;
-}
-
 /* Function returns given realm name as new uppercase string */
 char *get_uppercase_realm(TALLOC_CTX *memctx, const char *name)
 {
@@ -399,7 +387,7 @@ static struct sss_domain_info * match_any_domain_or_subdomain_name(
         return dom;
     }
 
-    return find_subdomain_by_name(dom, dmatch, true);
+    return find_domain_by_name(dom, dmatch, true);
 }
 
 int sss_parse_name_for_domains(TALLOC_CTX *memctx,

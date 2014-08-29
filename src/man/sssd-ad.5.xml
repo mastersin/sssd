@@ -317,6 +317,22 @@ FOREST:EXAMPLE.COM:(memberOf=cn=admins,ou=groups,dc=example,dc=com)
                 </varlistentry>
 
                 <varlistentry>
+                    <term>ad_gpo_cache_timeout (integer)</term>
+                    <listitem>
+                        <para>
+                            The amount of time between lookups of GPO policy
+                            files against the AD server. This will reduce the
+                            latency and load on the AD server if there are
+                            many access-control requests made in a short
+                            period.
+                        </para>
+                        <para>
+                            Default: 5 (seconds)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>dyndns_update (boolean)</term>
                     <listitem>
                         <para>
@@ -481,7 +497,10 @@ ldap_account_expire_policy = ad
         <para>
             However, unless the <quote>ad</quote> access control provider
             is explicitly configured, the default access provider is
-            <quote>permit</quote>.
+            <quote>permit</quote>. Please note that if you configure an
+            access provider other than <quote>ad</quote>, you need to set
+            all the connection parameters (such as LDAP URIs and encryption
+            details) manually.
         </para>
     </refsect1>
 

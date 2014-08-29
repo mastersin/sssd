@@ -87,9 +87,9 @@ bool subdomain_enumerates(struct sss_domain_info *parent,
     return false;
 }
 
-struct sss_domain_info *find_subdomain_by_name(struct sss_domain_info *domain,
-                                               const char *name,
-                                               bool match_any)
+struct sss_domain_info *find_domain_by_name(struct sss_domain_info *domain,
+                                            const char *name,
+                                            bool match_any)
 {
     struct sss_domain_info *dom = domain;
 
@@ -112,7 +112,7 @@ struct sss_domain_info *find_subdomain_by_name(struct sss_domain_info *domain,
     return NULL;
 }
 
-struct sss_domain_info *find_subdomain_by_sid(struct sss_domain_info *domain,
+struct sss_domain_info *find_domain_by_sid(struct sss_domain_info *domain,
                                               const char *sid)
 {
     struct sss_domain_info *dom = domain;
@@ -153,9 +153,23 @@ struct sss_domain_info *find_subdomain_by_sid(struct sss_domain_info *domain,
     return NULL;
 }
 
+struct sss_domain_info*
+sss_get_domain_by_sid_ldap_fallback(struct sss_domain_info *domain,
+                                    const char* sid)
+{
+    /* LDAP provider doesn't know about sub-domains and hence can only
+     * have one configured domain
+     */
+    if (strcmp(domain->provider, "ldap") == 0) {
+        return domain;
+    } else {
+        return find_domain_by_sid(get_domains_head(domain), sid);
+    }
+}
+
 struct sss_domain_info *
-find_subdomain_by_object_name(struct sss_domain_info *domain,
-                              const char *object_name)
+find_domain_by_object_name(struct sss_domain_info *domain,
+                           const char *object_name)
 {
     TALLOC_CTX *tmp_ctx;
     struct sss_domain_info *dom = NULL;
@@ -179,7 +193,7 @@ find_subdomain_by_object_name(struct sss_domain_info *domain,
     if (domainname == NULL) {
         dom = domain;
     } else {
-        dom = find_subdomain_by_name(domain, domainname, true);
+        dom = find_domain_by_name(domain, domainname, true);
     }
 
 done:

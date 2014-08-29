@@ -77,6 +77,7 @@ Requires: python-sssdconfig = %{version}-%{release}
 %global pipepath %{sssdstatedir}/pipes
 %global mcpath %{sssdstatedir}/mc
 %global pubconfpath %{sssdstatedir}/pubconf
+%global gpocachepath %{sssdstatedir}/gpo_cache
 
 ### Build Dependencies ###
 
@@ -426,6 +427,22 @@ Requires: libsss_simpleifp = %{version}-%{release}
 %description -n libsss_simpleifp-devel
 Provides library that simplifies D-Bus API for the SSSD InfoPipe responder.
 
+%package libwbclient
+Summary: The SSSD libwbclient implementation
+Group: Applications/System
+License: GPLv3+ and LGPLv3+
+
+%description libwbclient
+The SSSD libwbclient implementation.
+
+%package libwbclient-devel
+Summary: Development libraries for the SSSD libwbclient implementation
+Group:  Development/Libraries
+License: GPLv3+ and LGPLv3+
+
+%description libwbclient-devel
+Development libraries for the SSSD libwbclient implementation.
+
 %prep
 %setup -q -n %{name}-%{version}
 
@@ -447,6 +464,7 @@ autoreconf -ivf
     --with-mcache-path=%{mcpath} \
     --with-pipe-path=%{pipepath} \
     --with-pubconf-path=%{pubconfpath} \
+    --with-gpo-cache-path=%{gpocachepath} \
     --with-init-dir=%{_initrddir} \
     --with-krb5-rcache-dir=%{_localstatedir}/cache/krb5rcache \
     --enable-nsslibdir=/%{_lib} \
@@ -615,6 +633,7 @@ rm -rf $RPM_BUILD_ROOT
 %ghost %attr(0644,root,root) %verify(not md5 size mtime) %{mcpath}/group
 %attr(755,root,root) %dir %{pipepath}
 %attr(755,root,root) %dir %{pubconfpath}
+%attr(755,root,root) %dir %{gpocachepath}
 %attr(700,root,root) %dir %{pipepath}/private
 %attr(750,root,root) %dir %{_var}/log/%{name}
 %attr(711,root,root) %dir %{_sysconfdir}/sssd
@@ -818,6 +837,16 @@ rm -rf $RPM_BUILD_ROOT
 %defattr(-,root,root,-)
 %{python_sitearch}/pyhbac.so
 
+%files libwbclient
+%defattr(-,root,root,-)
+%{_libdir}/libwbclient.so.*
+
+%files libwbclient-devel
+%defattr(-,root,root,-)
+%{_includedir}/wbclient.h
+%{_libdir}/libwbclient.so
+%{_libdir}/pkgconfig/wbclient.pc
+
 %if (0%{?use_systemd} == 1)
 # systemd
 %post common
@@ -845,9 +874,8 @@ fi
 %post common
 /sbin/chkconfig --add %{servicename}
 
-if [ $1 -ge 1 ] ; then
-    /sbin/service %{servicename} condrestart 2>&1 > /dev/null
-fi
+%posttrans
+/sbin/service %{servicename} condrestart 2>&1 > /dev/null
 
 %preun common
 if [ $1 = 0 ]; then
