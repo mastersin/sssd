@@ -1,4 +1,4 @@
-tar: upstream:.
-diff: upstream:. altlinux:.
+tar: upstream-test:.
+diff: upstream-test:. altlinux-test:.
 copy: *.init
 copy: *.pam
