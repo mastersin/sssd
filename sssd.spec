@@ -1,7 +1,7 @@
 
 Name: sssd
-Version: 1.12.0
-Release: alt1
+Version: 1.12.1
+Release: alt0.1
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -26,6 +26,7 @@ Patch: %name-%version-%release.patch
 %define pipepath %sssdstatedir/pipes
 %define mcpath %sssdstatedir/mc
 %define pubconfpath %sssdstatedir/pubconf
+%define gpocachepath %sssdstatedir/gpo_cache
 
 Requires: %name-client = %version-%release
 Requires: libsss_idmap = %version-%release
@@ -302,6 +303,24 @@ Requires: %name = %version-%release
 The python-module-sss contains the bindings so that sss can
 be used by Python applications.
 
+%package -n libwbclient-%name
+Summary: The SSSD libwbclient implementation
+Group: System/Libraries
+License: GPLv3+ and LGPLv3+
+Conflicts: libwbclient
+
+%description -n libwbclient-%name
+The SSSD libwbclient implementation.
+
+%package -n libwbclient-%name-devel
+Summary: Development libraries for the SSSD libwbclient implementation
+Group: Development/C
+License: GPLv3+ and LGPLv3+
+Conflicts: libwbclient-devel
+
+%description -n libwbclient-%name-devel
+Development libraries for the SSSD libwbclient implementation.
+
 %prep
 %setup
 %patch -p1
@@ -313,6 +332,7 @@ be used by Python applications.
     --with-pipe-path=%pipepath \
     --with-pubconf-path=%pubconfpath \
     --with-mcache-path=%mcpath \
+    --with-gpo-cache-path=%gpocachepath \
     --with-init-dir=%_initdir \
     --with-initscript=systemd \
     --with-systemdunitdir=%_unitdir \
@@ -409,6 +429,7 @@ unset CK_TIMEOUT_MULTIPLIER
 %ghost %attr(0644,root,root) %verify(not md5 size mtime) %mcpath/group
 %attr(755,root,root) %dir %pipepath
 %attr(755,root,root) %dir %pubconfpath
+%attr(755,root,root) %dir %gpocachepath
 %attr(700,root,root) %dir %pipepath/private
 %attr(750,root,root) %dir %_var/log/%name
 %attr(700,root,root) %dir %_sysconfdir/sssd
@@ -540,7 +561,19 @@ unset CK_TIMEOUT_MULTIPLIER
 %files -n python-module-sss_nss_idmap
 %python_sitelibdir/pysss_nss_idmap.so
 
+%files -n libwbclient-%name
+%_libdir/libwbclient.so.*
+
+%files -n libwbclient-%name-devel
+%_includedir/wbclient.h
+%_libdir/libwbclient.so
+%_pkgconfigdir/wbclient.pc
+
 %changelog
+* Fri Aug 29 2014 Alexey Shabalin <shaba@altlinux.ru> 1.12.1-alt0.1
+- upstream snapshot
+- add libwbclient package
+
 * Mon Jul 28 2014 Alexey Shabalin <shaba@altlinux.ru> 1.12.0-alt1
 - 1.12.0
 
