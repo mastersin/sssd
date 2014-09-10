@@ -27,6 +27,7 @@
 #include "responder/nss/nsssrv_services.h"
 #include "responder/nss/nsssrv_mmap_cache.h"
 #include "responder/common/negcache.h"
+#include "providers/data_provider.h"
 #include "confdb/confdb.h"
 #include "db/sysdb.h"
 #include "sss_client/idmap/sss_nss_idmap.h"
@@ -524,6 +525,7 @@ errno_t check_cache(struct nss_dom_ctx *dctx,
                     int req_type,
                     const char *opt_name,
                     uint32_t opt_id,
+                    const char *extra,
                     sss_dp_callback_t callback,
                     void *pvt)
 {
@@ -582,7 +584,7 @@ errno_t check_cache(struct nss_dom_ctx *dctx,
              "Performing midpoint cache update on [%s]\n", opt_name);
 
         req = sss_dp_get_account_send(cctx, cctx->rctx, dctx->domain, true,
-                                      req_type, opt_name, opt_id, NULL);
+                                      req_type, opt_name, opt_id, extra);
         if (!req) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Out of memory sending out-of-band data provider "
@@ -611,7 +613,7 @@ errno_t check_cache(struct nss_dom_ctx *dctx,
         }
 
         req = sss_dp_get_account_send(cctx, cctx->rctx, dctx->domain, true,
-                                      req_type, opt_name, opt_id, NULL);
+                                      req_type, opt_name, opt_id, extra);
         if (!req) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Out of memory sending data provider request\n");
@@ -727,13 +729,16 @@ static int nss_cmd_getpwnam_search(struct nss_dom_ctx *dctx)
     char *name = NULL;
     struct nss_ctx *nctx;
     int ret;
+    static const char *user_attrs[] = SYSDB_PW_ATTRS;
+    struct ldb_message *msg;
 
     nctx = talloc_get_type(cctx->rctx->pvt_ctx, struct nss_ctx);
 
     while (dom) {
        /* if it is a domainless search, skip domains that require fully
          * qualified names instead */
-        while (dom && cmdctx->check_next && dom->fqnames) {
+        while (dom && cmdctx->check_next && dom->fqnames
+                && !cmdctx->name_is_upn) {
             dom = get_next_domain(dom, false);
         }
 
@@ -790,7 +795,37 @@ static int nss_cmd_getpwnam_search(struct nss_dom_ctx *dctx)
             return EIO;
         }
 
-        ret = sysdb_getpwnam(cmdctx, dom, name, &dctx->res);
+        if (cmdctx->name_is_upn) {
+            ret = sysdb_search_user_by_upn(cmdctx, dom, name, user_attrs, &msg);
+            if (ret != EOK && ret != ENOENT) {
+                DEBUG(SSSDBG_OP_FAILURE, "sysdb_search_user_by_upn failed.\n");
+                return ret;
+            }
+
+            dctx->res = talloc_zero(cmdctx, struct ldb_result);
+            if (dctx->res == NULL) {
+                DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
+                return ENOMEM;
+            }
+
+            if (ret == ENOENT) {
+                dctx->res->count = 0;
+                dctx->res->msgs = NULL;
+                ret = EOK;
+            } else {
+                dctx->res->count = 1;
+                dctx->res->msgs = talloc_array(dctx->res,
+                                               struct ldb_message *, 1);
+                if (dctx->res->msgs == NULL) {
+                    DEBUG(SSSDBG_OP_FAILURE, "talloc_array failed.\n");
+                    return ENOMEM;
+                }
+
+                dctx->res->msgs[0] = talloc_steal(dctx->res->msgs, msg);
+            }
+        } else {
+            ret = sysdb_getpwnam(cmdctx, dom, name, &dctx->res);
+        }
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Failed to make request to our cache!\n");
@@ -835,6 +870,7 @@ static int nss_cmd_getpwnam_search(struct nss_dom_ctx *dctx)
         if (dctx->check_provider) {
             ret = check_cache(dctx, nctx, dctx->res,
                               SSS_DP_USER, name, 0,
+                              cmdctx->name_is_upn ? EXTRA_NAME_IS_UPN : NULL,
                               nss_cmd_getby_dp_callback,
                               dctx);
             if (ret != EOK) {
@@ -866,6 +902,44 @@ static int nss_cmd_getgrgid_search(struct nss_dom_ctx *dctx);
 static errno_t nss_cmd_getbysid_search(struct nss_dom_ctx *dctx);
 static errno_t nss_cmd_getbysid_send_reply(struct nss_dom_ctx *dctx);
 static errno_t nss_cmd_getsidby_search(struct nss_dom_ctx *dctx);
+
+static int nss_cmd_assume_upn(struct nss_dom_ctx *dctx)
+{
+    int ret;
+
+    if (dctx->domain == NULL) {
+        dctx->domain = dctx->cmdctx->cctx->rctx->domains;
+        dctx->check_provider = NEED_CHECK_PROVIDER(dctx->domain->provider);
+        dctx->cmdctx->check_next = true;
+        dctx->cmdctx->name = talloc_strdup(dctx->cmdctx, dctx->rawname);
+        dctx->cmdctx->name_is_upn = true;
+        if (dctx->cmdctx->name == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
+            return ENOMEM;
+        }
+    }
+
+    switch (dctx->cmdctx->cmd) {
+    case SSS_NSS_GETPWNAM:
+        ret = nss_cmd_getpwnam_search(dctx);
+        if (ret == EOK) {
+            ret = nss_cmd_getpw_send_reply(dctx, false);
+        }
+        break;
+    case SSS_NSS_INITGR:
+        ret = nss_cmd_initgroups_search(dctx);
+        if (ret == EOK) {
+            ret = nss_cmd_initgr_send_reply(dctx);
+        }
+        break;
+    default:
+        DEBUG(SSSDBG_CRIT_FAILURE, "Invalid command [%d].\n",
+                                    dctx->cmdctx->cmd);
+        ret = EINVAL;
+    }
+
+    return ret;
+}
 
 static void nss_cmd_getby_dp_callback(uint16_t err_maj, uint32_t err_min,
                                       const char *err_msg, void *ptr)
@@ -1005,6 +1079,14 @@ static void nss_cmd_getby_dp_callback(uint16_t err_maj, uint32_t err_min,
     }
 
 done:
+    if (ret == ENOENT
+        && (dctx->cmdctx->cmd == SSS_NSS_GETPWNAM
+                || dctx->cmdctx->cmd == SSS_NSS_INITGR)
+        && dctx->rawname != NULL && strchr(dctx->rawname, '@') != NULL) {
+        /* assume Kerberos principal */
+        ret = nss_cmd_assume_upn(dctx);
+    }
+
     ret = nss_cmd_done(cmdctx, ret);
     if (ret) {
         NSS_CMD_FATAL_ERROR(cctx);
@@ -1210,6 +1292,11 @@ static int nss_cmd_getbynam(enum sss_cli_command cmd, struct cli_ctx *cctx)
         if (ret == EOK) {
             /* we have results to return */
             ret = nss_cmd_getpw_send_reply(dctx, false);
+        } else if (ret == ENOENT
+                && dctx->rawname != NULL
+                && strchr(dctx->rawname, '@') != NULL) {
+            /* assume Kerberos principal */
+            ret = nss_cmd_assume_upn(dctx);
         }
         break;
     case SSS_NSS_GETGRNAM:
@@ -1224,6 +1311,11 @@ static int nss_cmd_getbynam(enum sss_cli_command cmd, struct cli_ctx *cctx)
         if (ret == EOK) {
             /* we have results to return */
             ret = nss_cmd_initgr_send_reply(dctx);
+        } else if (ret == ENOENT
+                && dctx->rawname != NULL
+                && strchr(dctx->rawname, '@') != NULL) {
+            /* assume Kerberos principal */
+            ret = nss_cmd_assume_upn(dctx);
         }
         break;
     case SSS_NSS_GETSIDBYNAME:
@@ -1260,7 +1352,12 @@ static void nss_cmd_getbynam_done(struct tevent_req *req)
     ret = sss_parse_name_for_domains(cmdctx, cctx->rctx->domains,
                                      cctx->rctx->default_domain, rawname,
                                      &domname, &cmdctx->name);
-    if (ret != EOK) {
+    if (ret == EAGAIN && (dctx->cmdctx->cmd == SSS_NSS_GETPWNAM
+                            || dctx->cmdctx->cmd == SSS_NSS_INITGR)) {
+        /* assume Kerberos principal */
+        ret = nss_cmd_assume_upn(dctx);
+        goto done;
+    } else if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "Invalid name received [%s]\n", rawname);
         ret = ENOENT;
         goto done;
@@ -1290,6 +1387,11 @@ static void nss_cmd_getbynam_done(struct tevent_req *req)
         if (ret == EOK) {
             /* we have results to return */
             ret = nss_cmd_getpw_send_reply(dctx, false);
+        } else if (ret == ENOENT
+                    && dctx->rawname != NULL
+                    && strchr(dctx->rawname, '@') != NULL) {
+            /* assume Kerberos principal */
+            ret = nss_cmd_assume_upn(dctx);
         }
         break;
     case SSS_NSS_GETGRNAM:
@@ -1304,6 +1406,11 @@ static void nss_cmd_getbynam_done(struct tevent_req *req)
         if (ret == EOK) {
             /* we have results to return */
             ret = nss_cmd_initgr_send_reply(dctx);
+        } else if (ret == ENOENT
+                    && dctx->rawname != NULL
+                    && strchr(dctx->rawname, '@') != NULL) {
+            /* assume Kerberos principal */
+            ret = nss_cmd_assume_upn(dctx);
         }
         break;
     case SSS_NSS_GETSIDBYNAME:
@@ -1409,7 +1516,7 @@ static int nss_cmd_getpwuid_search(struct nss_dom_ctx *dctx)
          * yet) then verify that the cache is uptodate */
         if (dctx->check_provider) {
             ret = check_cache(dctx, nctx, dctx->res,
-                              SSS_DP_USER, NULL, cmdctx->id,
+                              SSS_DP_USER, NULL, cmdctx->id, NULL,
                               nss_cmd_getby_dp_callback,
                               dctx);
             if (ret != EOK) {
@@ -2391,7 +2498,8 @@ static int fill_members(struct sss_packet *packet,
         }
 
         if (add_domain) {
-            nlen = sss_fqname(NULL, 0, dom->names, dom, name.str);
+            nlen = sss_fqname(NULL, 0, member_dom->names, member_dom,
+                              name.str);
             if (nlen >= 0) {
                 nlen += 1;
             } else {
@@ -2810,7 +2918,7 @@ static int nss_cmd_getgrnam_search(struct nss_dom_ctx *dctx)
          * yet) then verify that the cache is uptodate */
         if (dctx->check_provider) {
             ret = check_cache(dctx, nctx, dctx->res,
-                              SSS_DP_GROUP, name, 0,
+                              SSS_DP_GROUP, name, 0, NULL,
                               nss_cmd_getby_dp_callback,
                               dctx);
             if (ret != EOK) {
@@ -2925,7 +3033,7 @@ static int nss_cmd_getgrgid_search(struct nss_dom_ctx *dctx)
          * yet) then verify that the cache is uptodate */
         if (dctx->check_provider) {
             ret = check_cache(dctx, nctx, dctx->res,
-                              SSS_DP_GROUP, NULL, cmdctx->id,
+                              SSS_DP_GROUP, NULL, cmdctx->id, NULL,
                               nss_cmd_getby_dp_callback,
                               dctx);
             if (ret != EOK) {
@@ -3733,13 +3841,17 @@ static int nss_cmd_initgroups_search(struct nss_dom_ctx *dctx)
     char *name = NULL;
     struct nss_ctx *nctx;
     int ret;
+    static const char *user_attrs[] = SYSDB_PW_ATTRS;
+    struct ldb_message *msg;
+    const char *sysdb_name;
 
     nctx = talloc_get_type(cctx->rctx->pvt_ctx, struct nss_ctx);
 
     while (dom) {
        /* if it is a domainless search, skip domains that require fully
          * qualified names instead */
-        while (dom && cmdctx->check_next && dom->fqnames) {
+        while (dom && cmdctx->check_next && dom->fqnames
+                && !cmdctx->name_is_upn) {
             dom = get_next_domain(dom, false);
         }
 
@@ -3796,7 +3908,24 @@ static int nss_cmd_initgroups_search(struct nss_dom_ctx *dctx)
             return EIO;
         }
 
-        ret = sysdb_initgroups(cmdctx, dom, name, &dctx->res);
+        if (cmdctx->name_is_upn) {
+            ret = sysdb_search_user_by_upn(cmdctx, dom, name, user_attrs, &msg);
+            if (ret != EOK && ret != ENOENT) {
+                DEBUG(SSSDBG_OP_FAILURE, "sysdb_search_user_by_upn failed.\n");
+                return ret;
+            }
+
+            sysdb_name = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+            if (sysdb_name == NULL) {
+                DEBUG(SSSDBG_OP_FAILURE,
+                      "Sysdb entry does not have a name.\n");
+                return EINVAL;
+            }
+
+            ret = sysdb_initgroups(cmdctx, dom, sysdb_name, &dctx->res);
+        } else {
+            ret = sysdb_initgroups(cmdctx, dom, name, &dctx->res);
+        }
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Failed to make request to our cache! [%d][%s]\n",
@@ -3828,6 +3957,7 @@ static int nss_cmd_initgroups_search(struct nss_dom_ctx *dctx)
         if (dctx->check_provider) {
             ret = check_cache(dctx, nctx, dctx->res,
                               SSS_DP_INITGROUPS, name, 0,
+                              cmdctx->name_is_upn ? EXTRA_NAME_IS_UPN : NULL,
                               nss_cmd_getby_dp_callback,
                               dctx);
             if (ret != EOK) {
@@ -4101,7 +4231,7 @@ static errno_t nss_cmd_getsidby_search(struct nss_dom_ctx *dctx)
             }
 
             ret = check_cache(dctx, nctx, dctx->res,
-                              req_type, req_name, req_id,
+                              req_type, req_name, req_id, NULL,
                               nss_cmd_getby_dp_callback,
                               dctx);
             if (ret != EOK) {
@@ -4204,7 +4334,7 @@ static errno_t nss_cmd_getbysid_search(struct nss_dom_ctx *dctx)
      * yet) then verify that the cache is uptodate */
     if (dctx->check_provider) {
         ret = check_cache(dctx, nctx, dctx->res,
-                          SSS_DP_SECID, cmdctx->secid, 0,
+                          SSS_DP_SECID, cmdctx->secid, 0, NULL,
                           nss_cmd_getby_dp_callback,
                           dctx);
         if (ret != EOK) {

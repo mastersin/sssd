@@ -35,11 +35,17 @@ ldblibdir = @ldblibdir@
 if BUILD_KRB5_LOCATOR_PLUGIN
 krb5plugindir = @krb5pluginpath@
 endif
+if BUILD_KRB5_LOCALAUTH_PLUGIN
+krb5localauth_plugindir = @appmodpath@
+endif
 if BUILD_PAC_RESPONDER
 krb5authdata_plugindir = @krb5authdatapluginpath@
 endif
 if BUILD_CIFS_IDMAP_PLUGIN
 cifsplugindir = @cifspluginpath@
+endif
+if BUILD_LIBWBCLIENT
+libwbclientdir = @appmodpath@
 endif
 sssdconfdir = $(sysconfdir)/sssd
 sssddatadir = $(datadir)/sssd
@@ -50,6 +56,7 @@ localedir = @localedir@
 nsslibdir = @nsslibdir@
 pamlibdir = @pammoddir@
 autofslibdir = @appmodpath@
+nfslibdir = @nfsidmaplibdir@
 
 dbpath = @dbpath@
 pluginpath = @pluginpath@
@@ -254,6 +261,11 @@ krb5plugin_LTLIBRARIES = \
     sssd_krb5_locator_plugin.la
 endif
 
+if BUILD_KRB5_LOCALAUTH_PLUGIN
+krb5localauth_plugin_LTLIBRARIES = \
+    sssd_krb5_localauth_plugin.la
+endif
+
 if BUILD_PAC_RESPONDER
 krb5authdata_plugin_LTLIBRARIES = \
     sssd_pac_plugin.la
@@ -314,6 +326,11 @@ dist_noinst_SCRIPTS = \
     contrib/rhel/update_debug_levels.py \
     contrib/fedora/bashrc_sssd \
     contrib/fedora/make_srpm.sh \
+    contrib/ci/clean \
+    contrib/ci/make-check-wrap \
+    contrib/ci/rpm-spec-builddeps \
+    contrib/ci/run \
+    contrib/ci/valgrind-condense \
     src/tests/pyhbac-test.py \
     src/tests/pysss_murmur-test.py
 
@@ -324,7 +341,12 @@ dist_noinst_DATA = \
     src/config/testconfigs/sssd-badversion.conf \
     src/config/testconfigs/sssd-invalid.conf \
     src/config/testconfigs/sssd-invalid-badbool.conf \
-    src/config/etc/sssd.api.d/crash_test_dummy
+    src/config/etc/sssd.api.d/crash_test_dummy \
+    contrib/ci/README.md \
+    contrib/ci/configure.sh \
+    contrib/ci/deps.sh \
+    contrib/ci/distro.sh \
+    contrib/ci/misc.sh
 
 ###############################
 # Global compilation settings #
@@ -582,6 +604,7 @@ dist_noinst_HEADERS = \
     src/sss_client/libwbclient/wbc_err_internal.h \
     src/sss_client/libwbclient/wbclient_internal.h \
     src/sss_client/libwbclient/wbc_sssd_internal.h \
+    src/sss_client/nfs/nfsidmap_internal.h \
     src/lib/idmap/sss_idmap_private.h \
     src/lib/sifp/sss_sifp_private.h \
     src/tests/cmocka/test_utils.h \
@@ -729,7 +752,6 @@ endif # BUILD_IFP
 lib_LTLIBRARIES = libipa_hbac.la \
                   libsss_idmap.la \
                   libsss_nss_idmap.la \
-                  libwbclient.la \
                   $(NULL)
 
 pkgconfig_DATA += src/providers/ipa/ipa_hbac.pc
@@ -771,8 +793,18 @@ libsss_nss_idmap_la_LDFLAGS = \
 
 dist_noinst_DATA += src/sss_client/idmap/sss_nss_idmap.exports
 
-pkgconfig_DATA += src/sss_client/libwbclient/wbclient.pc
-EXTRA_libwbclient_la_DEPENDENCIES = src/sss_client/libwbclient/wbclient.exports
+include_HEADERS = \
+    src/providers/ipa/ipa_hbac.h \
+    src/lib/idmap/sss_idmap.h \
+    src/sss_client/idmap/sss_nss_idmap.h \
+    $(NULL)
+
+if BUILD_LIBWBCLIENT
+libwbclient_LTLIBRARIES = libwbclient.la
+pkgconfig_DATA += src/sss_client/libwbclient/wbclient_sssd.pc
+
+EXTRA_libwbclient_la_DEPENDENCIES = \
+    src/sss_client/libwbclient/wbclient.exports
 libwbclient_la_SOURCES = \
     src/sss_client/libwbclient/wbc_guid.c \
     src/sss_client/libwbclient/wbc_idmap_common.c \
@@ -795,13 +827,8 @@ libwbclient_la_LDFLAGS = \
 
 dist_noinst_DATA += src/sss_client/libwbclient/wbclient.exports
 
-
-include_HEADERS = \
-    src/providers/ipa/ipa_hbac.h \
-    src/lib/idmap/sss_idmap.h \
-    src/sss_client/idmap/sss_nss_idmap.h \
-    src/sss_client/libwbclient/wbclient.h \
-    $(NULL)
+include_HEADERS += src/sss_client/libwbclient/wbclient_sssd.h
+endif #BUILD_LIBWBCLIENT
 
 if BUILD_IFP
 lib_LTLIBRARIES += libsss_simpleifp.la
@@ -822,7 +849,7 @@ libsss_simpleifp_la_LIBADD = \
     $(DHASH_LIBS)
 libsss_simpleifp_la_LDFLAGS = \
     -Wl,--version-script,$(srcdir)/src/lib/sifp/sss_simpleifp.exports \
-    -version-info 0:0:0
+    -version-info 0:1:0
 
 dist_noinst_DATA += src/lib/sifp/sss_simpleifp.exports
 
@@ -2045,6 +2072,28 @@ libnss_sss_la_LDFLAGS = \
     -version-info 2:0:0 \
     -Wl,--version-script,$(srcdir)/src/sss_client/sss_nss.exports
 
+if BUILD_NFS_IDMAP
+nfslib_LTLIBRARIES = sss.la
+sss_la_SOURCES = \
+    src/sss_client/common.c \
+    src/sss_client/nss_mc_common.c \
+    src/util/io.c \
+    src/util/murmurhash3.c \
+    src/sss_client/nss_mc_passwd.c \
+    src/sss_client/nss_mc_group.c \
+    src/sss_client/nfs/sss_nfs_client.c \
+    $(NULL)
+sss_la_CFLAGS = $(AM_CFLAGS)
+sss_la_LIBADD = \
+    $(CLIENT_LIBS) \
+    $(NFSIDMAP_LIBS) \
+    $(NULL)
+sss_la_LDFLAGS = \
+    -module \
+    -avoid-version \
+    $(NULL)
+endif
+
 pamlib_LTLIBRARIES = pam_sss.la
 pam_sss_la_SOURCES = \
     src/sss_client/pam_sss.c \
@@ -2475,6 +2524,25 @@ sssd_krb5_locator_plugin_la_CFLAGS = \
     $(AM_CFLAGS) \
     $(KRB5_CFLAGS)
 sssd_krb5_locator_plugin_la_LDFLAGS = \
+    -avoid-version \
+    -module
+endif
+
+if BUILD_KRB5_LOCALAUTH_PLUGIN
+sssd_krb5_localauth_plugin_la_SOURCES = \
+    src/krb5_plugin/sssd_krb5_localauth_plugin.c \
+    src/util/murmurhash3.c \
+    src/util/io.c \
+    src/sss_client/common.c \
+    src/sss_client/nss_mc_common.c \
+    src/sss_client/nss_mc_passwd.c \
+    src/sss_client/nss_passwd.c
+sssd_krb5_localauth_plugin_la_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(KRB5_CFLAGS)
+sssd_krb5_localauth_plugin_la_LIBADD = \
+    $(KRB5_LIBS)
+sssd_krb5_localauth_plugin_la_LDFLAGS = \
     -avoid-version \
     -module
 endif

@@ -134,15 +134,12 @@ static int pd_set_primary_name(const struct ldb_message *msg,struct pam_data *pd
     return EOK;
 }
 
-static int pam_parse_in_data_v2(struct sss_domain_info *domains,
-                                const char *default_domain,
-                                struct pam_data *pd,
+static int pam_parse_in_data_v2(struct pam_data *pd,
                                 uint8_t *body, size_t blen)
 {
     size_t c;
     uint32_t type;
     uint32_t size;
-    char *pam_user;
     int ret;
     uint32_t start;
     uint32_t terminator;
@@ -178,12 +175,7 @@ static int pam_parse_in_data_v2(struct sss_domain_info *domains,
 
             switch(type) {
                 case SSS_PAM_ITEM_USER:
-                    ret = extract_string(&pam_user, size, body, blen, &c);
-                    if (ret != EOK) return ret;
-
-                    ret = sss_parse_name_for_domains(pd, domains,
-                                                     default_domain, pam_user,
-                                                     &pd->domain, &pd->user);
+                    ret = extract_string(&pd->logon_name, size, body, blen, &c);
                     if (ret != EOK) return ret;
                     break;
                 case SSS_PAM_ITEM_SERVICE:
@@ -226,22 +218,16 @@ static int pam_parse_in_data_v2(struct sss_domain_info *domains,
 
     } while(c < blen);
 
-    if (pd->user == NULL || *pd->user == '\0') return EINVAL;
-
-    DEBUG_PAM_DATA(SSSDBG_CONF_SETTINGS, pd);
-
     return EOK;
 
 }
 
-static int pam_parse_in_data_v3(struct sss_domain_info *domains,
-                                const char *default_domain,
-                                struct pam_data *pd,
+static int pam_parse_in_data_v3(struct pam_data *pd,
                                 uint8_t *body, size_t blen)
 {
     int ret;
 
-    ret = pam_parse_in_data_v2(domains, default_domain, pd, body, blen);
+    ret = pam_parse_in_data_v2(pd, body, blen);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "pam_parse_in_data_v2 failed.\n");
         return ret;
@@ -284,9 +270,7 @@ static int extract_authtok_v1(struct sss_auth_token *tok,
     return ret;
 }
 
-static int pam_parse_in_data(struct sss_domain_info *domains,
-                             const char *default_domain,
-                             struct pam_data *pd,
+static int pam_parse_in_data(struct pam_data *pd,
                              uint8_t *body, size_t blen)
 {
     size_t start;
@@ -300,10 +284,7 @@ static int pam_parse_in_data(struct sss_domain_info *domains,
     /* user name */
     for (start = end; end < last; end++) if (body[end] == '\0') break;
     if (body[end++] != '\0') return EINVAL;
-
-    ret = sss_parse_name_for_domains(pd, domains, default_domain,
-                                     (char *)&body[start], &pd->domain, &pd->user);
-    if (ret != EOK) return ret;
+    pd->logon_name = (char *) &body[start];
 
     for (start = end; end < last; end++) if (body[end] == '\0') break;
     if (body[end++] != '\0') return EINVAL;
@@ -743,25 +724,28 @@ errno_t pam_forwarder_parse_data(struct cli_ctx *cctx, struct pam_data *pd)
 
     switch (cctx->cli_protocol_version->version) {
         case 1:
-            ret = pam_parse_in_data(cctx->rctx->domains,
-                                    cctx->rctx->default_domain, pd,
-                                    body, blen);
+            ret = pam_parse_in_data(pd, body, blen);
             break;
         case 2:
-            ret = pam_parse_in_data_v2(cctx->rctx->domains,
-                                       cctx->rctx->default_domain, pd,
-                                       body, blen);
+            ret = pam_parse_in_data_v2(pd, body, blen);
             break;
         case 3:
-            ret = pam_parse_in_data_v3(cctx->rctx->domains,
-                                       cctx->rctx->default_domain, pd,
-                                       body, blen);
+            ret = pam_parse_in_data_v3(pd, body, blen);
             break;
         default:
             DEBUG(SSSDBG_CRIT_FAILURE, "Illegal protocol version [%d].\n",
                       cctx->cli_protocol_version->version);
             ret = EINVAL;
     }
+    if (ret != EOK) {
+        goto done;
+    }
+
+    ret = sss_parse_name_for_domains(pd, cctx->rctx->domains,
+                                     cctx->rctx->default_domain, pd->logon_name,
+                                     &pd->domain, &pd->user);
+
+    DEBUG_PAM_DATA(SSSDBG_CONF_SETTINGS, pd);
 
 done:
     return ret;
@@ -898,7 +882,22 @@ static void pam_forwarder_cb(struct tevent_req *req)
     pd = preq->pd;
 
     ret = pam_forwarder_parse_data(cctx, pd);
-    if (ret != EOK) {
+    if (ret == EAGAIN) {
+        if (strchr(preq->pd->logon_name, '@') == NULL) {
+            goto done;
+        }
+        /* Assuming Kerberos principal */
+        preq->domain = preq->cctx->rctx->domains;
+        preq->check_provider = NEED_CHECK_PROVIDER(preq->domain->provider);
+        preq->pd->user = talloc_strdup(preq->pd, preq->pd->logon_name);
+        if (preq->pd->user == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
+            ret = ENOMEM;
+            goto done;
+        }
+        preq->pd->name_is_upn = true;
+        preq->pd->domain = NULL;
+    } else if (ret != EOK) {
         ret = EINVAL;
         goto done;
     }
@@ -932,11 +931,14 @@ static int pam_check_user_search(struct pam_auth_req *preq)
     struct dp_callback_ctx *cb_ctx;
     struct pam_ctx *pctx =
             talloc_get_type(preq->cctx->rctx->pvt_ctx, struct pam_ctx);
+    static const char *user_attrs[] = SYSDB_PW_ATTRS;
+    struct ldb_message *msg;
 
     while (dom) {
        /* if it is a domainless search, skip domains that require fully
          * qualified names instead */
-        while (dom && !preq->pd->domain && dom->fqnames) {
+        while (dom && !preq->pd->domain && !preq->pd->name_is_upn
+                && dom->fqnames) {
             dom = get_next_domain(dom, false);
         }
 
@@ -994,20 +996,18 @@ static int pam_check_user_search(struct pam_auth_req *preq)
             return EFAULT;
         }
 
-        ret = sysdb_getpwnam(preq, dom, name, &preq->res);
-        if (ret != EOK) {
+        if (preq->pd->name_is_upn) {
+            ret = sysdb_search_user_by_upn(preq, dom, name, user_attrs, &msg);
+        } else {
+            ret = sysdb_search_user_by_name(preq, dom, name, user_attrs, &msg);
+        }
+        if (ret != EOK && ret != ENOENT) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Failed to make request to our cache!\n");
             return EIO;
         }
 
-        if (preq->res->count > 1) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "getpwnam call returned more than one result !?!\n");
-            return ENOENT;
-        }
-
-        if (preq->res->count == 0) {
+        if (ret == ENOENT) {
             if (preq->check_provider == false) {
                 /* set negative cache only if not result of cache check */
                 ret = sss_ncache_set_user(pctx->ncache, false, dom, name);
@@ -1036,7 +1036,7 @@ static int pam_check_user_search(struct pam_auth_req *preq)
 
         /* if we need to check the remote account go on */
         if (preq->check_provider) {
-            cacheExpire = ldb_msg_find_attr_as_uint64(preq->res->msgs[0],
+            cacheExpire = ldb_msg_find_attr_as_uint64(msg,
                                                       SYSDB_CACHE_EXPIRE, 0);
             if (cacheExpire < time(NULL)) {
                 break;
@@ -1047,7 +1047,7 @@ static int pam_check_user_search(struct pam_auth_req *preq)
               "Returning info for user [%s@%s]\n", name, dom->name);
 
         /* We might have searched by alias. Pass on the primary name */
-        ret = pd_set_primary_name(preq->res->msgs[0], preq->pd);
+        ret = pd_set_primary_name(msg, preq->pd);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Could not canonicalize username\n");
             return ret;
@@ -1069,8 +1069,8 @@ static int pam_check_user_search(struct pam_auth_req *preq)
         preq->check_provider = false;
 
         dpreq = sss_dp_get_account_send(preq, preq->cctx->rctx,
-                                        dom, false, SSS_DP_INITGROUPS,
-                                        name, 0, NULL);
+                              dom, false, SSS_DP_INITGROUPS, name, 0,
+                              preq->pd->name_is_upn ? EXTRA_NAME_IS_UPN : NULL);
         if (!dpreq) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Out of memory sending data provider request\n");

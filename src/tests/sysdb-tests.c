@@ -3979,7 +3979,7 @@ START_TEST(test_odd_characters)
 }
 END_TEST
 
-START_TEST(test_sss_ldb_search)
+START_TEST(test_SSS_LDB_SEARCH)
 {
     errno_t ret;
     struct sysdb_test_ctx *test_ctx;
@@ -4013,10 +4013,10 @@ START_TEST(test_sss_ldb_search)
     /* Retrieve */
 
     /* Empty filter */
-    ret = sss_ldb_search(test_ctx->sysdb->ldb, test_ctx, &res, group_dn,
-                         LDB_SCOPE_BASE, NULL, NULL);
+    SSS_LDB_SEARCH(ret, test_ctx->sysdb->ldb, test_ctx, &res, group_dn,
+                   LDB_SCOPE_BASE, NULL, NULL);
 
-    fail_unless(ret == EOK, "sss_ldb_search error [%d][%s]",
+    fail_unless(ret == EOK, "SSS_LDB_SEARCH error [%d][%s]",
                 ret, strerror(ret));
 
     fail_unless(res->count == 1, "Received [%d] responses",
@@ -4030,27 +4030,27 @@ START_TEST(test_sss_ldb_search)
     talloc_zfree(res);
 
     /* Non-empty filter */
-    ret = sss_ldb_search(test_ctx->sysdb->ldb, test_ctx, &res, group_dn,
-                         LDB_SCOPE_BASE, NULL, "objectClass=group");
+    SSS_LDB_SEARCH(ret, test_ctx->sysdb->ldb, test_ctx, &res, group_dn,
+                   LDB_SCOPE_BASE, NULL, "objectClass=group");
 
-    fail_unless(ret == EOK, "sss_ldb_search error [%d][%s]",
+    fail_unless(ret == EOK, "SSS_LDB_SEARCH error [%d][%s]",
                 ret, strerror(ret));
     talloc_zfree(res);
 
     /* Filter yeilding no results */
-    ret = sss_ldb_search(test_ctx->sysdb->ldb, test_ctx, &res, group_dn,
-                         LDB_SCOPE_BASE, NULL,
-                         "objectClass=nonExistingObjectClass");
+    SSS_LDB_SEARCH(ret, test_ctx->sysdb->ldb, test_ctx, &res, group_dn,
+                   LDB_SCOPE_BASE, NULL,
+                   "objectClass=nonExistingObjectClass");
 
     fail_unless(ret == ENOENT, "sss_ldb_search error [%d][%s]",
                 ret, strerror(ret));
     talloc_zfree(res);
 
     /* Non-existing dn */
-    ret = sss_ldb_search(test_ctx->sysdb->ldb, test_ctx, &res, nonexist_dn,
-                         LDB_SCOPE_BASE, NULL, NULL);
+    SSS_LDB_SEARCH(ret, test_ctx->sysdb->ldb, test_ctx, &res, nonexist_dn,
+                   LDB_SCOPE_BASE, NULL, NULL);
 
-    fail_unless(ret == ENOENT, "sss_ldb_search error [%d][%s]",
+    fail_unless(ret == ENOENT, "SSS_LDB_SEARCH error [%d][%s]",
                 ret, strerror(ret));
     talloc_zfree(res);
 
@@ -4626,13 +4626,13 @@ START_TEST (test_sysdb_search_return_ENOENT)
     talloc_zfree(msgs);
     talloc_zfree(user_dn);
 
-    /* sss_ldb_search */
+    /* SSS_LDB_SEARCH */
     user_dn = sysdb_user_dn(test_ctx, test_ctx->domain, "nonexisting_user");
     fail_if(user_dn == NULL, "sysdb_user_dn failed");
-    ret = sss_ldb_search(test_ctx->sysdb->ldb, test_ctx, &res, user_dn,
-                         LDB_SCOPE_BASE, NULL, "objectClass=user");
+    SSS_LDB_SEARCH(ret, test_ctx->sysdb->ldb, test_ctx, &res, user_dn,
+                   LDB_SCOPE_BASE, NULL, "objectClass=user");
 
-    fail_unless(ret == ENOENT, "sss_ldb_search failed: %d, %s",
+    fail_unless(ret == ENOENT, "SSS_LDB_SEARCH failed: %d, %s",
                                ret, strerror(ret));
 
     talloc_zfree(res);
@@ -5535,6 +5535,101 @@ START_TEST(test_upn_dup)
 }
 END_TEST
 
+START_TEST(test_gpo_store_retrieve)
+{
+    struct sysdb_test_ctx *test_ctx;
+    errno_t ret;
+    struct ldb_result *result = NULL;
+    const char *guid;
+    int version;
+    static const char *test_guid = "3610EDA5-77EF-11D2-8DC5-00C04FA31A66";
+
+    ret = setup_sysdb_tests(&test_ctx);
+    fail_if(ret != EOK, "Could not set up the test");
+
+    ret = sysdb_gpo_get_gpo_by_guid(test_ctx, test_ctx->domain,
+                                    test_guid,
+                                    &result);
+    fail_if(ret != ENOENT, "GPO present in cache before store op");
+
+    ret = sysdb_gpo_get_gpos(test_ctx, test_ctx->domain, &result);
+    fail_if(ret != ENOENT, "GPO present in cache before store op");
+
+    ret = sysdb_gpo_store_gpo(test_ctx->domain,
+                              test_guid, 1, 5, 0);
+    fail_if(ret != EOK, "Could not store a test GPO");
+
+    ret = sysdb_gpo_get_gpos(test_ctx, test_ctx->domain, &result);
+    fail_if(ret != EOK, "GPOs not in cache after store op");
+    fail_if(result == NULL);
+    fail_if(result->count != 1);
+
+    result = NULL;
+    ret = sysdb_gpo_get_gpo_by_guid(test_ctx, test_ctx->domain,
+                                    test_guid, &result);
+    fail_if(ret != EOK, "GPO not in cache after store op");
+    fail_if(result == NULL);
+    fail_if(result->count != 1);
+
+    guid = ldb_msg_find_attr_as_string(result->msgs[0],
+                                       SYSDB_GPO_GUID_ATTR, NULL);
+    ck_assert_str_eq(guid, test_guid);
+
+    version = ldb_msg_find_attr_as_uint(result->msgs[0],
+                                        SYSDB_GPO_VERSION_ATTR, 0);
+    ck_assert_int_eq(version, 1);
+    talloc_free(test_ctx);
+}
+END_TEST
+
+START_TEST(test_gpo_replace)
+{
+    struct sysdb_test_ctx *test_ctx;
+    errno_t ret;
+    struct ldb_result *result = NULL;
+    const char *guid;
+    int version;
+    static const char *test_guid = "3610EDA5-77EF-11D2-8DC5-00C04FA31A66";
+
+    ret = setup_sysdb_tests(&test_ctx);
+    fail_if(ret != EOK, "Could not setup the test");
+
+    ret = sysdb_gpo_get_gpo_by_guid(test_ctx, test_ctx->domain,
+                                    test_guid, &result);
+    fail_if(ret != EOK, "GPO not in cache after store op");
+    fail_if(result == NULL);
+    fail_if(result->count != 1);
+
+    guid = ldb_msg_find_attr_as_string(result->msgs[0],
+                                       SYSDB_GPO_GUID_ATTR, NULL);
+    ck_assert_str_eq(guid, test_guid);
+
+    version = ldb_msg_find_attr_as_uint(result->msgs[0],
+                                        SYSDB_GPO_VERSION_ATTR, 0);
+    ck_assert_int_eq(version, 1);
+
+    /* Modify the version */
+    ret = sysdb_gpo_store_gpo(test_ctx->domain,
+                              test_guid, 2, 5, 0);
+    fail_if(ret != EOK, "Could not store a test GPO");
+
+    ret = sysdb_gpo_get_gpo_by_guid(test_ctx, test_ctx->domain,
+                                    test_guid, &result);
+    fail_if(ret != EOK, "GPO not in cache after modify op");
+    fail_if(result == NULL);
+    fail_if(result->count != 1);
+
+    guid = ldb_msg_find_attr_as_string(result->msgs[0],
+                                       SYSDB_GPO_GUID_ATTR, NULL);
+    ck_assert_str_eq(guid, test_guid);
+
+    version = ldb_msg_find_attr_as_uint(result->msgs[0],
+                                        SYSDB_GPO_VERSION_ATTR, 0);
+    ck_assert_int_eq(version, 2);
+    talloc_free(test_ctx);
+}
+END_TEST
+
 START_TEST(test_confdb_list_all_domain_names_multi_dom)
 {
     int ret;
@@ -5886,8 +5981,8 @@ Suite *create_sysdb_suite(void)
     tcase_add_loop_test(tc_memberof, test_sysdb_memberof_check_nested_double_ghosts,
                         MBO_GROUP_BASE , MBO_GROUP_BASE + 10);
 
-    /* sss_ldb_search */
-    tcase_add_test(tc_sysdb, test_sss_ldb_search);
+    /* SSS_LDB_SEARCH */
+    tcase_add_test(tc_sysdb, test_SSS_LDB_SEARCH);
 
     /* This loop counts backwards so the indexing is a little odd */
     tcase_add_loop_test(tc_memberof, test_sysdb_memberof_mod_replace_keep,
@@ -5943,6 +6038,11 @@ Suite *create_sysdb_suite(void)
     tcase_add_test(tc_upn, test_upn_dup);
 
     suite_add_tcase(s, tc_upn);
+
+    TCase *tc_gpo = tcase_create("SYSDB GPO tests");
+    tcase_add_test(tc_gpo, test_gpo_store_retrieve);
+    tcase_add_test(tc_gpo, test_gpo_replace);
+    suite_add_tcase(s, tc_gpo);
 
     /* ConfDB tests -- modify confdb, must always be last!! */
     TCase *tc_confdb = tcase_create("confDB tests");

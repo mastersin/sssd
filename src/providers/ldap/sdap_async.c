@@ -1061,6 +1061,12 @@ static errno_t add_to_deref_reply(TALLOC_CTX *mem_ctx,
 {
     int i;
 
+    if (res == NULL) {
+        /* Nothing to add, probably ACIs prevented us from dereferencing
+         * the attribute */
+        return EOK;
+    }
+
     for (i=0; i < num_maps; i++) {
         if (res[i]->attrs == NULL) continue; /* Nothing in this map */
 
@@ -1150,9 +1156,9 @@ struct sdap_get_generic_ext_state {
 
 static errno_t sdap_get_generic_ext_step(struct tevent_req *req);
 
-static void sdap_get_generic_ext_done(struct sdap_op *op,
-                                      struct sdap_msg *reply,
-                                      int error, void *pvt);
+static void sdap_get_generic_op_finished(struct sdap_op *op,
+                                         struct sdap_msg *reply,
+                                         int error, void *pvt);
 
 static struct tevent_req *
 sdap_get_generic_ext_send(TALLOC_CTX *memctx,
@@ -1351,7 +1357,7 @@ static errno_t sdap_get_generic_ext_step(struct tevent_req *req)
     DEBUG(SSSDBG_TRACE_INTERNAL, "ldap_search_ext called, msgid = %d\n", msgid);
 
     ret = sdap_op_add(state, state->ev, state->sh, msgid,
-                      sdap_get_generic_ext_done, req,
+                      sdap_get_generic_op_finished, req,
                       state->timeout,
                       &state->op);
     if (ret != EOK) {
@@ -1363,9 +1369,9 @@ done:
     return ret;
 }
 
-static void sdap_get_generic_ext_done(struct sdap_op *op,
-                                      struct sdap_msg *reply,
-                                      int error, void *pvt)
+static void sdap_get_generic_op_finished(struct sdap_op *op,
+                                         struct sdap_msg *reply,
+                                         int error, void *pvt)
 {
     struct tevent_req *req = talloc_get_type(pvt, struct tevent_req);
     struct sdap_get_generic_ext_state *state = tevent_req_data(req,
@@ -1421,13 +1427,6 @@ static void sdap_get_generic_ext_done(struct sdap_op *op,
                   sss_ldap_err2string(result), result,
                   errmsg ? errmsg : "no errmsg set");
 
-        if (refs != NULL) {
-            for (i = 0; refs[i]; i++) {
-                DEBUG(SSSDBG_TRACE_LIBS, "Ref: %s\n", refs[i]);
-            }
-            ldap_memvfree((void **) refs);
-        }
-
         if (result == LDAP_SIZELIMIT_EXCEEDED) {
             /* Try to return what we've got */
             DEBUG(SSSDBG_MINOR_FAILURE,
@@ -1447,6 +1446,16 @@ static void sdap_get_generic_ext_done(struct sdap_op *op,
         } else if (result == LDAP_UNAVAILABLE_CRITICAL_EXTENSION) {
             ldap_memfree(errmsg);
             tevent_req_error(req, ENOTSUP);
+            return;
+        } else if (result == LDAP_REFERRAL) {
+            if (refs != NULL) {
+                for (i = 0; refs[i]; i++) {
+                    DEBUG(SSSDBG_TRACE_LIBS, "Ref: %s\n", refs[i]);
+                }
+                ldap_memvfree((void **) refs);
+            }
+            ldap_memfree(errmsg);
+            tevent_req_error(req, ERR_REFERRAL);
             return;
         } else if (result != LDAP_SUCCESS && result != LDAP_NO_SUCH_OBJECT) {
             DEBUG(SSSDBG_OP_FAILURE,
@@ -1521,6 +1530,31 @@ sdap_get_generic_ext_recv(struct tevent_req *req)
 {
     TEVENT_REQ_RETURN_ON_ERROR(req);
     return EOK;
+}
+
+static void generic_ext_search_handler(struct tevent_req *subreq,
+                                       struct sdap_options *opts)
+{
+    struct tevent_req *req = tevent_req_callback_data(subreq,
+                                                      struct tevent_req);
+    int ret;
+
+    ret = sdap_get_generic_ext_recv(subreq);
+    talloc_zfree(subreq);
+    if (ret == ERR_REFERRAL) {
+        if (dp_opt_get_bool(opts->basic, SDAP_REFERRALS)) {
+            tevent_req_error(req, ret);
+            return;
+        }
+    } else if (ret) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "sdap_get_generic_ext_recv failed [%d]: %s\n",
+              ret, sss_strerror(ret));
+        tevent_req_error(req, ret);
+        return;
+    }
+
+    tevent_req_done(req);
 }
 
 /* ==Generic Search============================================ */
@@ -1610,19 +1644,10 @@ static void sdap_get_generic_done(struct tevent_req *subreq)
 {
     struct tevent_req *req = tevent_req_callback_data(subreq,
                                                       struct tevent_req);
-    int ret;
+    struct sdap_get_generic_state *state =
+                tevent_req_data(req, struct sdap_get_generic_state);
 
-    ret = sdap_get_generic_ext_recv(subreq);
-    talloc_zfree(subreq);
-    if (ret) {
-        DEBUG(SSSDBG_CONF_SETTINGS,
-              "sdap_get_generic_ext_recv failed [%d]: %s\n",
-                  ret, sss_strerror(ret));
-        tevent_req_error(req, ret);
-        return;
-    }
-
-    tevent_req_done(req);
+    return generic_ext_search_handler(subreq, state->opts);
 }
 
 int sdap_get_generic_recv(struct tevent_req *req,
@@ -1658,6 +1683,7 @@ struct sdap_x_deref_search_state {
     struct sdap_op *op;
     struct sdap_attr_map_info *maps;
     LDAPControl **ctrls;
+    struct sdap_options *opts;
 
     struct sdap_deref_reply dreply;
     int num_maps;
@@ -1681,6 +1707,7 @@ sdap_x_deref_search_send(TALLOC_CTX *memctx, struct tevent_context *ev,
     state->sh = sh;
     state->maps = maps;
     state->op = NULL;
+    state->opts = opts;
     state->num_maps = num_maps;
     state->ctrls = talloc_zero_array(state, LDAPControl *, 2);
     if (state->ctrls == NULL) {
@@ -1808,7 +1835,7 @@ static errno_t sdap_x_deref_parse_entry(struct sdap_handle *sh,
         }
 
         ret = add_to_deref_reply(state, state->num_maps,
-                                    &state->dreply, res);
+                                 &state->dreply, res);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE, "add_to_deref_reply failed.\n");
             goto done;
@@ -1830,7 +1857,12 @@ done:
 
 static void sdap_x_deref_search_done(struct tevent_req *subreq)
 {
-    sdap_get_generic_done(subreq);
+    struct tevent_req *req = tevent_req_callback_data(subreq,
+                                                      struct tevent_req);
+    struct sdap_x_deref_search_state *state =
+                tevent_req_data(req, struct sdap_x_deref_search_state);
+
+    return generic_ext_search_handler(subreq, state->opts);
 }
 
 static int sdap_x_deref_search_ctrls_destructor(void *ptr)
@@ -1999,7 +2031,12 @@ static errno_t sdap_sd_search_parse_entry(struct sdap_handle *sh,
 
 static void sdap_sd_search_done(struct tevent_req *subreq)
 {
-    sdap_get_generic_done(subreq);
+    struct tevent_req *req = tevent_req_callback_data(subreq,
+                                                      struct tevent_req);
+    struct sdap_sd_search_state *state =
+                tevent_req_data(req, struct sdap_sd_search_state);
+
+    return generic_ext_search_handler(subreq, state->opts);
 }
 
 static int sdap_sd_search_ctrls_destructor(void *ptr)
@@ -2243,7 +2280,12 @@ done:
 
 static void sdap_asq_search_done(struct tevent_req *subreq)
 {
-    sdap_get_generic_done(subreq);
+    struct tevent_req *req = tevent_req_callback_data(subreq,
+                                                      struct tevent_req);
+    struct sdap_asq_search_state *state =
+                tevent_req_data(req, struct sdap_asq_search_state);
+
+    return generic_ext_search_handler(subreq, state->opts);
 }
 
 static int sdap_asq_search_ctrls_destructor(void *ptr)

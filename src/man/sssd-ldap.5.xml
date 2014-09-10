@@ -658,6 +658,9 @@
                             The LDAP attribute that contains the user's SSH
                             public keys.
                         </para>
+                        <para>
+                            Default: sshPublicKey
+                        </para>
                     </listitem>
                 </varlistentry>
 
@@ -705,7 +708,7 @@
                             cache cleanup operation.
                         </para>
                         <para>
-                            Default: 10800 (12 hours)
+                            Default: 10800 (3 hours)
                         </para>
                     </listitem>
                 </varlistentry>

@@ -147,6 +147,8 @@
  * length */
 #define DP_SEC_ID_LEN (sizeof(DP_SEC_ID) - 1)
 
+#define EXTRA_NAME_IS_UPN "U"
+
 /* AUTH related common data and functions */
 
 #define DEBUG_PAM_DATA(level, pd) do { \
@@ -173,6 +175,8 @@ struct pam_data {
     struct sss_auth_token *authtok;
     struct sss_auth_token *newauthtok;
     uint32_t cli_pid;
+    char *logon_name;
+    bool name_is_upn;
 
     int pam_status;
     int response_delay;

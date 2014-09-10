@@ -31,6 +31,7 @@ struct nss_cmd_ctx {
     struct cli_ctx *cctx;
     enum sss_cli_command cmd;
     char *name;
+    bool name_is_upn;
     uint32_t id;
     char *secid;
 
@@ -122,6 +123,7 @@ errno_t check_cache(struct nss_dom_ctx *dctx,
                     int req_type,
                     const char *opt_name,
                     uint32_t opt_id,
+                    const char *extra,
                     sss_dp_callback_t callback,
                     void *pvt);
 

@@ -580,10 +580,11 @@ errno_t sdap_parse_deref(TALLOC_CTX *mem_ctx,
           "Dereferenced DN: %s\n", orig_dn);
 
     if (!dref->attrVals) {
-        DEBUG(SSSDBG_MINOR_FAILURE,
-              "Dereferenced entry [%s] has no attributes\n",
+        DEBUG(SSSDBG_FUNC_DATA,
+              "Dereferenced entry [%s] has no attributes, skipping\n",
               orig_dn);
-        ret = EINVAL;
+        *_res = NULL;
+        ret = EOK;
         goto done;
     }
 
@@ -1187,6 +1188,7 @@ int sdap_get_server_opts_from_rootdse(TALLOC_CTX *memctx,
             case DS_BEHAVIOR_WIN2008:
             case DS_BEHAVIOR_WIN2008R2:
             case DS_BEHAVIOR_WIN2012:
+            case DS_BEHAVIOR_WIN2012R2:
                 opts->dc_functional_level = dc_level;
                 DEBUG(SSSDBG_CONF_SETTINGS,
                       "Setting AD compatibility level to [%d]\n",
@@ -1195,7 +1197,8 @@ int sdap_get_server_opts_from_rootdse(TALLOC_CTX *memctx,
             default:
                 DEBUG(SSSDBG_MINOR_FAILURE,
                       "Received invalid value for AD compatibility level. "
-                       "Continuing without AD performance enhancements\n");
+                      "Using the lowest-common compatibility level\n");
+                opts->dc_functional_level = DS_BEHAVIOR_WIN2003;
             }
         } else if (ret != ENOENT) {
             DEBUG(SSSDBG_MINOR_FAILURE,

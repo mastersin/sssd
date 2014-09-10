@@ -962,7 +962,7 @@ static void sdap_initgr_nested_search(struct tevent_req *subreq)
     } else {
         DEBUG(SSSDBG_OP_FAILURE,
               "Search for group %s, returned %zu results. Skipping\n",
-               state->group_dns[state->cur], count);
+              state->group_dns[state->cur], count);
     }
 
     state->cur++;
@@ -1585,11 +1585,7 @@ static struct tevent_req *sdap_initgr_rfc2307bis_send(
                                         "(%s=*))",
                                         opts->group_map[SDAP_AT_GROUP_OBJECTSID].name);
     } else {
-        /* When not ID-mapping, make sure there is a non-NULL UID */
-        state->base_filter = talloc_asprintf_append(state->base_filter,
-                                        "(&(%s=*)(!(%s=0))))",
-                                        opts->group_map[SDAP_AT_GROUP_GID].name,
-                                        opts->group_map[SDAP_AT_GROUP_GID].name);
+        state->base_filter = talloc_asprintf_append(state->base_filter, ")");
     }
     if (!state->base_filter) {
         talloc_zfree(req);
@@ -2616,6 +2612,7 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
                                         struct sdap_id_ctx *id_ctx,
                                         struct sdap_id_conn_ctx *conn,
                                         const char *name,
+                                        const char *extra_value,
                                         const char **grp_attrs)
 {
     struct tevent_req *req;
@@ -2623,6 +2620,7 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
     int ret;
     char *clean_name;
     bool use_id_mapping;
+    const char *search_attr;
 
     DEBUG(SSSDBG_TRACE_ALL, "Retrieving info for initgroups call\n");
 
@@ -2661,10 +2659,15 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
         return NULL;
     }
 
+    if (extra_value && strcmp(extra_value, EXTRA_NAME_IS_UPN) == 0) {
+        search_attr =  state->opts->user_map[SDAP_AT_USER_PRINC].name;
+    } else {
+        search_attr =  state->opts->user_map[SDAP_AT_USER_NAME].name;
+    }
+
     state->user_base_filter =
             talloc_asprintf(state, "(&(%s=%s)(objectclass=%s)",
-                            state->opts->user_map[SDAP_AT_USER_NAME].name,
-                            clean_name,
+                            search_attr, clean_name,
                             state->opts->user_map[SDAP_OC_USER].name);
     if (!state->user_base_filter) {
         talloc_zfree(req);
@@ -2907,7 +2910,7 @@ static void sdap_get_initgr_user(struct tevent_req *subreq)
             return;
         }
 
-        if (state->opts->dc_functional_level >= DS_BEHAVIOR_WIN2008
+        if (state->opts->dc_functional_level >= DS_BEHAVIOR_WIN2003
             && dp_opt_get_bool(state->opts->basic, SDAP_AD_USE_TOKENGROUPS)) {
             /* Take advantage of AD's tokenGroups mechanism to look up all
              * parent groups in a single request.
@@ -3008,7 +3011,7 @@ static void sdap_get_initgr_done(struct tevent_req *subreq)
 
     case SDAP_SCHEMA_RFC2307BIS:
     case SDAP_SCHEMA_AD:
-        if (state->opts->dc_functional_level >= DS_BEHAVIOR_WIN2008
+        if (state->opts->dc_functional_level >= DS_BEHAVIOR_WIN2003
             && dp_opt_get_bool(state->opts->basic, SDAP_AD_USE_TOKENGROUPS)) {
 
             ret = sdap_ad_tokengroups_initgroups_recv(subreq);
