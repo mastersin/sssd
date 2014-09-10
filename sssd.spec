@@ -498,6 +498,7 @@ unset CK_TIMEOUT_MULTIPLIER
 %_libdir/krb5/plugins/libkrb5/sssd_krb5_locator_plugin.so
 %_libdir/krb5/plugins/authdata/sssd_pac_plugin.so
 %_libdir/cifs-utils/cifs_idmap_sss.so
+%_libdir/%name/modules/sssd_krb5_localauth_plugin.so
 %_man8dir/pam_sss*
 %_man8dir/sssd_krb5_locator_plugin*
 
