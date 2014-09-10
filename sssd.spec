@@ -425,12 +425,13 @@ unset CK_TIMEOUT_MULTIPLIER
 %dir %sssdstatedir
 %dir %_localstatedir/cache/krb5rcache
 %attr(700,root,root) %dir %dbpath
-%attr(755,root,root) %dir %mcpath
+%dir %mcpath
 %ghost %attr(0644,root,root) %verify(not md5 size mtime) %mcpath/passwd
 %ghost %attr(0644,root,root) %verify(not md5 size mtime) %mcpath/group
-%attr(755,root,root) %dir %pipepath
-%attr(755,root,root) %dir %pubconfpath
-%attr(755,root,root) %dir %gpocachepath
+%dir %pipepath
+%dir %pubconfpath
+%dir %pubconfpath/krb5.include.d
+%dir %gpocachepath
 %attr(700,root,root) %dir %pipepath/private
 %attr(750,root,root) %dir %_var/log/%name
 %attr(700,root,root) %dir %_sysconfdir/sssd
@@ -474,7 +475,6 @@ unset CK_TIMEOUT_MULTIPLIER
 %_libexecdir/%name/sssd_pac
 
 %files ipa
-%dir %pubconfpath/krb5.include.d
 %_libdir/%name/libsss_ipa.so
 %_man5dir/sssd-ipa*
 %_datadir/%name/sssd.api.d/sssd-ipa.conf
