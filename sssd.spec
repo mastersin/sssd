@@ -1,7 +1,7 @@
 
 Name: sssd
 Version: 1.12.1
-Release: alt0.1
+Release: alt1
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -70,6 +70,7 @@ BuildRequires: systemd-devel libsystemd-devel
 BuildRequires: selinux-policy-targeted
 BuildRequires: cifs-utils-devel
 BuildRequires: libsasl2-devel
+BuildRequires: libnfsidmap-devel
 BuildRequires: libaugeas-devel
 BuildRequires: libcmocka-devel
 BuildRequires: nscd
@@ -307,7 +308,6 @@ be used by Python applications.
 Summary: The SSSD libwbclient implementation
 Group: System/Libraries
 License: GPLv3+ and LGPLv3+
-Conflicts: libwbclient
 
 %description -n libwbclient-%name
 The SSSD libwbclient implementation.
@@ -316,7 +316,6 @@ The SSSD libwbclient implementation.
 Summary: Development libraries for the SSSD libwbclient implementation
 Group: Development/C
 License: GPLv3+ and LGPLv3+
-Conflicts: libwbclient-devel
 
 %description -n libwbclient-%name-devel
 Development libraries for the SSSD libwbclient implementation.
@@ -340,6 +339,7 @@ Development libraries for the SSSD libwbclient implementation.
     --enable-nsslibdir=/%_lib \
     --enable-pammoddir=/%_lib/security \
     --enable-ldb-version-check \
+    --enable-nfsidmaplibdir=/%_lib/libnfsidmap \
     --with-syslog=journald \
     --with-test-dir=/dev/shm \
     --enable-krb5-locator-plugin \
@@ -414,6 +414,7 @@ unset CK_TIMEOUT_MULTIPLIER
 %dir %_libdir/%name/modules
 %_libdir/%name/modules/libsss_autofs.so
 %_libdir/libsss_sudo.so
+/%_lib/libnfsidmap/sss.so
 
 %ldb_modulesdir/memberof.so
 %_bindir/sss_ssh_authorizedkeys
@@ -446,6 +447,7 @@ unset CK_TIMEOUT_MULTIPLIER
 %_man5dir/sssd.conf.5*
 %_man5dir/sssd-simple.5*
 %_man5dir/sssd-sudo.5*
+%_man5dir/sss_rpcidmapd.5*
 %_man8dir/sssd.8*
 %_man8dir/sss_cache.8*
 
@@ -562,16 +564,16 @@ unset CK_TIMEOUT_MULTIPLIER
 %python_sitelibdir/pysss_nss_idmap.so
 
 %files -n libwbclient-%name
-%_libdir/libwbclient.so.*
+%_libdir/%name/modules/libwbclient.so.*
 
 %files -n libwbclient-%name-devel
-%_includedir/wbclient.h
-%_libdir/libwbclient.so
-%_pkgconfigdir/wbclient.pc
+%_includedir/wbclient_sssd.h
+%_libdir/%name/modules/libwbclient.so
+%_pkgconfigdir/wbclient_sssd.pc
 
 %changelog
-* Fri Aug 29 2014 Alexey Shabalin <shaba@altlinux.ru> 1.12.1-alt0.1
-- upstream snapshot
+* Wed Sep 10 2014 Alexey Shabalin <shaba@altlinux.ru> 1.12.1-alt1
+- 1.12.1
 - add libwbclient package
 
 * Mon Jul 28 2014 Alexey Shabalin <shaba@altlinux.ru> 1.12.0-alt1
