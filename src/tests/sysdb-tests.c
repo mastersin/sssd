@@ -520,6 +520,54 @@ static int test_set_netgroup_attr(struct test_data *data)
     return ret;
 }
 
+START_TEST (test_sysdb_user_new_id)
+{
+    struct sysdb_test_ctx *test_ctx;
+    int ret;
+    const char *username;
+    struct sysdb_attrs *attrs = NULL;
+    struct ldb_message *msg;
+    const char *get_attrs[] = { SYSDB_DESCRIPTION, NULL };
+    const char *desc;
+    const char *desc_in = "testuser_new_id_desc";
+
+    /* Setup */
+    ret = setup_sysdb_tests(&test_ctx);
+    if (ret != EOK) {
+        fail("Could not set up the test");
+        return;
+    }
+
+    username = "testuser_newid";
+
+    attrs = sysdb_new_attrs(test_ctx);
+    fail_if(attrs == NULL);
+
+    ret = sysdb_attrs_add_string(attrs, SYSDB_DESCRIPTION, desc_in);
+    fail_if(ret != EOK);
+
+    ret = sysdb_add_user(test_ctx->domain, username,
+                         0, 0, username, "/", "/bin/bash",
+                         NULL, attrs, 0, 0);
+    fail_if(ret != EOK, "Could not store user %s", username);
+
+    ret = sysdb_search_user_by_name(test_ctx,
+                                    test_ctx->domain,
+                                    username, get_attrs, &msg);
+    fail_if(ret != EOK, "Could not retrieve user %s", username);
+
+    desc = ldb_msg_find_attr_as_string(msg, SYSDB_DESCRIPTION, NULL);
+    fail_unless(desc != NULL);
+    ck_assert_str_eq(desc, desc_in);
+
+    ret = sysdb_delete_user(test_ctx->domain, username, 0);
+    fail_unless(ret == EOK, "sysdb_delete_user error [%d][%s]",
+                            ret, strerror(ret));
+
+    talloc_free(test_ctx);
+}
+END_TEST
+
 START_TEST (test_sysdb_store_user)
 {
     struct sysdb_test_ctx *test_ctx;
@@ -1242,6 +1290,57 @@ START_TEST (test_sysdb_get_user_attr)
     fail_if(strcmp(attrval, "/bin/ksh"),
             "Got bad attribute value for user %s", username);
 done:
+    talloc_free(test_ctx);
+}
+END_TEST
+
+START_TEST (test_sysdb_get_user_attr_subdomain)
+{
+    struct sysdb_test_ctx *test_ctx;
+    struct sss_domain_info *subdomain = NULL;
+    const char *attrs[] = { SYSDB_SHELL, NULL };
+    struct ldb_result *res;
+    const char *attrval;
+    const char *username = "test_sysdb_get_user_attr_subdomain";
+    const char *fq_name;
+    int ret;
+
+    /* Setup */
+    ret = setup_sysdb_tests(&test_ctx);
+    fail_if(ret != EOK, "Could not set up the test");
+
+    /* Create subdomain */
+    subdomain = new_subdomain(test_ctx, test_ctx->domain,
+                              "test.sub", "TEST.SUB", "test", "S-3",
+                              false, false, NULL);
+    fail_if(subdomain == NULL, "Failed to create new subdomain.");
+
+    ret = sss_names_init_from_args(test_ctx,
+                                   "(((?P<domain>[^\\\\]+)\\\\(?P<name>.+$))|" \
+                                   "((?P<name>[^@]+)@(?P<domain>.+$))|" \
+                                   "(^(?P<name>[^@\\\\]+)$))",
+                                   "%1$s@%2$s", &subdomain->names);
+    fail_if(ret != EOK, "Failed to init names.");
+
+    /* Create user */
+    fq_name = sss_tc_fqname(test_ctx, subdomain->names, subdomain, username);
+    fail_if(fq_name == NULL, "Failed to create fq name.");
+
+    ret = sysdb_store_user(subdomain, fq_name, NULL, 12345, 0, "Gecos",
+                           "/home/userhome", "/bin/bash", NULL, NULL, NULL,
+                           -1, 0);
+    fail_if(ret != EOK, "sysdb_store_user failed.");
+
+    /* Test */
+    ret = sysdb_get_user_attr(test_ctx, subdomain, username,
+                              attrs, &res);
+    fail_if(ret != EOK, "Could not get user attributes.");
+    fail_if(res->count != 1, "Invalid number of entries, expected 1, got %d",
+            res->count);
+
+    attrval = ldb_msg_find_attr_as_string(res->msgs[0], SYSDB_SHELL, 0);
+    fail_if(strcmp(attrval, "/bin/bash") != 0, "Got bad attribute value.");
+
     talloc_free(test_ctx);
 }
 END_TEST
@@ -3407,6 +3506,45 @@ START_TEST (test_sysdb_attrs_to_list)
 }
 END_TEST
 
+START_TEST(test_sysdb_get_real_name)
+{
+    errno_t ret;
+    struct sysdb_test_ctx *test_ctx;
+    struct sysdb_attrs *user_attrs;
+    const char *str;
+
+    ret = setup_sysdb_tests(&test_ctx);
+    fail_if(ret != EOK, "Could not set up the test");
+
+    user_attrs = sysdb_new_attrs(test_ctx);
+    fail_unless(user_attrs != NULL, "sysdb_new_attrs failed");
+
+    ret = sysdb_attrs_add_string(user_attrs, SYSDB_NAME_ALIAS, "alias");
+    fail_unless(ret == EOK, "sysdb_attrs_add_string failed.");
+
+    ret = sysdb_attrs_add_string(user_attrs, SYSDB_UPN, "foo@bar");
+    fail_unless(ret == EOK, "sysdb_attrs_add_string failed.");
+
+    ret = sysdb_store_user(test_ctx->domain, "RealName",
+                           NULL, 22345, 0, "gecos",
+                           "/home/realname", "/bin/bash",
+                           NULL, user_attrs, NULL, -1, 0);
+    fail_unless(ret == EOK, "sysdb_store_user failed.");
+
+    /* Get real, uncanonicalized name as string */
+    ret = sysdb_get_real_name(test_ctx, test_ctx->domain, "alias", &str);
+    fail_unless(ret == EOK, "sysdb_get_real_name failed.");
+    fail_unless(strcmp(str, "RealName") == 0, "Expected [%s], got [%s].",
+                                              "RealName", str);
+
+    ret = sysdb_get_real_name(test_ctx, test_ctx->domain, "foo@bar", &str);
+    fail_unless(ret == EOK, "sysdb_get_real_name failed.");
+    fail_unless(strcmp(str, "RealName") == 0, "Expected [%s], got [%s].",
+                                              "foo@bar", str);
+
+}
+END_TEST
+
 START_TEST(test_group_rename)
 {
     struct sysdb_test_ctx *test_ctx;
@@ -4492,6 +4630,106 @@ START_TEST(test_sysdb_attrs_get_string_array)
 }
 END_TEST
 
+START_TEST(test_sysdb_attrs_add_val)
+{
+    int ret;
+    struct sysdb_attrs *attrs;
+    TALLOC_CTX *tmp_ctx;
+    struct ldb_val val = {discard_const(TEST_ATTR_VALUE),
+                          sizeof(TEST_ATTR_VALUE) - 1};
+
+    tmp_ctx = talloc_new(NULL);
+    fail_unless(tmp_ctx != NULL, "talloc_new failed");
+
+    attrs = sysdb_new_attrs(NULL);
+    fail_unless(attrs != NULL, "sysdb_new_attrs failed");
+
+    ret = sysdb_attrs_add_val(attrs, TEST_ATTR_NAME, &val);
+    fail_unless(ret == EOK, "sysdb_attrs_add_val failed.");
+
+    ret = sysdb_attrs_add_val(attrs, TEST_ATTR_NAME, &val);
+    fail_unless(ret == EOK, "sysdb_attrs_add_val failed.");
+
+    fail_unless(attrs->num == 1, "Unexpected number of attributes.");
+    fail_unless(strcmp(attrs->a[0].name, TEST_ATTR_NAME) == 0,
+                "Unexpected attribute name.");
+    fail_unless(attrs->a[0].num_values == 2,
+                "Unexpected number of attribute values.");
+    fail_unless(ldb_val_string_cmp(&attrs->a[0].values[0],
+                                   TEST_ATTR_VALUE) == 0,
+                "Unexpected attribute value.");
+    fail_unless(ldb_val_string_cmp(&attrs->a[0].values[1],
+                                   TEST_ATTR_VALUE) == 0,
+                "Unexpected attribute value.");
+
+    talloc_free(tmp_ctx);
+}
+END_TEST
+
+START_TEST(test_sysdb_attrs_add_val_safe)
+{
+    int ret;
+    struct sysdb_attrs *attrs;
+    TALLOC_CTX *tmp_ctx;
+    struct ldb_val val = {discard_const(TEST_ATTR_VALUE),
+                          sizeof(TEST_ATTR_VALUE) - 1};
+
+    tmp_ctx = talloc_new(NULL);
+    fail_unless(tmp_ctx != NULL, "talloc_new failed");
+
+    attrs = sysdb_new_attrs(NULL);
+    fail_unless(attrs != NULL, "sysdb_new_attrs failed");
+
+    ret = sysdb_attrs_add_val(attrs, TEST_ATTR_NAME, &val);
+    fail_unless(ret == EOK, "sysdb_attrs_add_val failed.");
+
+    ret = sysdb_attrs_add_val_safe(attrs, TEST_ATTR_NAME, &val);
+    fail_unless(ret == EOK, "sysdb_attrs_add_val failed.");
+
+    fail_unless(attrs->num == 1, "Unexpected number of attributes.");
+    fail_unless(strcmp(attrs->a[0].name, TEST_ATTR_NAME) == 0,
+                "Unexpected attribute name.");
+    fail_unless(attrs->a[0].num_values == 1,
+                "Unexpected number of attribute values.");
+    fail_unless(ldb_val_string_cmp(&attrs->a[0].values[0],
+                                   TEST_ATTR_VALUE) == 0,
+                "Unexpected attribute value.");
+
+    talloc_free(tmp_ctx);
+}
+END_TEST
+
+START_TEST(test_sysdb_attrs_add_string_safe)
+{
+    int ret;
+    struct sysdb_attrs *attrs;
+    TALLOC_CTX *tmp_ctx;
+
+    tmp_ctx = talloc_new(NULL);
+    fail_unless(tmp_ctx != NULL, "talloc_new failed");
+
+    attrs = sysdb_new_attrs(NULL);
+    fail_unless(attrs != NULL, "sysdb_new_attrs failed");
+
+    ret = sysdb_attrs_add_string(attrs, TEST_ATTR_NAME, TEST_ATTR_VALUE);
+    fail_unless(ret == EOK, "sysdb_attrs_add_val failed.");
+
+    ret = sysdb_attrs_add_string_safe(attrs, TEST_ATTR_NAME, TEST_ATTR_VALUE);
+    fail_unless(ret == EOK, "sysdb_attrs_add_val failed.");
+
+    fail_unless(attrs->num == 1, "Unexpected number of attributes.");
+    fail_unless(strcmp(attrs->a[0].name, TEST_ATTR_NAME) == 0,
+                "Unexpected attribute name.");
+    fail_unless(attrs->a[0].num_values == 1,
+                "Unexpected number of attribute values.");
+    fail_unless(ldb_val_string_cmp(&attrs->a[0].values[0],
+                                   TEST_ATTR_VALUE) == 0,
+                "Unexpected attribute value.");
+
+    talloc_free(tmp_ctx);
+}
+END_TEST
+
 START_TEST (test_sysdb_search_return_ENOENT)
 {
     struct sysdb_test_ctx *test_ctx;
@@ -4501,6 +4739,7 @@ START_TEST (test_sysdb_search_return_ENOENT)
     struct ldb_message **msgs = NULL;
     struct ldb_result *res = NULL;
     size_t count;
+    const char *str = NULL;
 
     /* Setup */
     ret = setup_sysdb_tests(&test_ctx);
@@ -4513,6 +4752,12 @@ START_TEST (test_sysdb_search_return_ENOENT)
     fail_unless(ret == ENOENT, "sysdb_search_user_by_name error [%d][%s].",
                                ret, strerror(ret));
     talloc_zfree(msg);
+
+    ret = sysdb_get_real_name(test_ctx, test_ctx->domain,
+                              "nonexisting_user", &str);
+    fail_unless(ret == ENOENT, "sysdb_get_real_name error [%d][%s].",
+                               ret, strerror(ret));
+    talloc_zfree(str);
 
     ret = sysdb_search_user_by_uid(test_ctx, test_ctx->domain,
                                    1234, NULL, &msg);
@@ -4972,6 +5217,7 @@ START_TEST(test_sysdb_subdomain_group_ops)
     struct sss_domain_info *subdomain = NULL;
     struct ldb_message *msg = NULL;
     struct ldb_dn *check_dn = NULL;
+    struct sysdb_attrs *group_attrs;
 
     ret = setup_sysdb_tests(&test_ctx);
     fail_if(ret != EOK, "Could not set up the test");
@@ -4989,29 +5235,45 @@ START_TEST(test_sysdb_subdomain_group_ops)
     fail_unless(ret == EOK, "sysdb_update_subdomains failed with [%d][%s]",
                             ret, strerror(ret));
 
+    group_attrs = sysdb_new_attrs(test_ctx);
+    fail_unless(group_attrs != NULL, "sysdb_new_attrs failed");
+
+    ret = sysdb_attrs_add_string(group_attrs, SYSDB_NAME_ALIAS, "subdomgroup");
+    fail_unless(ret == EOK, "sysdb_attrs_add_string failed.");
+
     ret = sysdb_store_group(subdomain,
-                            "subdomgroup", 12345, NULL, -1, 0);
-    fail_unless(ret == EOK, "sysdb_store_domgroup failed.");
+                            "subDomGroup", 12345, group_attrs, -1, 0);
+    fail_unless(ret == EOK, "sysdb_store_group failed.");
 
     check_dn = ldb_dn_new(test_ctx, test_ctx->sysdb->ldb,
-                          "name=subdomgroup,cn=groups,cn=test.sub,cn=sysdb");
+                          "name=subDomGroup,cn=groups,cn=test.sub,cn=sysdb");
     fail_unless(check_dn != NULL);
 
+    ret = sysdb_search_group_by_name(test_ctx, subdomain, "subDomGroup", NULL,
+                                     &msg);
+    fail_unless(ret == EOK, "sysdb_search_group_by_name failed with [%d][%s].",
+                            ret, strerror(ret));
+    fail_unless(ldb_dn_compare(msg->dn, check_dn) == 0,
+                "Unexpected DN returned");
+
+    /* subdomains are case insensitive, so it should be possible to search
+    the group with a lowercase name version, too */
     ret = sysdb_search_group_by_name(test_ctx, subdomain, "subdomgroup", NULL,
                                      &msg);
-    fail_unless(ret == EOK, "sysdb_search_domgroup_by_name failed with [%d][%s].",
+    fail_unless(ret == EOK, "case-insensitive group search failed with [%d][%s].",
                             ret, strerror(ret));
     fail_unless(ldb_dn_compare(msg->dn, check_dn) == 0,
-                "Unexpedted DN returned");
+                "Unexpected DN returned");
+
 
     ret = sysdb_search_group_by_gid(test_ctx, subdomain, 12345, NULL, &msg);
-    fail_unless(ret == EOK, "sysdb_search_domgroup_by_gid failed with [%d][%s].",
+    fail_unless(ret == EOK, "sysdb_search_group_by_gid failed with [%d][%s].",
                             ret, strerror(ret));
     fail_unless(ldb_dn_compare(msg->dn, check_dn) == 0,
                 "Unexpedted DN returned");
 
-    ret = sysdb_delete_group(subdomain, "subdomgroup", 12345);
-    fail_unless(ret == EOK, "sysdb_delete_domgroup failed with [%d][%s].",
+    ret = sysdb_delete_group(subdomain, "subDomGroup", 12345);
+    fail_unless(ret == EOK, "sysdb_delete_group failed with [%d][%s].",
                             ret, strerror(ret));
 
 }
@@ -5686,6 +5948,9 @@ Suite *create_sysdb_suite(void)
     /* test getting next id works */
     tcase_add_test(tc_sysdb, test_sysdb_get_new_id);
 
+    /* Add a user with an automatic ID */
+    tcase_add_test(tc_sysdb, test_sysdb_user_new_id);
+
     /* Create a new user */
     tcase_add_loop_test(tc_sysdb, test_sysdb_add_user,27000,27010);
 
@@ -5825,9 +6090,15 @@ Suite *create_sysdb_suite(void)
     /* Test SID string searches */
     tcase_add_test(tc_sysdb, test_sysdb_search_sid_str);
 
+    /* Test canonicalizing names */
+    tcase_add_test(tc_sysdb, test_sysdb_get_real_name);
+
     /* Test user and group renames */
     tcase_add_test(tc_sysdb, test_group_rename);
     tcase_add_test(tc_sysdb, test_user_rename);
+
+    /* Test GetUserAttr with subdomain user */
+    tcase_add_test(tc_sysdb, test_sysdb_get_user_attr_subdomain);
 
 /* ===== NETGROUP TESTS ===== */
 
@@ -5862,6 +6133,9 @@ Suite *create_sysdb_suite(void)
 
 /* ===== UTIL TESTS ===== */
     tcase_add_test(tc_sysdb, test_sysdb_attrs_get_string_array);
+    tcase_add_test(tc_sysdb, test_sysdb_attrs_add_val);
+    tcase_add_test(tc_sysdb, test_sysdb_attrs_add_val_safe);
+    tcase_add_test(tc_sysdb, test_sysdb_attrs_add_string_safe);
 
 /* ===== Test search return empty result ===== */
     tcase_add_test(tc_sysdb, test_sysdb_search_return_ENOENT);

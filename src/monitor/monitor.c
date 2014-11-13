@@ -154,9 +154,7 @@ struct config_file_ctx {
 struct mt_ctx {
     struct tevent_context *ev;
     struct confdb_ctx *cdb;
-    TALLOC_CTX *domain_ctx; /* Memory context for domain list */
     struct sss_domain_info *domains;
-    TALLOC_CTX *service_ctx; /* Memory context for services */
     char **services;
     int num_services;
     int started_services;
@@ -912,7 +910,7 @@ static char *check_services(char **services)
     return NULL;
 }
 
-int get_monitor_config(struct mt_ctx *ctx)
+static int get_monitor_config(struct mt_ctx *ctx)
 {
     int ret;
     int timeout_seconds;
@@ -929,11 +927,7 @@ int get_monitor_config(struct mt_ctx *ctx)
 
     ctx->service_id_timeout = timeout_seconds * 1000; /* service_id_timeout is in ms */
 
-    ctx->service_ctx = talloc_new(ctx);
-    if(!ctx->service_ctx) {
-        return ENOMEM;
-    }
-    ret = confdb_get_string_as_list(ctx->cdb, ctx->service_ctx,
+    ret = confdb_get_string_as_list(ctx->cdb, ctx,
                                     CONFDB_MONITOR_CONF_ENTRY,
                                     CONFDB_MONITOR_ACTIVE_SERVICES,
                                     &ctx->services);
@@ -942,7 +936,7 @@ int get_monitor_config(struct mt_ctx *ctx)
         return EINVAL;
     }
 
-    ret = add_implicit_services(ctx->cdb, ctx->service_ctx, &ctx->services);
+    ret = add_implicit_services(ctx->cdb, ctx, &ctx->services);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "Failed to add implicit configured " \
                                   "services. Some functionality might " \
@@ -961,10 +955,6 @@ int get_monitor_config(struct mt_ctx *ctx)
         ctx->num_services++;
     }
 
-    ctx->domain_ctx = talloc_new(ctx);
-    if(!ctx->domain_ctx) {
-        return ENOMEM;
-    }
     ret = confdb_get_domains(ctx->cdb, &ctx->domains);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "No domains configured.\n");
@@ -1665,11 +1655,11 @@ done:
     return ret;
 }
 
-errno_t monitor_config_file_fallback(TALLOC_CTX *mem_ctx,
-                                     struct mt_ctx *ctx,
-                                     const char *file,
-                                     monitor_reconf_fn fn,
-                                     bool ignore_missing);
+static errno_t monitor_config_file_fallback(TALLOC_CTX *mem_ctx,
+                                            struct mt_ctx *ctx,
+                                            const char *file,
+                                            monitor_reconf_fn fn,
+                                            bool ignore_missing);
 
 #ifdef HAVE_INOTIFY
 static void process_config_file(struct tevent_context *ev,
@@ -2079,11 +2069,11 @@ static int monitor_config_file(TALLOC_CTX *mem_ctx,
     return ret;
 }
 
-errno_t monitor_config_file_fallback(TALLOC_CTX *mem_ctx,
-                                     struct mt_ctx *ctx,
-                                     const char *file,
-                                     monitor_reconf_fn fn,
-                                     bool ignore_missing)
+static errno_t monitor_config_file_fallback(TALLOC_CTX *mem_ctx,
+                                            struct mt_ctx *ctx,
+                                            const char *file,
+                                            monitor_reconf_fn fn,
+                                            bool ignore_missing)
 {
     struct config_file_callback *cb = NULL;
     struct stat file_stat;
@@ -2138,8 +2128,8 @@ errno_t monitor_config_file_fallback(TALLOC_CTX *mem_ctx,
     return EOK;
 }
 
-int monitor_process_init(struct mt_ctx *ctx,
-                         const char *config_file)
+static int monitor_process_init(struct mt_ctx *ctx,
+                                const char *config_file)
 {
     TALLOC_CTX *tmp_ctx;
     struct tevent_signal *tes;

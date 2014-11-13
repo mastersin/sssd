@@ -19,6 +19,8 @@ if HAVE_MANPAGES
 SUBDIRS += src/man
 endif
 
+SUBDIRS += . src/tests/cwrap
+
 # Some old versions of automake don't define builddir
 builddir ?= .
 
@@ -74,6 +76,8 @@ krb5rcachedir = @krb5rcachedir@
 sudolibdir = @sudolibpath@
 
 UNICODE_LIBS=@UNICODE_LIBS@
+
+MKDIR_P = @MKDIR_P@
 
 AM_CFLAGS =
 if WANT_AUX_INFO
@@ -346,7 +350,9 @@ dist_noinst_DATA = \
     contrib/ci/configure.sh \
     contrib/ci/deps.sh \
     contrib/ci/distro.sh \
-    contrib/ci/misc.sh
+    contrib/ci/misc.sh \
+    contrib/ci/sssd.supp \
+    $(NULL)
 
 ###############################
 # Global compilation settings #
@@ -666,6 +672,7 @@ libsss_util_la_SOURCES = \
     src/db/sysdb_services.c \
     src/db/sysdb_autofs.c \
     src/db/sysdb_subdomains.c \
+    src/db/sysdb_views.c \
     src/db/sysdb_ranges.c \
     src/db/sysdb_idmap.c \
     src/db/sysdb_gpo.c \
@@ -789,7 +796,7 @@ libsss_nss_idmap_la_LIBADD = \
     $(CLIENT_LIBS)
 libsss_nss_idmap_la_LDFLAGS = \
     -Wl,--version-script,$(srcdir)/src/sss_client/idmap/sss_nss_idmap.exports \
-    -version-info 0:1:0
+    -version-info 1:0:1
 
 dist_noinst_DATA += src/sss_client/idmap/sss_nss_idmap.exports
 
@@ -1184,7 +1191,7 @@ TESTS_ENVIRONMENT = LDB_MODULES_PATH=$(abs_top_builddir)/ldb_mod_test_dir \
                     $(AUX_TESTS_ENVIRONMENT)
 
 ldb_mod_test_dir: memberof.la
-	mkdir -p $(builddir)/ldb_mod_test_dir
+	$(MKDIR_P) $(builddir)/ldb_mod_test_dir
 	cp $(builddir)/.libs/memberof.so $(builddir)/ldb_mod_test_dir
 
 check_LTLIBRARIES = \
@@ -1286,13 +1293,14 @@ strtonum_tests_LDADD = \
 krb5_utils_tests_SOURCES = \
     src/tests/krb5_utils-tests.c \
     src/providers/krb5/krb5_utils.c \
-    src/providers/krb5/krb5_become_user.c \
     src/providers/krb5/krb5_common.c \
     src/util/sss_krb5.c \
     src/providers/data_provider_fo.c \
     src/providers/data_provider_opts.c \
     src/providers/data_provider_callbacks.c \
-    $(SSSD_FAILOVER_OBJ)
+    src/util/become_user.c \
+    $(SSSD_FAILOVER_OBJ) \
+    $(NULL)
 krb5_utils_tests_CFLAGS = \
     $(AM_CFLAGS) \
     $(KRB5_CFLAGS) \
@@ -1567,13 +1575,14 @@ krb5_child_test_SOURCES = \
     src/tests/krb5_child-test.c \
     src/providers/krb5/krb5_utils.c \
     src/providers/krb5/krb5_child_handler.c \
-    src/providers/krb5/krb5_become_user.c \
     src/providers/krb5/krb5_common.c \
     src/util/sss_krb5.c \
     src/providers/data_provider_fo.c \
     src/providers/data_provider_opts.c \
     src/providers/data_provider_callbacks.c \
-    $(SSSD_FAILOVER_OBJ)
+    src/util/become_user.c \
+    $(SSSD_FAILOVER_OBJ) \
+    $(NULL)
 krb5_child_test_CFLAGS = \
     $(AM_CFLAGS) \
     -DKRB5_CHILD_DIR=\"$(builddir)\" \
@@ -2243,7 +2252,6 @@ libsss_ad_common_la_LIBADD = \
 
 libsss_krb5_common_la_SOURCES = \
     src/providers/krb5/krb5_utils.c \
-    src/providers/krb5/krb5_become_user.c \
     src/providers/krb5/krb5_delayed_online_authentication.c \
     src/providers/krb5/krb5_renew_tgt.c \
     src/providers/krb5/krb5_wait_queue.c \
@@ -2252,7 +2260,9 @@ libsss_krb5_common_la_SOURCES = \
     src/providers/krb5/krb5_access.c \
     src/providers/krb5/krb5_child_handler.c \
     src/providers/krb5/krb5_init_shared.c \
-    src/util/sss_krb5.c
+    src/util/sss_krb5.c \
+    src/util/become_user.c \
+    $(NULL)
 libsss_krb5_common_la_CFLAGS = \
     $(KRB5_CFLAGS)
 libsss_krb5_common_la_LIBADD = \
@@ -2331,6 +2341,7 @@ libsss_ipa_la_SOURCES = \
     src/providers/ipa/ipa_subdomains.c \
     src/providers/ipa/ipa_subdomains_id.c \
     src/providers/ipa/ipa_subdomains_ext_groups.c \
+    src/providers/ipa/ipa_views.c \
     src/providers/ipa/ipa_s2n_exop.c \
     src/providers/ipa/ipa_hbac_hosts.c \
     src/providers/ipa/ipa_hbac_private.h \
@@ -2432,7 +2443,6 @@ libsss_ad_la_LDFLAGS = \
     -module
 
 krb5_child_SOURCES = \
-    src/providers/krb5/krb5_become_user.c \
     src/providers/krb5/krb5_child.c \
     src/providers/dp_pam_data_util.c \
     src/util/user_info_msg.c \
@@ -2441,7 +2451,9 @@ krb5_child_SOURCES = \
     src/util/authtok.c \
     src/util/util.c \
     src/util/signal.c \
-    src/sss_client/common.c
+    src/util/become_user.c \
+    src/sss_client/common.c \
+    $(NULL)
 krb5_child_CFLAGS = \
     $(AM_CFLAGS) \
     $(POPT_CFLAGS) \
@@ -2704,7 +2716,7 @@ src/sysv/systemd/journal.conf: src/sysv/systemd/journal.conf.in Makefile
 	$(replace_script)
 
 installsssddirs::
-	mkdir -p \
+	$(MKDIR_P) \
     $(DESTDIR)$(includedir) \
     $(DESTDIR)$(libdir) \
     $(DESTDIR)$(bindir) \
@@ -2727,7 +2739,8 @@ installsssddirs::
     $(DESTDIR)$(pubconfpath)/krb5.include.d \
     $(DESTDIR)$(gpocachepath) \
     $(DESTDIR)$(sudolibdir) \
-    $(DESTDIR)$(autofslibdir)
+    $(DESTDIR)$(autofslibdir) \
+    $(NULL)
 
 if HAVE_DOXYGEN
 docs:
@@ -2772,15 +2785,15 @@ if BUILD_PYTHON_BINDINGS
 	fi
 endif
 	for doc in $(SSSD_DOCS); do \
-		mkdir -p $$doc $(DESTDIR)/$(docdir); \
+		$(MKDIR_P) $$doc $(DESTDIR)/$(docdir); \
 		cp -a $$doc $(DESTDIR)/$(docdir)/; \
 	done;
 
 if HAVE_SYSTEMD_UNIT
-	mkdir -p $(DESTDIR)$(systemdunitdir)
-	mkdir -p $(DESTDIR)$(systemdconfdir)
+	$(MKDIR_P) $(DESTDIR)$(systemdunitdir)
+	$(MKDIR_P) $(DESTDIR)$(systemdconfdir)
 else
-	mkdir -p $(DESTDIR)$(initdir)
+	$(MKDIR_P) $(DESTDIR)$(initdir)
 endif
 
 install-data-hook:
@@ -2788,7 +2801,7 @@ install-data-hook:
        $(DESTDIR)/$(nsslibdir)/libnss_sss.so
 	mv $(DESTDIR)/$(nsslibdir)/libnss_sss.so.2.0.0 $(DESTDIR)/$(nsslibdir)/libnss_sss.so.2
 	if [ ! $(krb5rcachedir) = "__LIBKRB5_DEFAULTS__" ]; then \
-        mkdir -p $(DESTDIR)/$(krb5rcachedir) ; \
+        $(MKDIR_P) $(DESTDIR)/$(krb5rcachedir) ; \
 	fi
 
 uninstall-hook:
@@ -2824,6 +2837,7 @@ endif
 CLEANFILES = *.X */*.X */*/*.X
 
 tests: all $(check_PROGRAMS)
+	(cd src/tests/cwrap && $(MAKE) $(AM_MAKEFLAGS) $@) || exit 1;
 
 
 # RPM-related tasks
@@ -2837,11 +2851,11 @@ dist_noinst_DATA += \
     COPYING
 
 rpmroot:
-	mkdir -p $(RPMBUILD)/BUILD
-	mkdir -p $(RPMBUILD)/RPMS
-	mkdir -p $(RPMBUILD)/SOURCES
-	mkdir -p $(RPMBUILD)/SPECS
-	mkdir -p $(RPMBUILD)/SRPMS
+	$(MKDIR_P) $(RPMBUILD)/BUILD
+	$(MKDIR_P) $(RPMBUILD)/RPMS
+	$(MKDIR_P) $(RPMBUILD)/SOURCES
+	$(MKDIR_P) $(RPMBUILD)/SPECS
+	$(MKDIR_P) $(RPMBUILD)/SRPMS
 
 rpmbrprep: dist-gzip rpmroot
 if GIT_CHECKOUT

@@ -148,6 +148,7 @@
 #define DP_SEC_ID_LEN (sizeof(DP_SEC_ID) - 1)
 
 #define EXTRA_NAME_IS_UPN "U"
+#define EXTRA_INPUT_MAYBE_WITH_VIEW "V"
 
 /* AUTH related common data and functions */
 
@@ -172,6 +173,7 @@ struct pam_data {
     char *tty;
     char *ruser;
     char *rhost;
+    char **requested_domains;
     struct sss_auth_token *authtok;
     struct sss_auth_token *newauthtok;
     uint32_t cli_pid;

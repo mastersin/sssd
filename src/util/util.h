@@ -237,6 +237,8 @@ struct main_context {
     pid_t parent_pid;
 };
 
+errno_t server_common_rotate_logs(struct confdb_ctx *confdb,
+                                  const char *conf_entry);
 int die_if_parent_died(void);
 int pidfile(const char *path, const char *name);
 int server_setup(const char *name, int flags,
@@ -544,8 +546,15 @@ errno_t sssd_domain_init(TALLOC_CTX *mem_ctx,
 
 #define IS_SUBDOMAIN(dom) ((dom)->parent != NULL)
 
-errno_t sss_write_domain_mappings(struct sss_domain_info *domain,
-                                  bool add_capaths);
+/* Currently views are only supported for subdomains */
+#define DOM_HAS_VIEWS(dom) ((dom)->has_views && IS_SUBDOMAIN(dom))
+
+errno_t sss_write_domain_mappings(struct sss_domain_info *domain);
+
+errno_t get_dom_names(TALLOC_CTX *mem_ctx,
+                      struct sss_domain_info *start_dom,
+                      char ***_dom_names,
+                      int *_dom_names_count);
 
 /* from util_lock.c */
 errno_t sss_br_lock_file(int fd, size_t start, size_t len,
@@ -572,5 +581,14 @@ char * sss_replace_space(TALLOC_CTX *mem_ctx,
 char * sss_reverse_replace_space(TALLOC_CTX *mem_ctx,
                                  const char *orig_name,
                                  const char replace_char);
+
+/* from become_user.c */
+errno_t become_user(uid_t uid, gid_t gid);
+struct sss_creds;
+errno_t switch_creds(TALLOC_CTX *mem_ctx,
+                     uid_t uid, gid_t gid,
+                     int num_gids, gid_t *gids,
+                     struct sss_creds **saved_creds);
+errno_t restore_creds(struct sss_creds *saved_creds);
 
 #endif /* __SSSD_UTIL_H__ */

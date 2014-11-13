@@ -123,7 +123,7 @@ void nss_update_pw_memcache(struct nss_ctx *nctx)
     now = time(NULL);
 
     for (dom = nctx->rctx->domains; dom; dom = get_next_domain(dom, false)) {
-        ret = sysdb_enumpwent(nctx, dom, &res);
+        ret = sysdb_enumpwent_with_views(nctx, dom, &res);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Failed to enumerate users for domain [%s]\n", dom->name);
@@ -140,7 +140,8 @@ void nss_update_pw_memcache(struct nss_ctx *nctx)
             /* names require more manipulation (build up fqname conditionally),
              * but uidNumber is unique and always resolvable too, so we use
              * that to update the cache, as it points to the same entry */
-            id = ldb_msg_find_attr_as_string(res->msgs[i], SYSDB_UIDNUM, NULL);
+            id = sss_view_ldb_msg_find_attr_as_string(dom, res->msgs[i],
+                                                      SYSDB_UIDNUM, NULL);
             if (!id) {
                 DEBUG(SSSDBG_CRIT_FAILURE,
                       "Failed to find uidNumber in %s.\n",
@@ -179,7 +180,8 @@ static const char *get_homedir_override(TALLOC_CTX *mem_ctx,
     const char *orig_name = homedir_ctx->username;
     errno_t ret;
 
-    homedir = ldb_msg_find_attr_as_string(msg, SYSDB_HOMEDIR, NULL);
+    homedir = sss_view_ldb_msg_find_attr_as_string(dom, msg, SYSDB_HOMEDIR,
+                                                   NULL);
     homedir_ctx->original = homedir;
 
     /* Subdomain users store FQDN in their name attribute */
@@ -243,7 +245,8 @@ static const char *get_shell_override(TALLOC_CTX *mem_ctx,
         return nctx->override_shell;
     }
 
-    user_shell = ldb_msg_find_attr_as_string(msg, SYSDB_SHELL, NULL);
+    user_shell = sss_view_ldb_msg_find_attr_as_string(dom, msg, SYSDB_SHELL,
+                                                      NULL);
     if (!user_shell) {
         /* Check whether there is a default shell specified */
         if (dom->default_shell) {
@@ -306,6 +309,7 @@ static int fill_pwent(struct sss_packet *packet,
 {
     struct ldb_message *msg;
     uint8_t *body;
+    const char *upn;
     const char *tmpstr;
     const char *orig_name;
     struct sized_string name;
@@ -337,9 +341,38 @@ static int fill_pwent(struct sss_packet *packet,
 
         msg = msgs[i];
 
-        orig_name = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
-        uid = ldb_msg_find_attr_as_uint64(msg, SYSDB_UIDNUM, 0);
-        gid = get_gid_override(msg, dom);
+        upn = ldb_msg_find_attr_as_string(msg, SYSDB_UPN, NULL);
+
+        if (DOM_HAS_VIEWS(dom)) {
+            orig_name = ldb_msg_find_attr_as_string(msg,
+                                                    OVERRIDE_PREFIX SYSDB_NAME,
+                                                    NULL);
+            if (orig_name != NULL && IS_SUBDOMAIN(dom)) {
+                /* Override names are not fully qualified */
+                add_domain = true;
+            }
+
+            gid = ldb_msg_find_attr_as_uint64(msg,
+                                              OVERRIDE_PREFIX SYSDB_GIDNUM, 0);
+        } else {
+            orig_name = NULL;
+            gid = 0;
+        }
+
+        if (orig_name == NULL) {
+            orig_name = ldb_msg_find_attr_as_string(msg,
+                                                    SYSDB_DEFAULT_OVERRIDE_NAME,
+                                                    NULL);
+            if (orig_name == NULL) {
+                orig_name = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+            }
+        }
+
+        uid = sss_view_ldb_msg_find_attr_as_uint64(dom, msg, SYSDB_UIDNUM, 0);
+
+        if (gid == 0) {
+            gid = get_gid_override(msg, dom);
+        }
 
         if (!orig_name || !uid || !gid) {
             DEBUG(SSSDBG_OP_FAILURE, "Incomplete user object for %s[%llu]! Skipping\n",
@@ -383,7 +416,8 @@ static int fill_pwent(struct sss_packet *packet,
 
         to_sized_string(&name, tmpstr);
 
-        tmpstr = ldb_msg_find_attr_as_string(msg, SYSDB_GECOS, NULL);
+        tmpstr = sss_view_ldb_msg_find_attr_as_string(dom, msg, SYSDB_GECOS,
+                                                      NULL);
         if (!tmpstr) {
             to_sized_string(&gecos, "");
         } else {
@@ -395,6 +429,7 @@ static int fill_pwent(struct sss_packet *packet,
         homedir_ctx.username = name.str;
         homedir_ctx.uid = uid;
         homedir_ctx.domain = dom->name;
+        homedir_ctx.upn = upn;
 
         tmpstr = get_homedir_override(tmp_ctx, msg, nctx, dom, &homedir_ctx);
         if (!tmpstr) {
@@ -402,6 +437,7 @@ static int fill_pwent(struct sss_packet *packet,
         } else {
             to_sized_string(&homedir, tmpstr);
         }
+
         tmpstr = get_shell_override(tmp_ctx, msg, nctx, dom);
         if (!tmpstr) {
             to_sized_string(&shell, "");
@@ -731,6 +767,7 @@ static int nss_cmd_getpwnam_search(struct nss_dom_ctx *dctx)
     int ret;
     static const char *user_attrs[] = SYSDB_PW_ATTRS;
     struct ldb_message *msg;
+    const char *extra_flag = NULL;
 
     nctx = talloc_get_type(cctx->rctx->pvt_ctx, struct nss_ctx);
 
@@ -824,7 +861,7 @@ static int nss_cmd_getpwnam_search(struct nss_dom_ctx *dctx)
                 dctx->res->msgs[0] = talloc_steal(dctx->res->msgs, msg);
             }
         } else {
-            ret = sysdb_getpwnam(cmdctx, dom, name, &dctx->res);
+            ret = sysdb_getpwnam_with_views(cmdctx, dom, name, &dctx->res);
         }
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
@@ -868,11 +905,17 @@ static int nss_cmd_getpwnam_search(struct nss_dom_ctx *dctx)
         /* if this is a caching provider (or if we haven't checked the cache
          * yet) then verify that the cache is uptodate */
         if (dctx->check_provider) {
-            ret = check_cache(dctx, nctx, dctx->res,
-                              SSS_DP_USER, name, 0,
-                              cmdctx->name_is_upn ? EXTRA_NAME_IS_UPN : NULL,
-                              nss_cmd_getby_dp_callback,
-                              dctx);
+
+            if (cmdctx->name_is_upn) {
+                extra_flag = EXTRA_NAME_IS_UPN;
+            } else if (DOM_HAS_VIEWS(dom) && dctx->res->count == 0) {
+                extra_flag = EXTRA_INPUT_MAYBE_WITH_VIEW;
+            } else {
+                extra_flag = NULL;
+            }
+
+            ret = check_cache(dctx, nctx, dctx->res, SSS_DP_USER, name, 0,
+                              extra_flag, nss_cmd_getby_dp_callback, dctx);
             if (ret != EOK) {
                 /* Anything but EOK means we should reenter the mainloop
                  * because we may be refreshing the cache
@@ -979,6 +1022,7 @@ static void nss_cmd_getby_dp_callback(uint16_t err_maj, uint32_t err_min,
             case SSS_NSS_GETNAMEBYSID:
             case SSS_NSS_GETIDBYSID:
             case SSS_NSS_GETSIDBYNAME:
+            case SSS_NSS_GETORIGBYNAME:
             case SSS_NSS_GETSIDBYID:
                 ret = nss_cmd_getbysid_send_reply(dctx);
                 break;
@@ -1061,6 +1105,7 @@ static void nss_cmd_getby_dp_callback(uint16_t err_maj, uint32_t err_min,
         }
         break;
     case SSS_NSS_GETSIDBYNAME:
+    case SSS_NSS_GETORIGBYNAME:
         ret = nss_cmd_getsidby_search(dctx);
         if (ret == EOK) {
             ret = nss_cmd_getbysid_send_reply(dctx);
@@ -1169,6 +1214,7 @@ static int nss_cmd_getbynam(enum sss_cli_command cmd, struct cli_ctx *cctx)
     case SSS_NSS_GETGRNAM:
     case SSS_NSS_INITGR:
     case SSS_NSS_GETSIDBYNAME:
+    case SSS_NSS_GETORIGBYNAME:
         break;
     default:
         DEBUG(SSSDBG_CRIT_FAILURE, "Invalid command type [%d].\n", cmd);
@@ -1319,6 +1365,7 @@ static int nss_cmd_getbynam(enum sss_cli_command cmd, struct cli_ctx *cctx)
         }
         break;
     case SSS_NSS_GETSIDBYNAME:
+    case SSS_NSS_GETORIGBYNAME:
         ret = nss_cmd_getsidby_search(dctx);
         if (ret == EOK) {
             ret = nss_cmd_getbysid_send_reply(dctx);
@@ -1414,6 +1461,7 @@ static void nss_cmd_getbynam_done(struct tevent_req *req)
         }
         break;
     case SSS_NSS_GETSIDBYNAME:
+    case SSS_NSS_GETORIGBYNAME:
         ret = nss_cmd_getsidby_search(dctx);
         if (ret == EOK) {
             ret = nss_cmd_getbysid_send_reply(dctx);
@@ -1445,6 +1493,7 @@ static int nss_cmd_getpwuid_search(struct nss_dom_ctx *dctx)
     struct nss_ctx *nctx;
     int ret;
     int err;
+    const char *extra_flag = NULL;
 
     nctx = talloc_get_type(cctx->rctx->pvt_ctx, struct nss_ctx);
 
@@ -1484,7 +1533,7 @@ static int nss_cmd_getpwuid_search(struct nss_dom_ctx *dctx)
             goto done;
         }
 
-        ret = sysdb_getpwuid(cmdctx, dom, cmdctx->id, &dctx->res);
+        ret = sysdb_getpwuid_with_views(cmdctx, dom, cmdctx->id, &dctx->res);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Failed to make request to our cache!\n");
@@ -1515,9 +1564,15 @@ static int nss_cmd_getpwuid_search(struct nss_dom_ctx *dctx)
         /* if this is a caching provider (or if we haven't checked the cache
          * yet) then verify that the cache is uptodate */
         if (dctx->check_provider) {
-            ret = check_cache(dctx, nctx, dctx->res,
-                              SSS_DP_USER, NULL, cmdctx->id, NULL,
-                              nss_cmd_getby_dp_callback,
+
+            if (DOM_HAS_VIEWS(dom) && dctx->res->count == 0) {
+                extra_flag = EXTRA_INPUT_MAYBE_WITH_VIEW;
+            } else {
+                extra_flag = NULL;
+            }
+
+            ret = check_cache(dctx, nctx, dctx->res, SSS_DP_USER, NULL,
+                              cmdctx->id, extra_flag, nss_cmd_getby_dp_callback,
                               dctx);
             if (ret != EOK) {
                 /* Anything but EOK means we should reenter the mainloop
@@ -2008,7 +2063,7 @@ static errno_t nss_cmd_setpwent_step(struct setent_step_ctx *step_ctx)
             }
         }
 
-        ret = sysdb_enumpwent(dctx, dom, &res);
+        ret = sysdb_enumpwent_with_views(dctx, dom, &res);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Enum from cache failed, skipping domain [%s]\n",
@@ -2341,7 +2396,7 @@ void nss_update_gr_memcache(struct nss_ctx *nctx)
     now = time(NULL);
 
     for (dom = nctx->rctx->domains; dom; dom = get_next_domain(dom, false)) {
-        ret = sysdb_enumgrent(nctx, dom, &res);
+        ret = sysdb_enumgrent_with_views(nctx, dom, &res);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Failed to enumerate users for domain [%s]\n", dom->name);
@@ -2358,7 +2413,8 @@ void nss_update_gr_memcache(struct nss_ctx *nctx)
             /* names require more manipulation (build up fqname conditionally),
              * but uidNumber is unique and always resolvable too, so we use
              * that to update the cache, as it points to the same entry */
-            id = ldb_msg_find_attr_as_string(res->msgs[i], SYSDB_GIDNUM, NULL);
+            id = sss_view_ldb_msg_find_attr_as_string(dom, res->msgs[i],
+                                                      SYSDB_GIDNUM, NULL);
             if (!id) {
                 DEBUG(SSSDBG_CRIT_FAILURE,
                       "Failed to find gidNumber in %s.\n",
@@ -2461,7 +2517,7 @@ static int fill_members(struct sss_packet *packet,
     sss_packet_get_body(packet, &body, &blen);
     for (i = 0; i < el->num_values; i++) {
         tmpstr = sss_get_cased_name(tmp_ctx, (char *)el->values[i].data,
-                                    dom->case_sensitive);
+                                    dom->case_preserve);
         if (tmpstr == NULL) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "sss_get_cased_name failed, skipping\n");
@@ -2563,7 +2619,7 @@ static int fill_grent(struct sss_packet *packet,
     size_t blen;
     uint32_t gid;
     const char *tmpstr;
-    const char *orig_name;
+    const char *orig_name = NULL;
     struct sized_string name;
     struct sized_string pwfield;
     struct sized_string fullname;
@@ -2606,8 +2662,25 @@ static int fill_grent(struct sss_packet *packet,
         rsize = 0;
 
         /* find group name/gid */
-        orig_name = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
-        gid = ldb_msg_find_attr_as_uint64(msg, SYSDB_GIDNUM, 0);
+        if (DOM_HAS_VIEWS(dom)) {
+            orig_name = ldb_msg_find_attr_as_string(msg,
+                                                    OVERRIDE_PREFIX SYSDB_NAME,
+                                                    NULL);
+            if (orig_name != NULL && IS_SUBDOMAIN(dom)) {
+                /* Override names are not fully qualified */
+                add_domain = true;
+            }
+        }
+        if (orig_name == NULL) {
+            orig_name = ldb_msg_find_attr_as_string(msg,
+                                                    SYSDB_DEFAULT_OVERRIDE_NAME,
+                                                    NULL);
+            if (orig_name == NULL) {
+                orig_name = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+            }
+        }
+
+        gid = sss_view_ldb_msg_find_attr_as_uint64(dom, msg, SYSDB_GIDNUM, 0);
         if (!orig_name || !gid) {
             DEBUG(SSSDBG_OP_FAILURE,
                   "Incomplete group object for %s[%llu]! Skipping\n",
@@ -2699,7 +2772,7 @@ static int fill_grent(struct sss_packet *packet,
 
         memnum = 0;
         if (!dom->ignore_group_members) {
-            el = ldb_msg_find_element(msg, SYSDB_MEMBERUID);
+            el = sss_view_ldb_msg_find_element(dom, msg, SYSDB_MEMBERUID);
             if (el) {
                 ret = fill_members(packet, dom, nctx, el, &rzero, &rsize,
                                    &memnum);
@@ -2711,6 +2784,13 @@ static int fill_grent(struct sss_packet *packet,
             }
             el = ldb_msg_find_element(msg, SYSDB_GHOST);
             if (el) {
+                if (DOM_HAS_VIEWS(dom) && el->num_values != 0) {
+                    DEBUG(SSSDBG_CRIT_FAILURE,
+                          "Domain has a view [%s] but group [%s] still has " \
+                          "ghost members.\n", dom->view_name, orig_name);
+                    num = 0;
+                    goto done;
+                }
                 ret = fill_members(packet, dom, nctx, el, &rzero, &rsize,
                                    &memnum);
                 if (ret != EOK) {
@@ -2810,6 +2890,7 @@ static int nss_cmd_getgrnam_search(struct nss_dom_ctx *dctx)
     char *name = NULL;
     struct nss_ctx *nctx;
     int ret;
+    const char *extra_flag = NULL;
 
     nctx = talloc_get_type(cctx->rctx->pvt_ctx, struct nss_ctx);
 
@@ -2873,7 +2954,7 @@ static int nss_cmd_getgrnam_search(struct nss_dom_ctx *dctx)
             return EIO;
         }
 
-        ret = sysdb_getgrnam(cmdctx, dom, name, &dctx->res);
+        ret = sysdb_getgrnam_with_views(cmdctx, dom, name, &dctx->res);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Failed to make request to our cache!\n");
@@ -2917,10 +2998,15 @@ static int nss_cmd_getgrnam_search(struct nss_dom_ctx *dctx)
         /* if this is a caching provider (or if we haven't checked the cache
          * yet) then verify that the cache is uptodate */
         if (dctx->check_provider) {
-            ret = check_cache(dctx, nctx, dctx->res,
-                              SSS_DP_GROUP, name, 0, NULL,
-                              nss_cmd_getby_dp_callback,
-                              dctx);
+
+            if (DOM_HAS_VIEWS(dom) && dctx->res->count == 0) {
+                extra_flag = EXTRA_INPUT_MAYBE_WITH_VIEW;
+            } else {
+                extra_flag = NULL;
+            }
+
+            ret = check_cache(dctx, nctx, dctx->res, SSS_DP_GROUP, name, 0,
+                              extra_flag, nss_cmd_getby_dp_callback, dctx);
             if (ret != EOK) {
                 /* Anything but EOK means we should reenter the mainloop
                  * because we may be refreshing the cache
@@ -2962,6 +3048,7 @@ static int nss_cmd_getgrgid_search(struct nss_dom_ctx *dctx)
     struct nss_ctx *nctx;
     int ret;
     int err;
+    const char *extra_flag = NULL;
 
     nctx = talloc_get_type(cctx->rctx->pvt_ctx, struct nss_ctx);
 
@@ -3001,7 +3088,7 @@ static int nss_cmd_getgrgid_search(struct nss_dom_ctx *dctx)
             goto done;
         }
 
-        ret = sysdb_getgrgid(cmdctx, dom, cmdctx->id, &dctx->res);
+        ret = sysdb_getgrgid_with_views(cmdctx, dom, cmdctx->id, &dctx->res);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Failed to make request to our cache!\n");
@@ -3032,9 +3119,15 @@ static int nss_cmd_getgrgid_search(struct nss_dom_ctx *dctx)
         /* if this is a caching provider (or if we haven't checked the cache
          * yet) then verify that the cache is uptodate */
         if (dctx->check_provider) {
-            ret = check_cache(dctx, nctx, dctx->res,
-                              SSS_DP_GROUP, NULL, cmdctx->id, NULL,
-                              nss_cmd_getby_dp_callback,
+
+            if (DOM_HAS_VIEWS(dom) && dctx->res->count == 0) {
+                extra_flag = EXTRA_INPUT_MAYBE_WITH_VIEW;
+            } else {
+                extra_flag = NULL;
+            }
+
+            ret = check_cache(dctx, nctx, dctx->res, SSS_DP_GROUP, NULL,
+                              cmdctx->id, extra_flag, nss_cmd_getby_dp_callback,
                               dctx);
             if (ret != EOK) {
                 /* Anything but EOK means we should reenter the mainloop
@@ -3315,7 +3408,7 @@ static errno_t nss_cmd_setgrent_step(struct setent_step_ctx *step_ctx)
             }
         }
 
-        ret = sysdb_enumgrent(dctx, dom, &res);
+        ret = sysdb_enumgrent_with_views(dctx, dom, &res);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Enum from cache failed, skipping domain [%s]\n",
@@ -3728,7 +3821,8 @@ done:
 
 /* FIXME: what about mpg, should we return the user's GID ? */
 /* FIXME: should we filter out GIDs ? */
-static int fill_initgr(struct sss_packet *packet, struct ldb_result *res)
+static int fill_initgr(struct sss_packet *packet, struct sss_domain_info *dom,
+                       struct ldb_result *res)
 {
     uint8_t *body;
     size_t blen;
@@ -3752,14 +3846,15 @@ static int fill_initgr(struct sss_packet *packet, struct ldb_result *res)
     }
     sss_packet_get_body(packet, &body, &blen);
 
-    orig_primary_gid = ldb_msg_find_attr_as_uint64(res->msgs[0],
-                                                   SYSDB_PRIMARY_GROUP_GIDNUM,
-                                                   0);
+    orig_primary_gid = sss_view_ldb_msg_find_attr_as_uint64(dom, res->msgs[0],
+                                                     SYSDB_PRIMARY_GROUP_GIDNUM,
+                                                     0);
 
     /* If the GID of the original primary group is available but equal to the
     * current primary GID it must not be added. */
     if (orig_primary_gid != 0) {
-        gid = ldb_msg_find_attr_as_uint64(res->msgs[0], SYSDB_GIDNUM, 0);
+        gid = sss_view_ldb_msg_find_attr_as_uint64(dom, res->msgs[0],
+                                                   SYSDB_GIDNUM, 0);
 
         if (orig_primary_gid == gid) {
             orig_primary_gid = 0;
@@ -3772,8 +3867,10 @@ static int fill_initgr(struct sss_packet *packet, struct ldb_result *res)
 
     /* skip first entry, it's the user entry */
     for (i = 0; i < num; i++) {
-        gid = ldb_msg_find_attr_as_uint64(res->msgs[i + 1], SYSDB_GIDNUM, 0);
-        posix = ldb_msg_find_attr_as_string(res->msgs[i + 1], SYSDB_POSIX, NULL);
+        gid = sss_view_ldb_msg_find_attr_as_uint64(dom, res->msgs[i + 1],
+                                                   SYSDB_GIDNUM, 0);
+        posix = ldb_msg_find_attr_as_string(res->msgs[i + 1],
+                                            SYSDB_POSIX, NULL);
         if (!gid) {
             if (posix && strcmp(posix, "FALSE") == 0) {
                 skipped++;
@@ -3824,7 +3921,7 @@ static int nss_cmd_initgr_send_reply(struct nss_dom_ctx *dctx)
         return EFAULT;
     }
 
-    ret = fill_initgr(cctx->creq->out, dctx->res);
+    ret = fill_initgr(cctx->creq->out, dctx->domain, dctx->res);
     if (ret) {
         return ret;
     }
@@ -3844,6 +3941,8 @@ static int nss_cmd_initgroups_search(struct nss_dom_ctx *dctx)
     static const char *user_attrs[] = SYSDB_PW_ATTRS;
     struct ldb_message *msg;
     const char *sysdb_name;
+    size_t c;
+    const char *extra_flag = NULL;
 
     nctx = talloc_get_type(cctx->rctx->pvt_ctx, struct nss_ctx);
 
@@ -3923,8 +4022,19 @@ static int nss_cmd_initgroups_search(struct nss_dom_ctx *dctx)
             }
 
             ret = sysdb_initgroups(cmdctx, dom, sysdb_name, &dctx->res);
+            if (ret == EOK && DOM_HAS_VIEWS(dom)) {
+                for (c = 0; c < dctx->res->count; c++) {
+                    ret = sysdb_add_overrides_to_object(dom, dctx->res->msgs[c],
+                                                        NULL);
+                    if (ret != EOK) {
+                        DEBUG(SSSDBG_OP_FAILURE,
+                              "sysdb_add_overrides_to_object failed.\n");
+                        return ret;
+                    }
+                }
+            }
         } else {
-            ret = sysdb_initgroups(cmdctx, dom, name, &dctx->res);
+            ret = sysdb_initgroups_with_views(cmdctx, dom, name, &dctx->res);
         }
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
@@ -3955,11 +4065,17 @@ static int nss_cmd_initgroups_search(struct nss_dom_ctx *dctx)
         /* if this is a caching provider (or if we haven't checked the cache
          * yet) then verify that the cache is uptodate */
         if (dctx->check_provider) {
-            ret = check_cache(dctx, nctx, dctx->res,
-                              SSS_DP_INITGROUPS, name, 0,
-                              cmdctx->name_is_upn ? EXTRA_NAME_IS_UPN : NULL,
-                              nss_cmd_getby_dp_callback,
-                              dctx);
+
+            if (cmdctx->name_is_upn) {
+                extra_flag = EXTRA_NAME_IS_UPN;
+            } else if (DOM_HAS_VIEWS(dom) && dctx->res->count == 0) {
+                extra_flag = EXTRA_INPUT_MAYBE_WITH_VIEW;
+            } else {
+                extra_flag = NULL;
+            }
+
+            ret = check_cache(dctx, nctx, dctx->res, SSS_DP_INITGROUPS, name, 0,
+                              extra_flag, nss_cmd_getby_dp_callback, dctx);
             if (ret != EOK) {
                 /* Anything but EOK means we should reenter the mainloop
                  * because we may be refreshing the cache
@@ -3993,7 +4109,18 @@ static errno_t nss_cmd_getsidby_search(struct nss_dom_ctx *dctx)
     struct nss_ctx *nctx;
     int ret;
     int err;
-    const char *attrs[] = {SYSDB_NAME, SYSDB_OBJECTCLASS, SYSDB_SID_STR, NULL};
+    const char *attrs[] = {SYSDB_NAME, SYSDB_OBJECTCLASS, SYSDB_SID_STR,
+                           ORIGINALAD_PREFIX SYSDB_NAME,
+                           ORIGINALAD_PREFIX SYSDB_UIDNUM,
+                           ORIGINALAD_PREFIX SYSDB_GIDNUM,
+                           ORIGINALAD_PREFIX SYSDB_GECOS,
+                           ORIGINALAD_PREFIX SYSDB_HOMEDIR,
+                           ORIGINALAD_PREFIX SYSDB_SHELL,
+                           SYSDB_UPN,
+                           SYSDB_DEFAULT_OVERRIDE_NAME,
+                           SYSDB_AD_ACCOUNT_EXPIRES,
+                           SYSDB_AD_USER_ACCOUNT_CONTROL,
+                           SYSDB_DEFAULT_ATTRS, NULL};
     bool user_found = false;
     bool group_found = false;
     struct ldb_message *msg = NULL;
@@ -4076,26 +4203,30 @@ static errno_t nss_cmd_getsidby_search(struct nss_dom_ctx *dctx)
             }
 
 
-            /* verify this user has not yet been negatively cached,
-            * or has been permanently filtered */
+            /* verify this name has not yet been negatively cached, as user
+             * and groupm, or has been permanently filtered */
             ret = sss_ncache_check_user(nctx->ncache, nctx->neg_timeout,
                                         dom, name);
 
-            /* if neg cached, return we didn't find it */
             if (ret == EEXIST) {
-                DEBUG(SSSDBG_TRACE_FUNC,
-                      "User [%s] does not exist in [%s]! (negative cache)\n",
-                       name, dom->name);
-                /* if a multidomain search, try with next */
-                if (cmdctx->check_next) {
-                    dom = get_next_domain(dom, false);
-                    continue;
+                ret = sss_ncache_check_group(nctx->ncache, nctx->neg_timeout,
+                                             dom, name);
+                if (ret == EEXIST) {
+                    /* if neg cached, return we didn't find it */
+                    DEBUG(SSSDBG_TRACE_FUNC,
+                          "SID [%s] does not exist in [%s]! (negative cache)\n",
+                           name, dom->name);
+                    /* if a multidomain search, try with next */
+                    if (cmdctx->check_next) {
+                        dom = get_next_domain(dom, false);
+                        continue;
+                    }
+                    /* There are no further domains or this was a
+                     * fully-qualified user request.
+                     */
+                    ret = ENOENT;
+                    goto done;
                 }
-                /* There are no further domains or this was a
-                 * fully-qualified user request.
-                 */
-                ret = ENOENT;
-                goto done;
             }
 
             DEBUG(SSSDBG_TRACE_FUNC, "Requesting info for [%s@%s]\n",
@@ -4188,7 +4319,8 @@ static errno_t nss_cmd_getsidby_search(struct nss_dom_ctx *dctx)
         }
 
         if (dctx->res->count == 0 && !dctx->check_provider) {
-            if (cmdctx->cmd == SSS_NSS_GETSIDBYNAME) {
+            if (cmdctx->cmd == SSS_NSS_GETSIDBYNAME
+                    || cmdctx->cmd == SSS_NSS_GETORIGBYNAME) {
                 ret = sss_ncache_set_user(nctx->ncache, false, dom, name);
                 if (ret != EOK) {
                     DEBUG(SSSDBG_MINOR_FAILURE,
@@ -4421,14 +4553,76 @@ static errno_t fill_sid(struct sss_packet *packet,
     return EOK;
 }
 
-static errno_t fill_name(struct sss_packet *packet,
-                         struct sss_domain_info *dom,
+static errno_t fill_orig(struct sss_packet *packet,
                          enum sss_id_type id_type,
                          struct ldb_message *msg)
 {
     int ret;
+    const char *tmp_str;
+    uint8_t *body;
+    size_t blen;
+    size_t pctr = 0;
+    size_t c;
+    size_t sum;
+    const char *orig_attr_list[] = {SYSDB_SID_STR,
+                                    ORIGINALAD_PREFIX SYSDB_NAME,
+                                    ORIGINALAD_PREFIX SYSDB_UIDNUM,
+                                    ORIGINALAD_PREFIX SYSDB_GIDNUM,
+                                    ORIGINALAD_PREFIX SYSDB_HOMEDIR,
+                                    ORIGINALAD_PREFIX SYSDB_GECOS,
+                                    ORIGINALAD_PREFIX SYSDB_SHELL,
+                                    SYSDB_UPN,
+                                    SYSDB_DEFAULT_OVERRIDE_NAME,
+                                    SYSDB_AD_ACCOUNT_EXPIRES,
+                                    SYSDB_AD_USER_ACCOUNT_CONTROL,
+                                    NULL};
+    struct sized_string keys[sizeof(orig_attr_list)];
+    struct sized_string vals[sizeof(orig_attr_list)];
+
+    sum = 0;
+    for (c = 0; orig_attr_list[c] != NULL; c++) {
+        tmp_str = ldb_msg_find_attr_as_string(msg, orig_attr_list[c], NULL);
+        if (tmp_str != NULL) {
+            to_sized_string(&keys[c], orig_attr_list[c]);
+            sum += keys[c].len;
+            to_sized_string(&vals[c], tmp_str);
+            sum += vals[c].len;
+        } else {
+            vals[c].len = 0;
+        }
+    }
+
+    ret = sss_packet_grow(packet, sum +  3 * sizeof(uint32_t));
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "sss_packet_grow failed.\n");
+        return ret;
+    }
+
+    sss_packet_get_body(packet, &body, &blen);
+    SAFEALIGN_SETMEM_UINT32(body, 1, &pctr); /* Num results */
+    SAFEALIGN_SETMEM_UINT32(body + pctr, 0, &pctr); /* reserved */
+    SAFEALIGN_COPY_UINT32(body + pctr, &id_type, &pctr);
+    for (c = 0; orig_attr_list[c] != NULL; c++) {
+        if (vals[c].len != 0) {
+            memcpy(&body[pctr], keys[c].str, keys[c].len);
+            pctr+= keys[c].len;
+            memcpy(&body[pctr], vals[c].str, vals[c].len);
+            pctr+= vals[c].len;
+        }
+    }
+
+    return EOK;
+}
+
+static errno_t fill_name(struct sss_packet *packet,
+                         struct sss_domain_info *dom,
+                         enum sss_id_type id_type,
+                         bool apply_no_view,
+                         struct ldb_message *msg)
+{
+    int ret;
     TALLOC_CTX *tmp_ctx = NULL;
-    const char *orig_name;
+    const char *orig_name = NULL;
     const char *cased_name;
     const char *fq_name;
     struct sized_string name;
@@ -4437,7 +4631,25 @@ static errno_t fill_name(struct sss_packet *packet,
     size_t blen;
     size_t pctr = 0;
 
-    orig_name = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+    if (apply_no_view) {
+        orig_name = ldb_msg_find_attr_as_string(msg,
+                                                ORIGINALAD_PREFIX SYSDB_NAME,
+                                                NULL);
+    } else {
+        if (DOM_HAS_VIEWS(dom)) {
+            orig_name = ldb_msg_find_attr_as_string(msg,
+                                                    OVERRIDE_PREFIX SYSDB_NAME,
+                                                    NULL);
+            if (orig_name != NULL && IS_SUBDOMAIN(dom)) {
+                /* Override names are un-qualified */
+                add_domain = true;
+            }
+        }
+    }
+
+    if (orig_name == NULL) {
+        orig_name = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+    }
     if (orig_name == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Missing name.\n");
         return EINVAL;
@@ -4556,6 +4768,7 @@ static errno_t nss_cmd_getbysid_send_reply(struct nss_dom_ctx *dctx)
         ret = fill_name(cctx->creq->out,
                         dctx->domain,
                         id_type,
+                        true,
                         dctx->res->msgs[0]);
         break;
     case SSS_NSS_GETIDBYSID:
@@ -4564,6 +4777,9 @@ static errno_t nss_cmd_getbysid_send_reply(struct nss_dom_ctx *dctx)
     case SSS_NSS_GETSIDBYNAME:
     case SSS_NSS_GETSIDBYID:
         ret = fill_sid(cctx->creq->out, id_type, dctx->res->msgs[0]);
+        break;
+    case SSS_NSS_GETORIGBYNAME:
+        ret = fill_orig(cctx->creq->out, id_type, dctx->res->msgs[0]);
         break;
     default:
         DEBUG(SSSDBG_CRIT_FAILURE, "Unsupported request type.\n");
@@ -4767,6 +4983,11 @@ static int nss_cmd_getidbysid(struct cli_ctx *cctx)
     return nss_cmd_getbysid(SSS_NSS_GETIDBYSID, cctx);
 }
 
+static int nss_cmd_getorigbyname(struct cli_ctx *cctx)
+{
+    return nss_cmd_getbynam(SSS_NSS_GETORIGBYNAME, cctx);
+}
+
 struct cli_protocol_version *register_cli_protocol_version(void)
 {
     static struct cli_protocol_version nss_cli_protocol_version[] = {
@@ -4802,6 +5023,7 @@ static struct sss_cmd_table nss_cmds[] = {
     {SSS_NSS_GETSIDBYID, nss_cmd_getsidbyid},
     {SSS_NSS_GETNAMEBYSID, nss_cmd_getnamebysid},
     {SSS_NSS_GETIDBYSID, nss_cmd_getidbysid},
+    {SSS_NSS_GETORIGBYNAME, nss_cmd_getorigbyname},
     {SSS_CLI_NULL, NULL}
 };
 

@@ -83,6 +83,73 @@ done:
     return ret;
 }
 
+errno_t sysdb_getpwnam_with_views(TALLOC_CTX *mem_ctx,
+                                  struct sss_domain_info *domain,
+                                  const char *name,
+                                  struct ldb_result **res)
+{
+    int ret;
+    struct ldb_result *orig_obj = NULL;
+    struct ldb_result *override_obj = NULL;
+    TALLOC_CTX *tmp_ctx;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    /* If there are views we first have to search the overrides for matches */
+    if (DOM_HAS_VIEWS(domain)) {
+        ret = sysdb_search_user_override_by_name(tmp_ctx, domain, name,
+                                                 &override_obj, &orig_obj);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "sysdb_search_override_by_name failed.\n");
+            goto done;
+        }
+    }
+
+    /* If there are no views or nothing was found in the overrides the
+     * original objects are searched. */
+    if (orig_obj == NULL) {
+        ret = sysdb_getpwnam(tmp_ctx, domain, name, &orig_obj);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_getpwnam failed.\n");
+            goto done;
+        }
+    }
+
+    /* If there are views we have to check if override values must be added to
+     * the original object. */
+    if (DOM_HAS_VIEWS(domain) && orig_obj->count == 1) {
+        ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
+                          override_obj == NULL ? NULL : override_obj ->msgs[0]);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
+            goto done;
+        }
+
+        if (ret == ENOENT) {
+            *res = talloc_zero(mem_ctx, struct ldb_result);
+            if (*res == NULL) {
+                DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
+                ret = ENOMEM;
+            } else {
+                ret = EOK;
+            }
+            goto done;
+        }
+    }
+
+    *res = talloc_steal(mem_ctx, orig_obj);
+    ret = EOK;
+
+done:
+    talloc_free(tmp_ctx);
+    return ret;
+}
+
 int sysdb_getpwuid(TALLOC_CTX *mem_ctx,
                    struct sss_domain_info *domain,
                    uid_t uid,
@@ -121,6 +188,73 @@ done:
     return ret;
 }
 
+errno_t sysdb_getpwuid_with_views(TALLOC_CTX *mem_ctx,
+                                  struct sss_domain_info *domain,
+                                  uid_t uid,
+                                  struct ldb_result **res)
+{
+    int ret;
+    struct ldb_result *orig_obj = NULL;
+    struct ldb_result *override_obj = NULL;
+    TALLOC_CTX *tmp_ctx;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    /* If there are views we first have to search the overrides for matches */
+    if (DOM_HAS_VIEWS(domain)) {
+        ret = sysdb_search_user_override_by_uid(tmp_ctx, domain, uid,
+                                                &override_obj, &orig_obj);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "sysdb_search_user_override_by_uid failed.\n");
+            goto done;
+        }
+    }
+
+    /* If there are no views or nothing was found in the overrides the
+     * original objects are searched. */
+    if (orig_obj == NULL) {
+        ret = sysdb_getpwuid(tmp_ctx, domain, uid, &orig_obj);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_getpwuid failed.\n");
+            goto done;
+        }
+    }
+
+    /* If there are views we have to check if override values must be added to
+     * the original object. */
+    if (DOM_HAS_VIEWS(domain) && orig_obj->count == 1) {
+        ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
+                           override_obj == NULL ? NULL : override_obj->msgs[0]);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
+            goto done;
+        }
+
+        if (ret == ENOENT) {
+            *res = talloc_zero(mem_ctx, struct ldb_result);
+            if (*res == NULL) {
+                DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
+                ret = ENOMEM;
+            } else {
+                ret = EOK;
+            }
+            goto done;
+        }
+    }
+
+    *res = talloc_steal(mem_ctx, orig_obj);
+    ret = EOK;
+
+done:
+    talloc_free(tmp_ctx);
+    return ret;
+}
+
 int sysdb_enumpwent(TALLOC_CTX *mem_ctx,
                     struct sss_domain_info *domain,
                     struct ldb_result **_res)
@@ -148,6 +282,46 @@ int sysdb_enumpwent(TALLOC_CTX *mem_ctx,
     if (ret) {
         ret = sysdb_error_to_errno(ret);
         goto done;
+    }
+
+    *_res = talloc_steal(mem_ctx, res);
+
+done:
+    talloc_zfree(tmp_ctx);
+    return ret;
+}
+
+int sysdb_enumpwent_with_views(TALLOC_CTX *mem_ctx,
+                               struct sss_domain_info *domain,
+                               struct ldb_result **_res)
+{
+    TALLOC_CTX *tmp_ctx;
+    struct ldb_result *res;
+    size_t c;
+    int ret;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    ret = sysdb_enumpwent(tmp_ctx, domain, &res);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "sysdb_enumpwent failed.\n");
+        goto done;
+    }
+
+    if (DOM_HAS_VIEWS(domain)) {
+        for (c = 0; c < res->count; c++) {
+            ret = sysdb_add_overrides_to_object(domain, res->msgs[c], NULL);
+            /* enumeration assumes that the cache is up-to-date, hence we do not
+             * need to handle ENOENT separately. */
+            if (ret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
+                goto done;
+            }
+        }
     }
 
     *_res = talloc_steal(mem_ctx, res);
@@ -199,6 +373,90 @@ static int mpg_res_convert(struct ldb_result *res)
         }
     }
     return EOK;
+}
+
+int sysdb_getgrnam_with_views(TALLOC_CTX *mem_ctx,
+                              struct sss_domain_info *domain,
+                              const char *name,
+                              struct ldb_result **res)
+{
+    TALLOC_CTX *tmp_ctx;
+    int ret;
+    struct ldb_result *orig_obj = NULL;
+    struct ldb_result *override_obj = NULL;
+    struct ldb_message_element *el;
+
+    tmp_ctx = talloc_new(NULL);
+    if (!tmp_ctx) {
+        return ENOMEM;
+    }
+
+    /* If there are views we first have to search the overrides for matches */
+    if (DOM_HAS_VIEWS(domain)) {
+        ret = sysdb_search_group_override_by_name(tmp_ctx, domain, name,
+                                                  &override_obj, &orig_obj);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "sysdb_search_group_override_by_name failed.\n");
+            goto done;
+        }
+    }
+
+    /* If there are no views or nothing was found in the overrides the
+     * original objects are searched. */
+    if (orig_obj == NULL) {
+        ret = sysdb_getgrnam(tmp_ctx, domain, name, &orig_obj);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_getgrnam failed.\n");
+            goto done;
+        }
+    }
+
+    /* If there are views we have to check if override values must be added to
+     * the original object. */
+    if (DOM_HAS_VIEWS(domain) && orig_obj->count == 1) {
+        el = ldb_msg_find_element(orig_obj->msgs[0], SYSDB_GHOST);
+        if (el != NULL && el->num_values != 0) {
+            DEBUG(SSSDBG_TRACE_ALL,
+                  "Group object [%s], contains ghost entries which must be " \
+                  "resolved before overrides can be applied.\n",
+                   ldb_dn_get_linearized(orig_obj->msgs[0]->dn));
+            ret = ENOENT;
+            goto done;
+        }
+
+        ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
+                          override_obj == NULL ? NULL : override_obj ->msgs[0]);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
+            goto done;
+        }
+
+        ret = sysdb_add_group_member_overrides(domain, orig_obj->msgs[0]);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "sysdb_add_group_member_overrides failed.\n");
+            goto done;
+        }
+    }
+
+    *res = talloc_steal(mem_ctx, orig_obj);
+    ret = EOK;
+
+done:
+    if (ret == ENOENT) {
+        DEBUG(SSSDBG_TRACE_ALL, "Returning empty result.\n");
+        *res = talloc_zero(mem_ctx, struct ldb_result);
+        if (*res == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
+            ret = ENOMEM;
+        } else {
+            ret = EOK;
+        }
+    }
+
+    talloc_free(tmp_ctx);
+    return ret;
 }
 
 int sysdb_getgrnam(TALLOC_CTX *mem_ctx,
@@ -266,6 +524,90 @@ int sysdb_getgrnam(TALLOC_CTX *mem_ctx,
 
 done:
     talloc_zfree(tmp_ctx);
+    return ret;
+}
+
+int sysdb_getgrgid_with_views(TALLOC_CTX *mem_ctx,
+                              struct sss_domain_info *domain,
+                              gid_t gid,
+                              struct ldb_result **res)
+{
+    TALLOC_CTX *tmp_ctx;
+    int ret;
+    struct ldb_result *orig_obj = NULL;
+    struct ldb_result *override_obj = NULL;
+    struct ldb_message_element *el;
+
+    tmp_ctx = talloc_new(NULL);
+    if (!tmp_ctx) {
+        return ENOMEM;
+    }
+
+    /* If there are views we first have to search the overrides for matches */
+    if (DOM_HAS_VIEWS(domain)) {
+        ret = sysdb_search_group_override_by_gid(tmp_ctx, domain, gid,
+                                                 &override_obj, &orig_obj);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "sysdb_search_group_override_by_gid failed.\n");
+            goto done;
+        }
+    }
+
+    /* If there are no views or nothing was found in the overrides the
+     * original objects are searched. */
+    if (orig_obj == NULL) {
+        ret = sysdb_getgrgid(tmp_ctx, domain, gid, &orig_obj);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_getgrgid failed.\n");
+            goto done;
+        }
+    }
+
+    /* If there are views we have to check if override values must be added to
+     * the original object. */
+    if (DOM_HAS_VIEWS(domain) && orig_obj->count == 1) {
+        el = ldb_msg_find_element(orig_obj->msgs[0], SYSDB_GHOST);
+        if (el != NULL && el->num_values != 0) {
+            DEBUG(SSSDBG_TRACE_ALL,
+                  "Group object [%s], contains ghost entries which must be " \
+                  "resolved before overrides can be applied.\n",
+                   ldb_dn_get_linearized(orig_obj->msgs[0]->dn));
+            ret = ENOENT;
+            goto done;
+        }
+
+        ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
+                          override_obj == NULL ? NULL : override_obj ->msgs[0]);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
+            goto done;
+        }
+
+        ret = sysdb_add_group_member_overrides(domain, orig_obj->msgs[0]);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "sysdb_add_group_member_overrides failed.\n");
+            goto done;
+        }
+    }
+
+    *res = talloc_steal(mem_ctx, orig_obj);
+    ret = EOK;
+
+done:
+    if (ret == ENOENT) {
+        DEBUG(SSSDBG_TRACE_ALL, "Returning empty result.\n");
+        *res = talloc_zero(mem_ctx, struct ldb_result);
+        if (*res == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
+            ret = ENOMEM;
+        } else {
+            ret = EOK;
+        }
+    }
+
+    talloc_free(tmp_ctx);
     return ret;
 }
 
@@ -361,6 +703,54 @@ int sysdb_enumgrent(TALLOC_CTX *mem_ctx,
     if (ret) {
         goto done;
     }
+
+    *_res = talloc_steal(mem_ctx, res);
+
+done:
+    talloc_zfree(tmp_ctx);
+    return ret;
+}
+
+int sysdb_enumgrent_with_views(TALLOC_CTX *mem_ctx,
+                               struct sss_domain_info *domain,
+                               struct ldb_result **_res)
+{
+    TALLOC_CTX *tmp_ctx;
+    struct ldb_result *res;
+    size_t c;
+    int ret;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    ret = sysdb_enumgrent(tmp_ctx, domain,&res);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "sysdb_enumgrent failed.\n");
+        goto done;
+    }
+
+    if (DOM_HAS_VIEWS(domain)) {
+        for (c = 0; c < res->count; c++) {
+            ret = sysdb_add_overrides_to_object(domain, res->msgs[c], NULL);
+            /* enumeration assumes that the cache is up-to-date, hence we do not
+             * need to handle ENOENT separately. */
+            if (ret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
+                goto done;
+            }
+
+            ret = sysdb_add_group_member_overrides(domain, res->msgs[c]);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE,
+                      "sysdb_add_group_member_overrides failed.\n");
+                goto done;
+            }
+        }
+    }
+
 
     *_res = talloc_steal(mem_ctx, res);
 
@@ -469,6 +859,119 @@ done:
     return ret;
 }
 
+int sysdb_initgroups_with_views(TALLOC_CTX *mem_ctx,
+                                struct sss_domain_info *domain,
+                                const char *name,
+                                struct ldb_result **_res)
+{
+    TALLOC_CTX *tmp_ctx;
+    struct ldb_result *res;
+    struct ldb_dn *user_dn;
+    struct ldb_request *req;
+    struct ldb_control **ctrl;
+    struct ldb_asq_control *control;
+    static const char *attrs[] = SYSDB_INITGR_ATTRS;
+    int ret;
+    size_t c;
+
+    tmp_ctx = talloc_new(NULL);
+    if (!tmp_ctx) {
+        return ENOMEM;
+    }
+
+    ret = sysdb_getpwnam_with_views(tmp_ctx, domain, name, &res);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "sysdb_getpwnam failed: [%d][%s]\n",
+                  ret, strerror(ret));
+        goto done;
+    }
+
+    if (res->count == 0) {
+        /* User is not cached yet */
+        *_res = talloc_steal(mem_ctx, res);
+        ret = EOK;
+        goto done;
+
+    } else if (res->count != 1) {
+        ret = EIO;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "sysdb_getpwnam returned count: [%d]\n", res->count);
+        goto done;
+    }
+
+    /* no need to steal the dn, we are not freeing the result */
+    user_dn = res->msgs[0]->dn;
+
+    /* note we count on the fact that the default search callback
+     * will just keep appending values. This is by design and can't
+     * change so it is ok to already have a result (from the getpwnam)
+     * even before we call the next search */
+
+    ctrl = talloc_array(tmp_ctx, struct ldb_control *, 2);
+    if (!ctrl) {
+        ret = ENOMEM;
+        goto done;
+    }
+    ctrl[1] = NULL;
+    ctrl[0] = talloc(ctrl, struct ldb_control);
+    if (!ctrl[0]) {
+        ret = ENOMEM;
+        goto done;
+    }
+    ctrl[0]->oid = LDB_CONTROL_ASQ_OID;
+    ctrl[0]->critical = 1;
+    control = talloc(ctrl[0], struct ldb_asq_control);
+    if (!control) {
+        ret = ENOMEM;
+        goto done;
+    }
+    control->request = 1;
+    control->source_attribute = talloc_strdup(control, SYSDB_INITGR_ATTR);
+    if (!control->source_attribute) {
+        ret = ENOMEM;
+        goto done;
+    }
+    control->src_attr_len = strlen(control->source_attribute);
+    ctrl[0]->data = control;
+
+    ret = ldb_build_search_req(&req, domain->sysdb->ldb, tmp_ctx,
+                               user_dn, LDB_SCOPE_BASE,
+                               SYSDB_INITGR_FILTER, attrs, ctrl,
+                               res, ldb_search_default_callback,
+                               NULL);
+    if (ret != LDB_SUCCESS) {
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    ret = ldb_request(domain->sysdb->ldb, req);
+    if (ret == LDB_SUCCESS) {
+        ret = ldb_wait(req->handle, LDB_WAIT_ALL);
+    }
+    if (ret != LDB_SUCCESS) {
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    if (DOM_HAS_VIEWS(domain)) {
+        /* Skip user entry because it already has override values added */
+        for (c = 1; c < res->count; c++) {
+            ret = sysdb_add_overrides_to_object(domain, res->msgs[c], NULL);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE,
+                      "sysdb_add_overrides_to_object failed.\n");
+                goto done;
+            }
+        }
+    }
+
+    *_res = talloc_steal(mem_ctx, res);
+
+done:
+    talloc_zfree(tmp_ctx);
+    return ret;
+}
+
 int sysdb_get_user_attr(TALLOC_CTX *mem_ctx,
                         struct sss_domain_info *domain,
                         const char *name,
@@ -478,6 +981,7 @@ int sysdb_get_user_attr(TALLOC_CTX *mem_ctx,
     TALLOC_CTX *tmp_ctx;
     struct ldb_dn *base_dn;
     struct ldb_result *res;
+    const char *src_name;
     char *sanitized_name;
     char *lc_sanitized_name;
     int ret;
@@ -494,8 +998,16 @@ int sysdb_get_user_attr(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    ret = sss_filter_sanitize_for_dom(tmp_ctx, name, domain, &sanitized_name,
-                                      &lc_sanitized_name);
+    /* If this is a subdomain we need to use fully qualified names for the
+     * search as well by default */
+    src_name = sss_get_domain_name(tmp_ctx, name, domain);
+    if (!src_name) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = sss_filter_sanitize_for_dom(tmp_ctx, src_name, domain,
+                                      &sanitized_name, &lc_sanitized_name);
     if (ret != EOK) {
         goto done;
     }
@@ -513,6 +1025,118 @@ int sysdb_get_user_attr(TALLOC_CTX *mem_ctx,
 
 done:
     talloc_zfree(tmp_ctx);
+    return ret;
+}
+
+int sysdb_get_user_attr_with_views(TALLOC_CTX *mem_ctx,
+                                   struct sss_domain_info *domain,
+                                   const char *name,
+                                   const char **attributes,
+                                   struct ldb_result **_res)
+{
+    int ret;
+    struct ldb_result *orig_obj = NULL;
+    struct ldb_result *override_obj = NULL;
+    struct ldb_message_element *el = NULL;
+    const char **attrs = NULL;
+    bool has_override_dn;
+    TALLOC_CTX *tmp_ctx;
+    int count;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    /* Assume that overrideDN is requested to simplify the code. If no view
+     * is applied it doesn't really matter. */
+    has_override_dn = true;
+    attrs = attributes;
+
+    /* If there are views we first have to search the overrides for matches */
+    if (DOM_HAS_VIEWS(domain)) {
+        /* We need overrideDN for views, so append it if missing. */
+        has_override_dn = false;
+        for (count = 0; attributes[count] != NULL; count++) {
+            if (strcmp(attributes[count], SYSDB_OVERRIDE_DN) == 0) {
+                has_override_dn = true;
+                break;
+            }
+        }
+
+        if (!has_override_dn) {
+            /* Copy original attributes and add overrideDN. */
+            attrs = talloc_zero_array(tmp_ctx, const char *, count + 2);
+            if (attrs == NULL) {
+                ret = ENOMEM;
+                goto done;
+            }
+
+            for (count = 0; attributes[count] != NULL; count++) {
+                attrs[count] = attributes[count];
+            }
+
+            attrs[count] = SYSDB_OVERRIDE_DN;
+        }
+
+        ret = sysdb_search_user_override_attrs_by_name(tmp_ctx, domain, name,
+                                            attrs, &override_obj, &orig_obj);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "sysdb_search_user_override_attrs_by_name failed.\n");
+            return ret;
+        }
+    }
+
+    /* If there are no views or nothing was found in the overrides the
+     * original objects are searched. */
+    if (orig_obj == NULL) {
+        ret = sysdb_get_user_attr(tmp_ctx, domain, name, attrs, &orig_obj);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_get_user_attr failed.\n");
+            return ret;
+        }
+    }
+
+    /* If there are views we have to check if override values must be added to
+     * the original object. */
+    if (DOM_HAS_VIEWS(domain) && orig_obj->count == 1) {
+        ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
+                          override_obj == NULL ? NULL : override_obj ->msgs[0]);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
+            return ret;
+        }
+
+        if (ret == ENOENT) {
+            *_res = talloc_zero(mem_ctx, struct ldb_result);
+            if (*_res == NULL) {
+                DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
+                ret = ENOMEM;
+            } else {
+                ret = EOK;
+            }
+            goto done;
+        }
+    }
+
+    /* Remove overrideDN if needed. */
+    if (!has_override_dn && orig_obj != NULL && orig_obj->count == 1) {
+        el = ldb_msg_find_element(orig_obj->msgs[0], SYSDB_OVERRIDE_DN);
+        if (el == NULL) {
+            ret = EINVAL;
+            goto done;
+        }
+
+        ldb_msg_remove_element(orig_obj->msgs[0], el);
+    }
+
+    *_res = talloc_steal(mem_ctx, orig_obj);
+    ret = EOK;
+
+done:
+    talloc_free(tmp_ctx);
     return ret;
 }
 
@@ -981,6 +1605,60 @@ errno_t sysdb_get_direct_parents(TALLOC_CTX *mem_ctx,
               name, direct_sysdb_count);
     *_direct_parents = talloc_steal(mem_ctx, direct_parents);
     ret = EOK;
+done:
+    talloc_free(tmp_ctx);
+    return ret;
+}
+
+errno_t sysdb_get_real_name(TALLOC_CTX *mem_ctx,
+                            struct sss_domain_info *domain,
+                            const char *name_or_upn,
+                            const char **_cname)
+{
+    errno_t ret;
+    TALLOC_CTX *tmp_ctx;
+    struct ldb_result *res;
+    const char *cname;
+    struct ldb_message *msg;
+
+    tmp_ctx = talloc_new(NULL);
+    if (!tmp_ctx) {
+        return ENOMEM;
+    }
+
+    ret = sysdb_getpwnam(tmp_ctx, domain, name_or_upn, &res);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Cannot canonicalize username\n");
+        goto done;
+    }
+
+    if (res->count == 0) {
+        ret = sysdb_search_user_by_upn(tmp_ctx, domain, name_or_upn, NULL,
+                                       &msg);
+        if (ret != EOK) {
+            /* User cannot be found in cache */
+            DEBUG(SSSDBG_OP_FAILURE, "Cannot find user [%s] in cache\n",
+                                     name_or_upn);
+            goto done;
+        }
+    } else if (res->count == 1) {
+        msg = res->msgs[0];
+    } else {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "sysdb_getpwnam returned count: [%d]\n", res->count);
+        ret = EIO;
+        goto done;
+    }
+
+    cname = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+    if (!cname) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "A user with no name?\n");
+        ret = ENOENT;
+        goto done;
+    }
+
+    ret = EOK;
+    *_cname = talloc_steal(mem_ctx, cname);
 done:
     talloc_free(tmp_ctx);
     return ret;

@@ -290,6 +290,8 @@ int sdap_get_map(TALLOC_CTX *memctx,
 
 /* =Parse-msg============================================================= */
 
+static bool objectclass_matched(struct sdap_attr_map *map,
+                                const char *objcl, int len);
 int sdap_parse_entry(TALLOC_CTX *memctx,
                      struct sdap_handle *sh, struct sdap_msg *sm,
                      struct sdap_attr_map *map, int attrs_num,
@@ -302,7 +304,8 @@ int sdap_parse_entry(TALLOC_CTX *memctx,
     struct ldb_val v;
     char *str;
     int lerrno;
-    int a, i, ret, ai;
+    int i, ret, ai;
+    int base_attr_idx = 0;
     const char *name;
     bool store;
     bool base64;
@@ -348,9 +351,7 @@ int sdap_parse_entry(TALLOC_CTX *memctx,
         }
 
         for (i = 0; vals[i]; i++) {
-            /* the objectclass is always the first name in the map */
-            if (strncasecmp(map[0].name,
-                            vals[i]->bv_val, vals[i]->bv_len) == 0) {
+            if (objectclass_matched(map, vals[i]->bv_val, vals[i]->bv_len)) {
                 /* ok it's an entry of the right type */
                 break;
             }
@@ -403,16 +404,17 @@ int sdap_parse_entry(TALLOC_CTX *memctx,
         }
 
         if (map) {
-            for (a = 1; a < attrs_num; a++) {
+            for (i = 1; i < attrs_num; i++) {
                 /* check if this attr is valid with the chosen schema */
-                if (!map[a].name) continue;
+                if (!map[i].name) continue;
                 /* check if it is an attr we are interested in */
-                if (strcasecmp(base_attr, map[a].name) == 0) break;
+                if (strcasecmp(base_attr, map[i].name) == 0) break;
             }
             /* interesting attr */
-            if (a < attrs_num) {
+            if (i < attrs_num) {
                 store = true;
-                name = map[a].sys_name;
+                name = map[i].sys_name;
+                base_attr_idx = i;
                 if (strcmp(name, SYSDB_SSH_PUBKEY) == 0) {
                     base64 = true;
                 }
@@ -478,7 +480,7 @@ int sdap_parse_entry(TALLOC_CTX *memctx,
                          * attrs in case there is a map. Find all that match
                          * and copy the value
                          */
-                        for (ai = a; ai < attrs_num; ai++) {
+                        for (ai = base_attr_idx; ai < attrs_num; ai++) {
                             /* check if this attr is valid with the chosen
                              * schema */
                             if (!map[ai].name) continue;
@@ -528,6 +530,25 @@ done:
     if (ber) ber_free(ber, 0);
     talloc_free(tmp_ctx);
     return ret;
+}
+
+static bool objectclass_matched(struct sdap_attr_map *map,
+                                const char *objcl, int len)
+{
+    if (len == 0) {
+        len = strlen(objcl) + 1;
+    }
+
+    if (strncasecmp(map[SDAP_OC_GROUP].name, objcl, len) == 0) {
+        return true;
+    }
+
+    if (map[SDAP_OC_GROUP_ALT].name != NULL
+        && strncasecmp(map[SDAP_OC_GROUP_ALT].name, objcl, len) == 0) {
+        return true;
+    }
+
+    return false;
 }
 
 /* Parses an LDAPDerefRes into sdap_deref_attrs structure */
@@ -630,7 +651,7 @@ errno_t sdap_parse_deref(TALLOC_CTX *mem_ctx,
 
         for (i=0; ocs[i]; i++) {
             /* the objectclass is always the first name in the map */
-            if (strcasecmp(minfo[mi].map[0].name, ocs[i]) == 0) {
+            if (objectclass_matched(minfo[mi].map, ocs[i], 0)) {
                 DEBUG(SSSDBG_TRACE_ALL,
                       "Found map for objectclass '%s'\n", ocs[i]);
                 map = minfo[mi].map;
@@ -1448,4 +1469,17 @@ errno_t sdap_get_netgroup_primary_name(TALLOC_CTX *memctx,
     return sdap_get_primary_name(memctx,
                                  opts->netgroup_map[SDAP_AT_NETGROUP_NAME].name,
                                  attrs, dom, _netgroup_name);
+}
+
+char *sdap_make_oc_list(TALLOC_CTX *mem_ctx, struct sdap_attr_map *map)
+{
+    if (map[SDAP_OC_GROUP_ALT].name == NULL) {
+        return talloc_asprintf(mem_ctx, "objectClass=%s",
+                               map[SDAP_OC_GROUP].name);
+    } else {
+        return talloc_asprintf(mem_ctx,
+                               "|(objectClass=%s)(objectClass=%s)",
+                               map[SDAP_OC_GROUP].name,
+                               map[SDAP_OC_GROUP_ALT].name);
+    }
 }

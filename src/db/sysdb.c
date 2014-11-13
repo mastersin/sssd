@@ -508,16 +508,29 @@ int sysdb_attrs_get_string_array(struct sysdb_attrs *attrs, const char *name,
     return EOK;
 }
 
-int sysdb_attrs_add_val(struct sysdb_attrs *attrs,
-                        const char *name, const struct ldb_val *val)
+
+static int sysdb_attrs_add_val_int(struct sysdb_attrs *attrs,
+                                   const char *name, bool check_values,
+                                   const struct ldb_val *val)
 {
     struct ldb_message_element *el = NULL;
     struct ldb_val *vals;
     int ret;
+    size_t c;
 
     ret = sysdb_attrs_get_el(attrs, name, &el);
     if (ret != EOK) {
         return ret;
+    }
+
+    if (check_values) {
+        for (c = 0; c < el->num_values; c++) {
+            if (val->length == el->values[c].length
+                    && memcmp(val->data, el->values[c].data,
+                              val->length) == 0) {
+                return EOK;
+            }
+        }
     }
 
     vals = talloc_realloc(attrs->a, el->values,
@@ -534,6 +547,29 @@ int sysdb_attrs_add_val(struct sysdb_attrs *attrs,
     el->num_values++;
 
     return EOK;
+}
+int sysdb_attrs_add_val(struct sysdb_attrs *attrs,
+                        const char *name, const struct ldb_val *val)
+{
+    return sysdb_attrs_add_val_int(attrs, name, false, val);
+}
+
+/* Check if the same value already exists. */
+int sysdb_attrs_add_val_safe(struct sysdb_attrs *attrs,
+                             const char *name, const struct ldb_val *val)
+{
+    return sysdb_attrs_add_val_int(attrs, name, true, val);
+}
+
+int sysdb_attrs_add_string_safe(struct sysdb_attrs *attrs,
+                                const char *name, const char *str)
+{
+    struct ldb_val v;
+
+    v.data = (uint8_t *)discard_const(str);
+    v.length = strlen(str);
+
+    return sysdb_attrs_add_val_safe(attrs, name, &v);
 }
 
 int sysdb_attrs_add_string(struct sysdb_attrs *attrs,
@@ -1879,58 +1915,6 @@ done:
     if (ret != EOK) {
         talloc_free(list);
     }
-    return ret;
-}
-
-errno_t sysdb_get_real_name(TALLOC_CTX *mem_ctx,
-                            struct sss_domain_info *domain,
-                            const char *name,
-                            const char **_cname)
-{
-    errno_t ret;
-    TALLOC_CTX *tmp_ctx;
-    struct ldb_result *res;
-    const char *cname;
-    struct ldb_message *msg;
-
-    tmp_ctx = talloc_new(NULL);
-    if (!tmp_ctx) {
-        return ENOMEM;
-    }
-
-    ret = sysdb_getpwnam(tmp_ctx, domain, name, &res);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "Cannot canonicalize username\n");
-        goto done;
-    }
-
-    if (res->count == 0) {
-        ret = sysdb_search_user_by_upn(tmp_ctx, domain, name, NULL, &msg);
-        if (ret != EOK) {
-            /* User cannot be found in cache */
-            DEBUG(SSSDBG_OP_FAILURE, "Cannot find user [%s] in cache\n", name);
-            goto done;
-        }
-    } else if (res->count == 1) {
-        msg = res->msgs[0];
-    } else {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "sysdb_getpwnam returned count: [%d]\n", res->count);
-        ret = EIO;
-        goto done;
-    }
-
-    cname = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
-    if (!cname) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "A user with no name?\n");
-        ret = ENOENT;
-        goto done;
-    }
-
-    ret = EOK;
-    *_cname = talloc_steal(mem_ctx, cname);
-done:
-    talloc_free(tmp_ctx);
     return ret;
 }
 

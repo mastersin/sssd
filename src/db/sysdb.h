@@ -36,11 +36,14 @@
 #define SYSDB_CUSTOM_CONTAINER "cn=custom"
 #define SYSDB_NETGROUP_CONTAINER "cn=Netgroups"
 #define SYSDB_RANGE_CONTAINER "cn=ranges"
+#define SYSDB_VIEW_CONTAINER "cn=views"
 #define SYSDB_TMPL_USER_BASE SYSDB_USERS_CONTAINER","SYSDB_DOM_BASE
 #define SYSDB_TMPL_GROUP_BASE SYSDB_GROUPS_CONTAINER","SYSDB_DOM_BASE
 #define SYSDB_TMPL_CUSTOM_BASE SYSDB_CUSTOM_CONTAINER","SYSDB_DOM_BASE
 #define SYSDB_TMPL_NETGROUP_BASE SYSDB_NETGROUP_CONTAINER","SYSDB_DOM_BASE
 #define SYSDB_TMPL_RANGE_BASE SYSDB_RANGE_CONTAINER","SYSDB_BASE
+#define SYSDB_TMPL_VIEW_BASE SYSDB_VIEW_CONTAINER","SYSDB_BASE
+#define SYSDB_TMPL_VIEW_SEARCH_BASE "cn=%s,"SYSDB_TMPL_VIEW_BASE
 
 #define SYSDB_SUBDOMAIN_CLASS "subdomain"
 #define SYSDB_USER_CLASS "user"
@@ -138,6 +141,23 @@
 #define SYSDB_DOMAIN_ID "domainID"
 #define SYSDB_ID_RANGE_TYPE "idRangeType"
 
+#define ORIGINALAD_PREFIX "originalAD"
+#define OVERRIDE_PREFIX "override"
+#define SYSDB_DEFAULT_OVERRIDE_NAME "defaultOverrideName"
+
+#define SYSDB_AD_ACCOUNT_EXPIRES "adAccountExpires"
+#define SYSDB_AD_USER_ACCOUNT_CONTROL "adUserAccountControl"
+
+#define SYSDB_VIEW_CLASS "view"
+#define SYSDB_VIEW_NAME "viewName"
+#define SYSDB_DEFAULT_VIEW_NAME "default"
+#define SYSDB_OVERRIDE_CLASS "overrride"
+#define SYSDB_OVERRIDE_ANCHOR_UUID "overrideAnchorUUID"
+#define SYSDB_OVERRIDE_USER_CLASS "userOverride"
+#define SYSDB_OVERRIDE_GROUP_CLASS "groupOverride"
+#define SYSDB_OVERRIDE_DN "overrideDN"
+#define SYSDB_OVERRIDE_OBJECT_DN "overrideObjectDN"
+
 #define SYSDB_NEXTID_FILTER "("SYSDB_NEXTID"=*)"
 
 #define SYSDB_UC "objectclass="SYSDB_USER_CLASS
@@ -179,11 +199,20 @@
                         SYSDB_DEFAULT_ATTRS, \
                         SYSDB_PRIMARY_GROUP_GIDNUM, \
                         SYSDB_SID_STR, \
+                        SYSDB_UPN, \
+                        SYSDB_OVERRIDE_DN, \
+                        SYSDB_OVERRIDE_OBJECT_DN, \
+                        SYSDB_DEFAULT_OVERRIDE_NAME, \
                         NULL}
+
 #define SYSDB_GRSRC_ATTRS {SYSDB_NAME, SYSDB_GIDNUM, \
                            SYSDB_MEMBERUID, \
                            SYSDB_GHOST, \
                            SYSDB_DEFAULT_ATTRS, \
+                           SYSDB_SID_STR, \
+                           SYSDB_OVERRIDE_DN, \
+                           SYSDB_OVERRIDE_OBJECT_DN, \
+                           SYSDB_DEFAULT_OVERRIDE_NAME, \
                            NULL}
 
 #define SYSDB_NETGR_ATTRS {SYSDB_NAME, SYSDB_NETGROUP_TRIPLE, \
@@ -197,6 +226,7 @@
                             SYSDB_ORIG_DN, \
                             SYSDB_SID_STR, \
                             SYSDB_NAME, \
+                            SYSDB_OVERRIDE_DN, \
                             NULL}
 
 #define SYSDB_TMPL_USER SYSDB_NAME"=%s,"SYSDB_TMPL_USER_BASE
@@ -205,6 +235,7 @@
 #define SYSDB_TMPL_CUSTOM_SUBTREE "cn=%s,"SYSDB_TMPL_CUSTOM_BASE
 #define SYSDB_TMPL_CUSTOM SYSDB_NAME"=%s,cn=%s,"SYSDB_TMPL_CUSTOM_BASE
 #define SYSDB_TMPL_RANGE SYSDB_NAME"=%s,"SYSDB_TMPL_RANGE_BASE
+#define SYSDB_TMPL_OVERRIDE SYSDB_OVERRIDE_ANCHOR_UUID"=%s,"SYSDB_TMPL_VIEW_SEARCH_BASE
 
 #define SYSDB_MOD_ADD LDB_FLAG_MOD_ADD
 #define SYSDB_MOD_DEL LDB_FLAG_MOD_DELETE
@@ -265,6 +296,10 @@ struct range_info {
 /* values are copied in the structure, allocated on "attrs" */
 int sysdb_attrs_add_val(struct sysdb_attrs *attrs,
                         const char *name, const struct ldb_val *val);
+int sysdb_attrs_add_val_safe(struct sysdb_attrs *attrs,
+                             const char *name, const struct ldb_val *val);
+int sysdb_attrs_add_string_safe(struct sysdb_attrs *attrs,
+                                const char *name, const char *str);
 int sysdb_attrs_add_string(struct sysdb_attrs *attrs,
                            const char *name, const char *str);
 int sysdb_attrs_add_lower_case_string(struct sysdb_attrs *attrs,
@@ -329,7 +364,7 @@ errno_t sysdb_attrs_primary_name_list(struct sysdb_ctx *sysdb,
                                       char ***name_list);
 errno_t sysdb_get_real_name(TALLOC_CTX *mem_ctx,
                             struct sss_domain_info *domain,
-                            const char *name,
+                            const char *name_or_upn,
                             const char **_cname);
 
 errno_t sysdb_msg2attrs(TALLOC_CTX *mem_ctx, size_t count,
@@ -403,6 +438,95 @@ errno_t sysdb_range_create(struct sysdb_ctx *sysdb, struct range_info *range);
 errno_t sysdb_update_ranges(struct sysdb_ctx *sysdb,
                             struct range_info **ranges);
 
+errno_t sysdb_update_view_name(struct sysdb_ctx *sysdb, const char *view_name);
+
+errno_t sysdb_get_view_name(TALLOC_CTX *mem_ctx, struct sysdb_ctx *sysdb,
+                            char **view_name);
+
+errno_t sysdb_apply_default_override(struct sss_domain_info *domain,
+                                     struct sysdb_attrs *override_attrs,
+                                     struct ldb_dn *obj_dn);
+
+errno_t sysdb_search_user_override_attrs_by_name(TALLOC_CTX *mem_ctx,
+                                            struct sss_domain_info *domain,
+                                            const char *name,
+                                            const char **attrs,
+                                            struct ldb_result **override_obj,
+                                            struct ldb_result **orig_obj);
+
+errno_t sysdb_search_group_override_attrs_by_name(TALLOC_CTX *mem_ctx,
+                                            struct sss_domain_info *domain,
+                                            const char *name,
+                                            const char **attrs,
+                                            struct ldb_result **override_obj,
+                                            struct ldb_result **orig_obj);
+
+errno_t sysdb_search_user_override_by_name(TALLOC_CTX *mem_ctx,
+                                           struct sss_domain_info *domain,
+                                           const char *name,
+                                           struct ldb_result **override_obj,
+                                           struct ldb_result **orig_obj);
+
+errno_t sysdb_search_group_override_by_name(TALLOC_CTX *mem_ctx,
+                                            struct sss_domain_info *domain,
+                                            const char *name,
+                                            struct ldb_result **override_obj,
+                                            struct ldb_result **orig_obj);
+
+errno_t sysdb_search_user_override_by_uid(TALLOC_CTX *mem_ctx,
+                                          struct sss_domain_info *domain,
+                                          uid_t uid,
+                                           struct ldb_result **override_obj,
+                                           struct ldb_result **orig_obj);
+
+errno_t sysdb_search_group_override_by_gid(TALLOC_CTX *mem_ctx,
+                                            struct sss_domain_info *domain,
+                                            gid_t gid,
+                                            struct ldb_result **override_obj,
+                                            struct ldb_result **orig_obj);
+
+errno_t sysdb_add_overrides_to_object(struct sss_domain_info *domain,
+                                      struct ldb_message *obj,
+                                      struct ldb_message *override_obj);
+
+errno_t sysdb_add_group_member_overrides(struct sss_domain_info *domain,
+                                         struct ldb_message *obj);
+
+errno_t sysdb_getpwnam_with_views(TALLOC_CTX *mem_ctx,
+                                  struct sss_domain_info *domain,
+                                  const char *name,
+                                  struct ldb_result **res);
+
+errno_t sysdb_getpwuid_with_views(TALLOC_CTX *mem_ctx,
+                                  struct sss_domain_info *domain,
+                                  uid_t uid,
+                                  struct ldb_result **res);
+
+int sysdb_getgrnam_with_views(TALLOC_CTX *mem_ctx,
+                              struct sss_domain_info *domain,
+                              const char *name,
+                              struct ldb_result **res);
+
+int sysdb_getgrgid_with_views(TALLOC_CTX *mem_ctx,
+                              struct sss_domain_info *domain,
+                              gid_t gid,
+                              struct ldb_result **res);
+
+struct ldb_message_element *
+sss_view_ldb_msg_find_element(struct sss_domain_info *dom,
+                              const struct ldb_message *msg,
+                              const char *attr_name);
+
+const char *sss_view_ldb_msg_find_attr_as_string(struct sss_domain_info *dom,
+                                                 const struct ldb_message *msg,
+                                                 const char *attr_name,
+                                                 const char * default_value);
+
+uint64_t sss_view_ldb_msg_find_attr_as_uint64(struct sss_domain_info *dom,
+                                              const struct ldb_message *msg,
+                                              const char *attr_name,
+                                              uint64_t default_value);
+
 /* Sysdb initialization.
  * call this function *only* once to initialize the database and get
  * the sysdb ctx */
@@ -433,6 +557,10 @@ int sysdb_enumpwent(TALLOC_CTX *mem_ctx,
                     struct sss_domain_info *domain,
                     struct ldb_result **res);
 
+int sysdb_enumpwent_with_views(TALLOC_CTX *mem_ctx,
+                               struct sss_domain_info *domain,
+                               struct ldb_result **res);
+
 int sysdb_getgrnam(TALLOC_CTX *mem_ctx,
                    struct sss_domain_info *domain,
                    const char *name,
@@ -446,6 +574,10 @@ int sysdb_getgrgid(TALLOC_CTX *mem_ctx,
 int sysdb_enumgrent(TALLOC_CTX *mem_ctx,
                     struct sss_domain_info *domain,
                     struct ldb_result **res);
+
+int sysdb_enumgrent_with_views(TALLOC_CTX *mem_ctx,
+                               struct sss_domain_info *domain,
+                               struct ldb_result **res);
 
 struct sysdb_netgroup_ctx {
     enum {SYSDB_NETGROUP_TRIPLE_VAL, SYSDB_NETGROUP_GROUP_VAL} type;
@@ -469,11 +601,22 @@ int sysdb_initgroups(TALLOC_CTX *mem_ctx,
                      const char *name,
                      struct ldb_result **res);
 
+int sysdb_initgroups_with_views(TALLOC_CTX *mem_ctx,
+                                struct sss_domain_info *domain,
+                                const char *name,
+                                struct ldb_result **res);
+
 int sysdb_get_user_attr(TALLOC_CTX *mem_ctx,
                         struct sss_domain_info *domain,
                         const char *name,
                         const char **attributes,
                         struct ldb_result **res);
+
+int sysdb_get_user_attr_with_views(TALLOC_CTX *mem_ctx,
+                                   struct sss_domain_info *domain,
+                                   const char *name,
+                                   const char **attributes,
+                                   struct ldb_result **res);
 
 int sysdb_get_netgroup_attr(TALLOC_CTX *mem_ctx,
                             struct sss_domain_info *domain,
@@ -708,6 +851,11 @@ errno_t sysdb_update_members_dn(struct sss_domain_info *member_domain,
                                 const char *const *add_groups,
                                 const char *const *del_groups);
 
+errno_t sysdb_store_override(struct sss_domain_info *domain,
+                             const char *view_name,
+                             enum sysdb_member_type type,
+                             struct sysdb_attrs *attrs, struct ldb_dn *obj_dn);
+
 /* Password caching function.
  * If you are in a transaction ignore sysdb and pass in the handle.
  * If you are not in a transaction pass NULL in handle and provide sysdb,
@@ -876,6 +1024,8 @@ errno_t sysdb_search_object_by_sid(TALLOC_CTX *mem_ctx,
 
 #define SYSDB_GPO_CONTAINER "cn=gpos,cn=ad,cn=custom"
 
+/* === Functions related to GPO entries === */
+
 #define SYSDB_GPO_OC "gpo"
 #define SYSDB_GPO_FILTER "(objectClass="SYSDB_GPO_OC")"
 #define SYSDB_GPO_GUID_FILTER "(&(objectClass="SYSDB_GPO_OC")("SYSDB_GPO_GUID_ATTR"=%s))"
@@ -908,9 +1058,28 @@ errno_t sysdb_gpo_get_gpos(TALLOC_CTX *mem_ctx,
                            struct sss_domain_info *domain,
                            struct ldb_result **_result);
 
-errno_t sysdb_gpo_delete_stale_gpos(TALLOC_CTX *mem_ctx,
-                                    struct sss_domain_info *domain,
-                                    const char **gpo_guid_list,
-                                    int num_gpos);
+/* === Functions related to GPO Result object === */
+
+#define SYSDB_GPO_RESULT_OC "gpo_result"
+#define SYSDB_GPO_RESULT_FILTER "(objectClass="SYSDB_GPO_RESULT_OC")"
+
+#define SYSDB_TMPL_GPO_RESULT_BASE SYSDB_GPO_CONTAINER","SYSDB_DOM_BASE
+#define SYSDB_TMPL_GPO_RESULT "cn=%s,"SYSDB_TMPL_GPO_RESULT_BASE
+
+errno_t sysdb_gpo_get_gpo_result_object(TALLOC_CTX *mem_ctx,
+                                        struct sss_domain_info *domain,
+                                        struct ldb_result **_result);
+
+errno_t sysdb_gpo_delete_gpo_result_object(TALLOC_CTX *mem_ctx,
+                                           struct sss_domain_info *domain);
+
+errno_t sysdb_gpo_store_gpo_result_setting(struct sss_domain_info *domain,
+                                           const char *policy_setting_key,
+                                           const char *policy_setting_value);
+
+errno_t sysdb_gpo_get_gpo_result_setting(TALLOC_CTX *mem_ctx,
+                                         struct sss_domain_info *domain,
+                                         const char *policy_setting_key,
+                                         const char **policy_setting_value);
 
 #endif /* __SYS_DB_H__ */

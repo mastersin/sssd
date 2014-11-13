@@ -44,6 +44,28 @@ enum pam_verbosity {
 
 static void pam_reply(struct pam_auth_req *preq);
 
+static bool is_domain_requested(struct pam_data *pd, const char *domain_name)
+{
+    int i;
+
+    /* If none specific domains got requested via pam, all domains are allowed.
+     * Which mimics the default/original behaviour.
+     */
+    if (!pd->requested_domains) {
+        return true;
+    }
+
+    for (i = 0; pd->requested_domains[i]; i++) {
+        if (strcmp(domain_name, pd->requested_domains[i])) {
+            continue;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
 static int extract_authtok_v2(struct sss_auth_token *tok,
                               size_t data_size, uint8_t *body, size_t blen,
                               size_t *c)
@@ -143,6 +165,7 @@ static int pam_parse_in_data_v2(struct pam_data *pd,
     int ret;
     uint32_t start;
     uint32_t terminator;
+    char *requested_domains;
 
     if (blen < 4*sizeof(uint32_t)+2) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Received data is invalid.\n");
@@ -193,6 +216,20 @@ static int pam_parse_in_data_v2(struct pam_data *pd,
                 case SSS_PAM_ITEM_RHOST:
                     ret = extract_string(&pd->rhost, size, body, blen, &c);
                     if (ret != EOK) return ret;
+                    break;
+                case SSS_PAM_ITEM_REQUESTED_DOMAINS:
+                    ret = extract_string(&requested_domains, size, body, blen,
+                                         &c);
+                    if (ret != EOK) return ret;
+
+                    ret = split_on_separator(pd, requested_domains, ',', true,
+                                             true, &pd->requested_domains,
+                                             NULL);
+                    if (ret != EOK) {
+                        DEBUG(SSSDBG_CRIT_FAILURE,
+                              "Failed to parse requested_domains list!\n");
+                        return ret;
+                    }
                     break;
                 case SSS_PAM_ITEM_CLI_PID:
                     ret = extract_uint32_t(&pd->cli_pid, size,
@@ -762,6 +799,45 @@ static int pam_auth_req_destructor(struct pam_auth_req *preq)
     return 0;
 }
 
+static bool is_uid_trusted(uint32_t uid,
+                           size_t trusted_uids_count,
+                           uid_t *trusted_uids)
+{
+    size_t i;
+
+    /* root is always trusted */
+    if (uid == 0) {
+        return true;
+    }
+
+    /* All uids are allowed */
+    if (trusted_uids_count == 0) {
+        return true;
+    }
+
+    for(i = 0; i < trusted_uids_count; i++) {
+        if (trusted_uids[i] == uid) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool is_domain_public(char *name,
+                             char **public_dom_names,
+                             size_t public_dom_names_count)
+{
+    size_t i;
+
+    for(i=0; i < public_dom_names_count; i++) {
+        if (strcmp(name, public_dom_names[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
 {
     struct sss_domain_info *dom;
@@ -772,6 +848,15 @@ static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
     struct pam_ctx *pctx =
             talloc_get_type(cctx->rctx->pvt_ctx, struct pam_ctx);
     struct tevent_req *req;
+
+    pctx->is_uid_trusted = is_uid_trusted(cctx->client_euid,
+                                          pctx->trusted_uids_count,
+                                          pctx->trusted_uids);
+
+    if (!pctx->is_uid_trusted) {
+        DEBUG(SSSDBG_MINOR_FAILURE, "uid %"PRIu32" is not trusted.\n",
+              cctx->client_euid);
+    }
 
     preq = talloc_zero(cctx, struct pam_auth_req);
     if (!preq) {
@@ -813,10 +898,27 @@ static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
             goto done;
         }
 
+        /* Untrusted users can access only public domains. */
+        if (!pctx->is_uid_trusted &&
+            !is_domain_public(pd->domain, pctx->public_domains,
+                              pctx->public_domains_count)) {
+            DEBUG(SSSDBG_MINOR_FAILURE,
+                  "Untrusted user %"PRIu32" cannot access unpublic domain %s.\n",
+                  cctx->client_euid, pd->domain);
+            ret = EPERM;
+            goto done;
+        }
+
         ncret = sss_ncache_check_user(pctx->ncache, pctx->neg_timeout,
                                       preq->domain, pd->user);
         if (ncret == EEXIST) {
             /* User found in the negative cache */
+            ret = ENOENT;
+            goto done;
+        }
+
+        /* skip this domain if not requested */
+        if (!is_domain_requested(pd, pd->domain)) {
             ret = ENOENT;
             goto done;
         }
@@ -825,6 +927,22 @@ static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
              dom;
              dom = get_next_domain(dom, false)) {
             if (dom->fqnames) continue;
+
+            /* Untrusted users can access only public domains. */
+            if (!pctx->is_uid_trusted &&
+                !is_domain_public(dom->name, pctx->public_domains,
+                                  pctx->public_domains_count)) {
+                DEBUG(SSSDBG_MINOR_FAILURE,
+                      "Untrusted user %"PRIu32" cannot access unpublic domain %s."
+                      " Trying next domain.\n",
+                      cctx->client_euid, dom->name);
+                continue;
+            }
+
+            /* skip this domain if not requested */
+            if (!is_domain_requested(pd, dom->name)) {
+                continue;
+            }
 
             ncret = sss_ncache_check_user(pctx->ncache, pctx->neg_timeout,
                                           dom, pd->user);
@@ -840,7 +958,8 @@ static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
                   "User [%s@%s] filtered out (negative cache). "
                    "Trying next domain.\n", pd->user, dom->name);
         }
-        if (!dom) {
+
+        if (!dom || !is_domain_requested(pd, dom->name)) {
             ret = ENOENT;
             goto done;
         }
@@ -920,7 +1039,6 @@ done:
 }
 
 static void pam_dp_send_acct_req_done(struct tevent_req *req);
-
 static int pam_check_user_search(struct pam_auth_req *preq)
 {
     struct sss_domain_info *dom = preq->domain;
@@ -933,12 +1051,18 @@ static int pam_check_user_search(struct pam_auth_req *preq)
             talloc_get_type(preq->cctx->rctx->pvt_ctx, struct pam_ctx);
     static const char *user_attrs[] = SYSDB_PW_ATTRS;
     struct ldb_message *msg;
+    struct ldb_result *res;
 
     while (dom) {
        /* if it is a domainless search, skip domains that require fully
-         * qualified names instead */
+        * qualified names instead, also untrusted users can access only
+        * public domains */
         while (dom && !preq->pd->domain && !preq->pd->name_is_upn
-                && dom->fqnames) {
+               && (dom->fqnames ||
+                   (!pctx->is_uid_trusted &&
+                    !is_domain_public(dom->name,
+                                      pctx->public_domains,
+                                      pctx->public_domains_count)))) {
             dom = get_next_domain(dom, false);
         }
 
@@ -999,7 +1123,16 @@ static int pam_check_user_search(struct pam_auth_req *preq)
         if (preq->pd->name_is_upn) {
             ret = sysdb_search_user_by_upn(preq, dom, name, user_attrs, &msg);
         } else {
-            ret = sysdb_search_user_by_name(preq, dom, name, user_attrs, &msg);
+            ret = sysdb_getpwnam_with_views(preq, dom, name, &res);
+            if (res->count > 1) {
+                DEBUG(SSSDBG_FATAL_FAILURE,
+                      "getpwnam call returned more than one result !?!\n");
+                return ENOENT;
+            } else if (res->count == 0) {
+                ret = ENOENT;
+            } else {
+                msg = res->msgs[0];
+            }
         }
         if (ret != EOK && ret != ENOENT) {
             DEBUG(SSSDBG_CRIT_FAILURE,

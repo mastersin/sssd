@@ -46,6 +46,9 @@ uint8_t buf1[] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x
 uint8_t buf2[] = {0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 't', 'e', 's', 't', 0x00};
 uint8_t buf3[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 't', 'e', 's', 't', 0x00};
 uint8_t buf4[] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 't', 'e', 's', 't', 'x'};
+
+uint8_t buf_orig1[] = {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 'k', 'e', 'y', 0x00, 'v', 'a', 'l', 'u', 'e', 0x00};
+
 enum nss_status sss_nss_make_request(enum sss_cli_command cmd,
                       struct sss_cli_req_data *rd,
                       uint8_t **repbuf, size_t *replen,
@@ -68,9 +71,10 @@ enum nss_status sss_nss_make_request(enum sss_cli_command cmd,
     return d->nss_status;
 }
 
-void test_getsidbyname(void **state) {
+void test_getsidbyname(void **state)
+{
     int ret;
-    char *sid;
+    char *sid = NULL;
     size_t c;
     enum sss_id_type type;
 
@@ -94,6 +98,8 @@ void test_getsidbyname(void **state) {
 
     ret = sss_nss_getsidbyname("", &sid, NULL);
     assert_int_equal(ret, EINVAL);
+    free(sid);
+    sid = NULL;
 
     for (c = 0; d[c].d.repbuf != NULL; c++) {
         will_return(sss_nss_make_request, &d[0].d);
@@ -104,7 +110,28 @@ void test_getsidbyname(void **state) {
             assert_string_equal(sid, d[0].str);
             assert_int_equal(type, 0);
         }
+        free(sid);
+        sid = NULL;
     }
+}
+
+void test_getorigbyname(void **state)
+{
+    int ret;
+    struct sss_nss_kv *kv_list;
+    enum sss_id_type type;
+    struct sss_nss_make_request_test_data d = {buf_orig1, sizeof(buf_orig1), 0, NSS_STATUS_SUCCESS};
+
+    will_return(sss_nss_make_request, &d);
+    ret = sss_nss_getorigbyname("test", &kv_list, &type);
+    assert_int_equal(ret, EOK);
+    assert_int_equal(type, SSS_ID_TYPE_UID);
+    assert_string_equal(kv_list[0].key, "key");
+    assert_string_equal(kv_list[0].value, "value");
+    assert_null(kv_list[1].key);
+    assert_null(kv_list[1].value);
+
+    sss_nss_free_kv(kv_list);
 }
 
 int main(int argc, const char *argv[])
@@ -112,6 +139,7 @@ int main(int argc, const char *argv[])
 
     const UnitTest tests[] = {
         unit_test(test_getsidbyname),
+        unit_test(test_getorigbyname),
     };
 
     return run_tests(tests);

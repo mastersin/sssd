@@ -35,6 +35,8 @@ if [[ "$DISTRO_BRANCH" == -redhat-* ]]; then
         libcmocka-devel
         mock
         rpm-build
+        uid_wrapper
+        nss_wrapper
     )
     _DEPS_LIST_SPEC=`
         sed -e 's/@PACKAGE_VERSION@/0/g' \
@@ -89,6 +91,7 @@ if [[ "$DISTRO_BRANCH" == -debian-* ]]; then
         libtevent-dev
         libtool
         libxml2-utils
+        make
         python-dev
         samba-dev
         systemd

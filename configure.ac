@@ -4,6 +4,8 @@ m4_include([version.m4])
 AC_INIT([sssd],
         VERSION_NUMBER,
         [sssd-devel@lists.fedorahosted.org])
+AC_CONFIG_SRCDIR([BUILD.txt])
+AC_CONFIG_AUX_DIR([build])
 
 m4_ifdef([AC_USE_SYSTEM_EXTENSIONS],
     [AC_USE_SYSTEM_EXTENSIONS],
@@ -11,8 +13,6 @@ m4_ifdef([AC_USE_SYSTEM_EXTENSIONS],
 
 CFLAGS="$CFLAGS -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -D_LARGEFILE64_SOURCE"
 
-AC_CONFIG_SRCDIR([BUILD.txt])
-AC_CONFIG_AUX_DIR([build])
 
 AM_INIT_AUTOMAKE([-Wall foreign subdir-objects tar-pax])
 AM_PROG_CC_C_O
@@ -20,6 +20,10 @@ m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 AC_DISABLE_STATIC
 AC_PROG_INSTALL
 AC_PROG_LIBTOOL
+AC_PROG_MKDIR_P
+m4_ifdef([AC_PROG_MKDIR_P],
+         [AC_PROG_MKDIR_P],
+         [MKDIR_P="mkdir -p"])
 LT_LIB_DLLOAD
 AC_CONFIG_MACRO_DIR([m4])
 AM_GNU_GETTEXT([external])
@@ -167,6 +171,7 @@ m4_include([src/external/samba.m4])
 m4_include([src/external/sasl.m4])
 m4_include([src/external/configlib.m4])
 m4_include([src/external/libnfsidmap.m4])
+m4_include([src/external/cwrap.m4])
 
 if test x$build_config_lib = xyes; then
     m4_include([src/external/libaugeas.m4])
@@ -319,6 +324,8 @@ AM_CONDITIONAL([HAVE_DOXYGEN], [test x$DOXYGEN != xfalse ])
 
 AM_CONDITIONAL([HAVE_CHECK], [test x$have_check != x])
 AM_CHECK_CMOCKA
+AM_CHECK_UID_WRAPPER
+AM_CHECK_NSS_WRAPPER
 
 AM_CONDITIONAL([HAVE_DEVSHM], [test -d /dev/shm])
 
@@ -328,7 +335,7 @@ AC_SUBST([abs_builddir], $abs_build_dir)
 
 AC_CONFIG_FILES([Makefile contrib/sssd.spec src/examples/rwtab src/doxy.config
                  src/sysv/sssd src/sysv/gentoo/sssd src/sysv/SUSE/sssd
-                 po/Makefile.in src/man/Makefile
+                 po/Makefile.in src/man/Makefile src/tests/cwrap/Makefile
                  src/providers/ipa/ipa_hbac.pc src/providers/ipa/ipa_hbac.doxy
                  src/lib/idmap/sss_idmap.pc src/lib/idmap/sss_idmap.doxy
                  src/sss_client/sudo/sss_sudo.doxy

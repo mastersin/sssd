@@ -34,9 +34,6 @@ struct sss_domain_info *get_domains_head(struct sss_domain_info *domain)
     /* get to the top level domain */
     for (dom = domain; dom->parent != NULL; dom = dom->parent);
 
-    /* proceed to the list head */
-    for (; dom->prev != NULL; dom = dom->prev);
-
     return dom;
 }
 
@@ -223,6 +220,17 @@ struct sss_domain_info *new_subdomain(TALLOC_CTX *mem_ctx,
     }
 
     dom->parent = parent;
+
+    /* Sub-domains always have the same view as the parent */
+    dom->has_views = parent->has_views;
+    if (parent->view_name != NULL) {
+        dom->view_name = talloc_strdup(dom, parent->view_name);
+        if (dom->view_name == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "Failed to copy parent's view name.\n");
+            goto fail;
+        }
+    }
+
     dom->name = talloc_strdup(dom, name);
     if (dom->name == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "Failed to copy domain name.\n");
@@ -367,7 +375,7 @@ sss_krb5_touch_config(void)
 }
 
 errno_t
-sss_write_domain_mappings(struct sss_domain_info *domain, bool add_capaths)
+sss_write_domain_mappings(struct sss_domain_info *domain)
 {
     struct sss_domain_info *dom;
     struct sss_domain_info *parent_dom;
@@ -381,7 +389,7 @@ sss_write_domain_mappings(struct sss_domain_info *domain, bool add_capaths)
     mode_t old_mode;
     FILE *fstream = NULL;
     int i;
-    bool capaths_started;
+    bool capaths_started = false;
     char *uc_forest;
     char *uc_parent;
 
@@ -469,48 +477,45 @@ sss_write_domain_mappings(struct sss_domain_info *domain, bool add_capaths)
         }
     }
 
-    if (add_capaths) {
-        capaths_started = false;
-        parent_dom = domain;
-        uc_parent = get_uppercase_realm(tmp_ctx, parent_dom->name);
-        if (uc_parent == NULL) {
+    parent_dom = domain;
+    uc_parent = get_uppercase_realm(tmp_ctx, parent_dom->name);
+    if (uc_parent == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "get_uppercase_realm failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    for (dom = get_next_domain(domain, true);
+            dom && IS_SUBDOMAIN(dom); /* if we get back to a parent, stop */
+            dom = get_next_domain(dom, false)) {
+
+        if (dom->forest == NULL) {
+            continue;
+        }
+
+        uc_forest = get_uppercase_realm(tmp_ctx, dom->forest);
+        if (uc_forest == NULL) {
             DEBUG(SSSDBG_OP_FAILURE, "get_uppercase_realm failed.\n");
             ret = ENOMEM;
             goto done;
         }
 
-        for (dom = get_next_domain(domain, true);
-             dom && IS_SUBDOMAIN(dom); /* if we get back to a parent, stop */
-             dom = get_next_domain(dom, false)) {
-
-            if (dom->forest == NULL) {
-                continue;
-            }
-
-            uc_forest = get_uppercase_realm(tmp_ctx, dom->forest);
-            if (uc_forest == NULL) {
-                DEBUG(SSSDBG_OP_FAILURE, "get_uppercase_realm failed.\n");
-                ret = ENOMEM;
-                goto done;
-            }
-
-            if (!capaths_started) {
-                ret = fprintf(fstream, "[capaths]\n");
-                if (ret < 0) {
-                    DEBUG(SSSDBG_OP_FAILURE, "fprintf failed\n");
-                    ret = EIO;
-                    goto done;
-                }
-                capaths_started = true;
-            }
-
-            ret = fprintf(fstream, "%s = {\n  %s = %s\n}\n%s = {\n  %s = %s\n}\n",
-                                   dom->realm, uc_parent, uc_forest,
-                                   uc_parent, dom->realm, uc_forest);
+        if (!capaths_started) {
+            ret = fprintf(fstream, "[capaths]\n");
             if (ret < 0) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "fprintf failed\n");
+                DEBUG(SSSDBG_OP_FAILURE, "fprintf failed\n");
+                ret = EIO;
                 goto done;
             }
+            capaths_started = true;
+        }
+
+        ret = fprintf(fstream, "%s = {\n  %s = %s\n}\n%s = {\n  %s = %s\n}\n",
+                                dom->realm, uc_parent, uc_forest,
+                                uc_parent, dom->realm, uc_forest);
+        if (ret < 0) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "fprintf failed\n");
+            goto done;
         }
     }
 
@@ -569,6 +574,66 @@ done:
                    tmp_file, err, strerror(err));
         }
     }
+    talloc_free(tmp_ctx);
+    return ret;
+}
+
+/* Save domain names, do not descend. */
+errno_t get_dom_names(TALLOC_CTX *mem_ctx,
+                      struct sss_domain_info *start_dom,
+                      char ***_dom_names,
+                      int *_dom_names_count)
+{
+    struct sss_domain_info *dom;
+    TALLOC_CTX *tmp_ctx;
+    char **dom_names;
+    size_t count, i;
+    errno_t ret;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    /* get count of domains*/
+    count = 0;
+    dom = start_dom;
+    while (dom) {
+        count++;
+        dom = get_next_domain(dom, false);
+    }
+
+    dom_names = talloc_array(tmp_ctx, char*, count);
+    if (dom_names == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    /* copy names */
+    i = 0;
+    dom = start_dom;
+    while (dom) {
+        dom_names[i] = talloc_strdup(dom_names, dom->name);
+        if (dom_names[i] == NULL) {
+            ret = ENOMEM;
+            goto done;
+        }
+        dom = get_next_domain(dom, false);
+        i++;
+    }
+
+    if (_dom_names != NULL ) {
+        *_dom_names = talloc_steal(mem_ctx, dom_names);
+    }
+
+    if (_dom_names_count != NULL ) {
+        *_dom_names_count =  count;
+    }
+
+    ret = EOK;
+
+done:
     talloc_free(tmp_ctx);
     return ret;
 }

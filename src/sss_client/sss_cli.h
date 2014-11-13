@@ -244,6 +244,13 @@ SSS_NSS_GETIDBYSID   = 0x0114, /**< Takes the zero terminated string
                                     another unsigned 32bit integer value
                                     indicating the type (unknown, user, group,
                                     both) of the object. */
+SSS_NSS_GETORIGBYNAME = 0x0115, /**< Takes a zero terminated fully qualified
+                                     name and returns a list of zero
+                                     terminated strings with key-value pairs
+                                     where the first string is the key and
+                                     second the value. Hence the list should
+                                     have an even number of strings, if not
+                                     the whole list is invalid. */
 };
 
 /**
@@ -314,6 +321,7 @@ enum pam_item_type {
     SSS_PAM_ITEM_NEWAUTHTOK,
     SSS_PAM_ITEM_CLI_LOCALE,
     SSS_PAM_ITEM_CLI_PID,
+    SSS_PAM_ITEM_REQUESTED_DOMAINS,
 };
 
 #define SSS_NSS_MAX_ENTRIES 256

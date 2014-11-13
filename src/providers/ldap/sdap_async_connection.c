@@ -833,12 +833,13 @@ static void simple_bind_done(struct sdap_op *op,
                     goto done;
                 }
                 state->ppolicy->expire = strtouint32(nval, NULL, 10);
-                ret = errno;
+                lret = errno;
                 talloc_zfree(nval);
-                if (ret != EOK) {
+                if (lret != EOK) {
                     DEBUG(SSSDBG_MINOR_FAILURE,
                           "Couldn't convert control response "
-                           "to an integer [%s].\n", strerror(ret));
+                           "to an integer [%s].\n", strerror(lret));
+                    ret = ERR_INTERNAL;
                     goto done;
                 }
 
@@ -1398,6 +1399,7 @@ struct sdap_cli_connect_state {
 
     enum connect_tls force_tls;
     bool do_auth;
+    bool use_tls;
 };
 
 static int sdap_cli_resolve_next(struct tevent_req *req);
@@ -1410,7 +1412,40 @@ static void sdap_cli_kinit_step(struct tevent_req *req);
 static void sdap_cli_kinit_done(struct tevent_req *subreq);
 static void sdap_cli_auth_step(struct tevent_req *req);
 static void sdap_cli_auth_done(struct tevent_req *subreq);
+static errno_t sdap_cli_auth_reconnect(struct tevent_req *subreq);
+static void sdap_cli_auth_reconnect_done(struct tevent_req *subreq);
 static void sdap_cli_rootdse_auth_done(struct tevent_req *subreq);
+
+static errno_t
+decide_tls_usage(enum connect_tls force_tls, struct dp_option *basic,
+                 const char *uri, bool *_use_tls)
+{
+    bool use_tls = true;
+
+    switch (force_tls) {
+    case CON_TLS_DFL:
+        use_tls = dp_opt_get_bool(basic, SDAP_ID_TLS);
+        break;
+    case CON_TLS_ON:
+        use_tls = true;
+        break;
+    case CON_TLS_OFF:
+        use_tls = false;
+        break;
+    default:
+        return EINVAL;
+        break;
+    }
+
+    if (use_tls && sdap_is_secure_uri(uri)) {
+        DEBUG(SSSDBG_TRACE_INTERNAL,
+              "[%s] is a secure channel. No need to run START_TLS\n", uri);
+        use_tls = false;
+    }
+
+    *_use_tls = use_tls;
+    return EOK;
+}
 
 struct tevent_req *sdap_cli_connect_send(TALLOC_CTX *memctx,
                                          struct tevent_context *ev,
@@ -1475,22 +1510,6 @@ static void sdap_cli_resolve_done(struct tevent_req *subreq)
     struct sdap_cli_connect_state *state = tevent_req_data(req,
                                              struct sdap_cli_connect_state);
     int ret;
-    bool use_tls = true;
-
-    switch (state->force_tls) {
-    case CON_TLS_DFL:
-        use_tls = dp_opt_get_bool(state->opts->basic, SDAP_ID_TLS);
-        break;
-    case CON_TLS_ON:
-        use_tls = true;
-        break;
-    case CON_TLS_OFF:
-        use_tls = false;
-        break;
-    default:
-        tevent_req_error(req, EINVAL);
-        break;
-    }
 
     ret = be_resolve_server_recv(subreq, &state->srv);
     talloc_zfree(subreq);
@@ -1502,17 +1521,18 @@ static void sdap_cli_resolve_done(struct tevent_req *subreq)
         return;
     }
 
-    if (use_tls && sdap_is_secure_uri(state->service->uri)) {
-        DEBUG(SSSDBG_TRACE_INTERNAL,
-              "[%s] is a secure channel. No need to run START_TLS\n",
-                  state->service->uri);
-        use_tls = false;
+    ret = decide_tls_usage(state->force_tls, state->opts->basic,
+                           state->service->uri, &state->use_tls);
+
+    if (ret != EOK) {
+        tevent_req_error(req, EINVAL);
+        return;
     }
 
     subreq = sdap_connect_send(state, state->ev, state->opts,
                                state->service->uri,
                                state->service->sockaddr,
-                               use_tls);
+                               state->use_tls);
     if (!subreq) {
         tevent_req_error(req, ENOMEM);
         return;
@@ -1764,6 +1784,21 @@ static void sdap_cli_auth_step(struct tevent_req *req)
     struct sss_auth_token *authtok;
     errno_t ret;
 
+    /* It's possible that connection was terminated by server (e.g. #2435),
+       to overcome this try to connect again. */
+    if (state->sh == NULL || !state->sh->connected) {
+        DEBUG(SSSDBG_TRACE_FUNC, "No connection available. "
+              "Trying to reconnect.\n");
+        ret = sdap_cli_auth_reconnect(req);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_MINOR_FAILURE,
+                  "sdap_cli_auth_reconnect failed: %d:[%s]",
+                  ret, sss_strerror(ret));
+            tevent_req_error(req, ret);
+        }
+        return;
+    }
+
     /* Set the LDAP expiration time
      * If SASL has already set it, use the sooner of the two
      */
@@ -1823,6 +1858,82 @@ static void sdap_cli_auth_step(struct tevent_req *req)
         return;
     }
     tevent_req_set_callback(subreq, sdap_cli_auth_done, req);
+}
+
+static errno_t sdap_cli_auth_reconnect(struct tevent_req *req)
+{
+    struct sdap_cli_connect_state *state;
+    struct tevent_req *subreq;
+    errno_t ret;
+
+    state = tevent_req_data(req, struct sdap_cli_connect_state);
+
+    ret = decide_tls_usage(state->force_tls, state->opts->basic,
+                           state->service->uri, &state->use_tls);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    subreq = sdap_connect_send(state, state->ev, state->opts,
+                               state->service->uri,
+                               state->service->sockaddr,
+                               state->use_tls);
+
+    if (subreq == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    tevent_req_set_callback(subreq, sdap_cli_auth_reconnect_done, req);
+
+    ret = EOK;
+
+done:
+    return ret;
+}
+
+static void sdap_cli_auth_reconnect_done(struct tevent_req *subreq)
+{
+    struct sdap_cli_connect_state *state;
+    struct tevent_req *req;
+    errno_t ret;
+
+    req = tevent_req_callback_data(subreq, struct tevent_req);
+    state = tevent_req_data(req, struct sdap_cli_connect_state);
+
+    talloc_zfree(state->sh);
+
+    ret = sdap_connect_recv(subreq, state, &state->sh);
+    talloc_zfree(subreq);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    /* if TLS was used, the sdap handle is already marked as connected */
+    if (!state->use_tls) {
+        /* we need to mark handle as connected to allow anonymous bind */
+        ret = sdap_set_connected(state->sh, state->ev);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "sdap_set_connected() failed.\n");
+            goto done;
+        }
+    }
+
+    /* End request if reconnecting failed to avoid endless loop */
+    if (state->sh == NULL || !state->sh->connected) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to reconnect.\n");
+        ret = EIO;
+        goto done;
+    }
+
+    sdap_cli_auth_step(req);
+
+    ret = EOK;
+
+done:
+    if (ret != EOK) {
+        tevent_req_error(req, ret);
+    }
 }
 
 static void sdap_cli_auth_done(struct tevent_req *subreq)

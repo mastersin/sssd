@@ -122,8 +122,6 @@ struct sdap_ppolicy_data {
 
 #define SYSDB_PWD_ATTRIBUTE "pwdAttribute"
 
-#define SYSDB_AD_ACCOUNT_EXPIRES "adAccountExpires"
-#define SYSDB_AD_USER_ACCOUNT_CONTROL "adUserAccountControl"
 #define SYSDB_NDS_LOGIN_DISABLED "ndsLoginDisabled"
 #define SYSDB_NDS_LOGIN_EXPIRATION_TIME "ndsLoginExpirationTime"
 #define SYSDB_NDS_LOGIN_ALLOWED_TIME_MAP "ndsLoginAllowedTimeMap"
@@ -291,6 +289,7 @@ enum sdap_user_attrs {
  * Functions depend on this */
 enum sdap_group_attrs {
     SDAP_OC_GROUP = 0,
+    SDAP_OC_GROUP_ALT,
     SDAP_AT_GROUP_NAME,
     SDAP_AT_GROUP_PWD,
     SDAP_AT_GROUP_GID,
@@ -559,4 +558,6 @@ int sdap_get_server_opts_from_rootdse(TALLOC_CTX *memctx,
                                       struct sdap_server_opts **srv_opts);
 void sdap_steal_server_opts(struct sdap_id_ctx *id_ctx,
                             struct sdap_server_opts **srv_opts);
+
+char *sdap_make_oc_list(TALLOC_CTX *mem_ctx, struct sdap_attr_map *map);
 #endif /* _SDAP_H_ */
