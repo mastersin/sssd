@@ -78,6 +78,9 @@ sudolibdir = @sudolibpath@
 UNICODE_LIBS=@UNICODE_LIBS@
 
 MKDIR_P = @MKDIR_P@
+INSTALL = @INSTALL@
+
+SSSD_USER = @SSSD_USER@
 
 AM_CFLAGS =
 if WANT_AUX_INFO
@@ -137,6 +140,9 @@ sssdlibexec_PROGRAMS += sssd_ifp
 endif
 if BUILD_SAMBA
 sssdlibexec_PROGRAMS += gpo_child
+endif
+if BUILD_SEMANAGE
+sssdlibexec_PROGRAMS += selinux_child
 endif
 
 
@@ -208,6 +214,11 @@ if HAVE_CMOCKA
         sss_sifp-tests \
         test_search_bases \
         sdap-tests \
+        test_sysdb_views \
+        test_be_ptask \
+        test_copy_ccache \
+        test_copy_keytab \
+        test_child_common \
         $(NULL)
 
 # disable tests
@@ -230,6 +241,10 @@ check_PROGRAMS = \
     krb5-child-test \
     $(non_interactive_cmocka_based_tests) \
     $(non_interactive_check_based_tests)
+
+if HAVE_CMOCKA
+check_PROGRAMS += dummy-child
+endif # HAVE_CMOCKA
 
 PYTHON_TESTS =
 
@@ -282,35 +297,7 @@ endif
 
 noinst_LTLIBRARIES =
 
-pkglib_LTLIBRARIES = \
-    libsss_crypt.la
-
-if HAVE_NSS
-    SSS_CRYPT_SOURCES = src/util/crypto/nss/nss_base64.c \
-                        src/util/crypto/nss/nss_hmac_sha1.c \
-                        src/util/crypto/nss/nss_sha512crypt.c \
-                        src/util/crypto/nss/nss_obfuscate.c \
-                        src/util/crypto/nss/nss_util.c
-    SSS_CRYPT_CFLAGS = $(NSS_CFLAGS)
-    SSS_CRYPT_LIBS = $(NSS_LIBS)
-else
-    SSS_CRYPT_SOURCES = src/util/crypto/libcrypto/crypto_base64.c \
-                        src/util/crypto/libcrypto/crypto_hmac_sha1.c \
-                        src/util/crypto/libcrypto/crypto_sha512crypt.c \
-                        src/util/crypto/libcrypto/crypto_obfuscate.c
-    SSS_CRYPT_CFLAGS = $(CRYPTO_CFLAGS)
-    SSS_CRYPT_LIBS = $(CRYPTO_LIBS)
-endif
-
-libsss_crypt_la_SOURCES = \
-    $(SSS_CRYPT_SOURCES)
-libsss_crypt_la_CFLAGS = \
-    $(SSS_CRYPT_CFLAGS) \
-    $(DHASH_CFLAGS)
-libsss_crypt_la_LIBADD = \
-    $(SSS_CRYPT_LIBS)
-libsss_crypt_la_LDFLAGS = \
-    -avoid-version
+pkglib_LTLIBRARIES =
 
 if BUILD_PYTHON_BINDINGS
 pyexec_LTLIBRARIES = \
@@ -383,6 +370,7 @@ AM_CPPFLAGS = \
     $(JOURNALD_CFLAGS) \
     -DLIBDIR=\"$(libdir)\" \
     -DVARDIR=\"$(localstatedir)\" \
+    -DSYSCONFDIR=\"$(sysconfdir)\" \
     -DSHLIBEXT=\"$(SHLIBEXT)\" \
     -DSSSD_LIBEXEC_PATH=\"$(sssdlibexecdir)\" \
     -DSSSD_CONF_DIR=\"$(sssdconfdir)\" \
@@ -405,6 +393,7 @@ SSSD_RESPONDER_OBJ = \
     src/responder/common/responder_dp.c \
     src/responder/common/responder_packet.c \
     src/responder/common/responder_get_domains.c \
+    src/responder/common/responder_utils.c \
     src/monitor/monitor_iface_generated.c \
     src/monitor/monitor_iface_generated.h \
     src/providers/data_provider_iface_generated.c \
@@ -480,10 +469,6 @@ if BUILD_SELINUX
     PYTHON_BINDINGS_LIBS += $(SELINUX_LIBS)
     TOOLS_LIBS += $(SELINUX_LIBS)
 endif
-if BUILD_SEMANAGE
-    PYTHON_BINDINGS_LIBS += $(SEMANAGE_LIBS)
-    TOOLS_LIBS += $(SEMANAGE_LIBS)
-endif
 
 dist_noinst_HEADERS = \
     src/monitor/monitor.h \
@@ -552,6 +537,7 @@ dist_noinst_HEADERS = \
     src/providers/data_provider.h \
     src/providers/dp_backend.h \
     src/providers/dp_dyndns.h \
+    src/providers/dp_ptask_private.h \
     src/providers/dp_ptask.h \
     src/providers/dp_refresh.h \
     src/providers/fail_over.h \
@@ -563,6 +549,7 @@ dist_noinst_HEADERS = \
     src/providers/krb5/krb5_utils.h \
     src/providers/krb5/krb5_init_shared.h \
     src/providers/krb5/krb5_opts.h \
+    src/providers/krb5/krb5_ccache.h \
     src/providers/ldap/ldap_common.h \
     src/providers/ldap/sdap.h \
     src/providers/ldap/sdap_access.h \
@@ -659,7 +646,46 @@ libsss_debug_la_LDFLAGS = \
 
 pkglib_LTLIBRARIES += libsss_child.la
 libsss_child_la_SOURCES = src/util/child_common.c
+libsss_child_la_LIBADD = \
+    $(TALLOC_LIBS) \
+    $(TEVENT_LIBS) \
+    $(DHASH_LIBS) \
+    libsss_debug.la \
+    $(NULL)
 libsss_child_la_LDFLAGS = -avoid-version
+
+pkglib_LTLIBRARIES += libsss_crypt.la
+
+if HAVE_NSS
+    SSS_CRYPT_SOURCES = src/util/crypto/nss/nss_base64.c \
+                        src/util/crypto/nss/nss_hmac_sha1.c \
+                        src/util/crypto/nss/nss_sha512crypt.c \
+                        src/util/crypto/nss/nss_obfuscate.c \
+                        src/util/crypto/nss/nss_util.c
+    SSS_CRYPT_CFLAGS = $(NSS_CFLAGS)
+    SSS_CRYPT_LIBS = $(NSS_LIBS)
+else
+    SSS_CRYPT_SOURCES = src/util/crypto/libcrypto/crypto_base64.c \
+                        src/util/crypto/libcrypto/crypto_hmac_sha1.c \
+                        src/util/crypto/libcrypto/crypto_sha512crypt.c \
+                        src/util/crypto/libcrypto/crypto_obfuscate.c
+    SSS_CRYPT_CFLAGS = $(CRYPTO_CFLAGS)
+    SSS_CRYPT_LIBS = $(CRYPTO_LIBS)
+endif
+
+libsss_crypt_la_SOURCES = \
+    $(SSS_CRYPT_SOURCES)
+libsss_crypt_la_CFLAGS = \
+    $(SSS_CRYPT_CFLAGS) \
+    $(DHASH_CFLAGS)
+libsss_crypt_la_LIBADD = \
+    $(SSS_CRYPT_LIBS) \
+    $(DHASH_LIBS) \
+    $(TALLOC_LIBS) \
+    libsss_debug.la \
+    $(NULL)
+libsss_crypt_la_LDFLAGS = \
+    -avoid-version
 
 pkglib_LTLIBRARIES += libsss_util.la
 libsss_util_la_SOURCES = \
@@ -714,14 +740,20 @@ libsss_util_la_SOURCES = \
     src/util/util_sss_idmap.c \
     src/util/well_known_sids.c \
     src/util/string_utils.c \
+    src/util/become_user.c \
     $(NULL)
 libsss_util_la_CFLAGS = \
     $(AM_CFLAGS) \
-    $(SYSTEMD_LOGIN_CFLAGS)
+    $(SYSTEMD_LOGIN_CFLAGS) \
+    $(NULL)
 libsss_util_la_LIBADD = \
     $(SSSD_LIBS) \
     $(SYSTEMD_LOGIN_LIBS) \
-    $(UNICODE_LIBS)
+    $(UNICODE_LIBS) \
+    libsss_debug.la \
+    libsss_child.la \
+    libsss_crypt.la \
+    $(NULL)
 if BUILD_SUDO
     libsss_util_la_SOURCES += src/db/sysdb_sudo.c
 endif
@@ -732,11 +764,26 @@ libsss_util_la_SOURCES += \
 endif
 libsss_util_la_LDFLAGS = -avoid-version
 
+pkglib_LTLIBRARIES += libsss_semanage.la
+libsss_semanage_la_SOURCES = \
+    src/util/sss_semanage.c \
+    $(NULL)
+libsss_semanage_la_LIBADD = \
+    libsss_debug.la \
+    $(NULL)
+if BUILD_SEMANAGE
+libsss_semanage_la_LIBADD += $(SEMANAGE_LIBS)
+endif
+
+libsss_semanage_la_LDFLAGS = \
+    -avoid-version
+
 SSSD_INTERNAL_LTLIBS = \
     libsss_util.la \
     libsss_crypt.la \
     libsss_debug.la \
-    libsss_child.la
+    libsss_child.la \
+    $(NULL)
 
 if BUILD_IFP
 if BUILD_CONFIG_LIB
@@ -1069,7 +1116,9 @@ sss_useradd_SOURCES = \
     $(SSSD_TOOLS_OBJ)
 sss_useradd_LDADD = \
     $(TOOLS_LIBS) \
-    $(SSSD_INTERNAL_LTLIBS)
+    $(SSSD_INTERNAL_LTLIBS) \
+    libsss_semanage.la \
+    $(NULL)
 
 sss_userdel_SOURCES = \
     src/tools/sss_userdel.c \
@@ -1077,7 +1126,9 @@ sss_userdel_SOURCES = \
 sss_userdel_LDADD = \
     $(TOOLS_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(CLIENT_LIBS)
+    $(CLIENT_LIBS) \
+    libsss_semanage.la \
+    $(NULL)
 sss_userdel_CFLAGS = \
     $(AM_CFLAGS)
 
@@ -1103,7 +1154,9 @@ sss_usermod_SOURCES = \
 sss_usermod_LDADD = \
     $(TOOLS_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(CLIENT_LIBS)
+    $(CLIENT_LIBS) \
+    libsss_semanage.la \
+    $(NULL)
 sss_usermod_CFLAGS = $(AM_CFLAGS)
 
 sss_groupmod_SOURCES = \
@@ -1293,6 +1346,7 @@ strtonum_tests_LDADD = \
 krb5_utils_tests_SOURCES = \
     src/tests/krb5_utils-tests.c \
     src/providers/krb5/krb5_utils.c \
+    src/providers/krb5/krb5_ccache.c \
     src/providers/krb5/krb5_common.c \
     src/util/sss_krb5.c \
     src/providers/data_provider_fo.c \
@@ -1574,6 +1628,7 @@ stress_tests_LDADD = \
 krb5_child_test_SOURCES = \
     src/tests/krb5_child-test.c \
     src/providers/krb5/krb5_utils.c \
+    src/providers/krb5/krb5_ccache.c \
     src/providers/krb5/krb5_child_handler.c \
     src/providers/krb5/krb5_common.c \
     src/util/sss_krb5.c \
@@ -2001,7 +2056,9 @@ ifp_tests_SOURCES = \
     src/tests/cmocka/test_ifp.c \
     src/responder/ifp/ifpsrv_cmd.c \
     src/responder/ifp/ifp_iface_generated.c \
-    src/responder/ifp/ifpsrv_util.c
+    src/responder/ifp/ifpsrv_util.c \
+    src/responder/common/responder_utils.c \
+    $(NULL)
 ifp_tests_CFLAGS = \
     $(AM_CFLAGS)
 ifp_tests_LDADD = \
@@ -2032,6 +2089,100 @@ sss_sifp_tests_LDADD = \
     $(POPT_LIBS) \
     $(SSSD_INTERNAL_LTLIBS)
 endif # BUILD_IFP
+
+test_sysdb_views_SOURCES = \
+    src/tests/cmocka/test_sysdb_views.c \
+    src/providers/ipa/ipa_utils.c \
+    $(NULL)
+test_sysdb_views_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(NULL)
+test_sysdb_views_LDADD = \
+    $(CMOCKA_LIBS) \
+    $(LDB_LIBS) \
+    $(POPT_LIBS) \
+    $(TALLOC_LIBS) \
+    $(SSSD_INTERNAL_LTLIBS) \
+    libsss_test_common.la \
+    $(NULL)
+
+test_be_ptask_SOURCES = \
+    src/tests/cmocka/test_be_ptask.c \
+    src/providers/dp_ptask.c \
+    $(NULL)
+test_be_ptask_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(NULL)
+test_be_ptask_LDADD = \
+    $(CMOCKA_LIBS) \
+    $(POPT_LIBS) \
+    $(TALLOC_LIBS) \
+    $(SSSD_INTERNAL_LTLIBS) \
+    libsss_test_common.la \
+    $(NULL)
+
+test_copy_ccache_SOURCES = \
+    src/tests/cmocka/test_copy_ccache.c \
+    src/providers/krb5/krb5_ccache.c \
+    src/util/sss_krb5.c \
+    $(NULL)
+test_copy_ccache_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(NULL)
+test_copy_ccache_LDADD = \
+    $(CMOCKA_LIBS) \
+    $(POPT_LIBS) \
+    $(TALLOC_LIBS) \
+    $(KRB5_LIBS) \
+    $(SSSD_INTERNAL_LTLIBS) \
+    libsss_test_common.la \
+    $(NULL)
+
+test_copy_keytab_SOURCES = \
+    src/tests/cmocka/test_copy_keytab.c \
+    src/providers/krb5/krb5_keytab.c \
+    src/util/sss_krb5.c \
+    $(NULL)
+test_copy_keytab_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(NULL)
+test_copy_keytab_LDADD = \
+    $(CMOCKA_LIBS) \
+    $(POPT_LIBS) \
+    $(TALLOC_LIBS) \
+    $(KRB5_LIBS) \
+    $(SSSD_INTERNAL_LTLIBS) \
+    libsss_test_common.la \
+    $(NULL)
+
+dummy_child_SOURCES = \
+    src/tests/cmocka/dummy_child.c \
+    $(NULL)
+dummy_child_LDADD = \
+    $(POPT_LIBS) \
+    $(SSSD_INTERNAL_LTLIBS) \
+    $(NULL)
+
+test_child_common_SOURCES = \
+    src/tests/cmocka/test_child_common.c \
+    src/util/child_common.c \
+    src/util/signal.c \
+    src/util/atomic_io.c \
+    src/util/util_errors.c \
+    src/util/util.c \
+    $(NULL)
+test_child_common_CFLAGS = \
+    $(AM_CFLAGS) \
+    -DCHILD_DIR=\"$(builddir)\" \
+    $(NULL)
+test_child_common_LDADD = \
+    $(CMOCKA_LIBS) \
+    $(POPT_LIBS) \
+    $(TALLOC_LIBS) \
+    $(DHASH_LIBS) \
+    libsss_debug.la \
+    libsss_test_common.la \
+    $(NULL)
 
 endif # HAVE_CMOCKA
 
@@ -2260,6 +2411,7 @@ libsss_krb5_common_la_SOURCES = \
     src/providers/krb5/krb5_access.c \
     src/providers/krb5/krb5_child_handler.c \
     src/providers/krb5/krb5_init_shared.c \
+    src/providers/krb5/krb5_ccache.c \
     src/util/sss_krb5.c \
     src/util/become_user.c \
     $(NULL)
@@ -2342,6 +2494,7 @@ libsss_ipa_la_SOURCES = \
     src/providers/ipa/ipa_subdomains_id.c \
     src/providers/ipa/ipa_subdomains_ext_groups.c \
     src/providers/ipa/ipa_views.c \
+    src/providers/ipa/ipa_utils.c \
     src/providers/ipa/ipa_s2n_exop.c \
     src/providers/ipa/ipa_hbac_hosts.c \
     src/providers/ipa/ipa_hbac_private.h \
@@ -2376,7 +2529,9 @@ libsss_ipa_la_LIBADD = \
     libsss_ldap_common.la \
     libsss_krb5_common.la \
     libipa_hbac.la \
-    libsss_idmap.la
+    libsss_idmap.la \
+    libsss_semanage.la \
+    $(NULL)
 libsss_ipa_la_LDFLAGS = \
     -avoid-version \
     -module
@@ -2444,35 +2599,49 @@ libsss_ad_la_LDFLAGS = \
 
 krb5_child_SOURCES = \
     src/providers/krb5/krb5_child.c \
+    src/providers/krb5/krb5_ccache.c \
+    src/providers/krb5/krb5_keytab.c \
     src/providers/dp_pam_data_util.c \
     src/util/user_info_msg.c \
     src/util/sss_krb5.c \
+    src/util/find_uid.c \
     src/util/atomic_io.c \
     src/util/authtok.c \
     src/util/util.c \
     src/util/signal.c \
+    src/util/strtonum.c \
     src/util/become_user.c \
+    src/util/util_errors.c \
     src/sss_client/common.c \
     $(NULL)
 krb5_child_CFLAGS = \
     $(AM_CFLAGS) \
     $(POPT_CFLAGS) \
-    $(KRB5_CFLAGS)
+    $(KRB5_CFLAGS) \
+    $(PCRE_CFLAGS) \
+    $(SYSTEMD_LOGIN_CFLAGS) \
+    $(NULL)
 krb5_child_LDADD = \
     libsss_debug.la \
     $(TALLOC_LIBS) \
     $(POPT_LIBS) \
     $(DHASH_LIBS) \
     $(KRB5_LIBS) \
-    $(CLIENT_LIBS)
+    $(CLIENT_LIBS) \
+    $(PCRE_LIBS) \
+    $(SYSTEMD_LOGIN_LIBS) \
+    $(NULL)
 
 ldap_child_SOURCES = \
     src/providers/ldap/ldap_child.c \
+    src/providers/krb5/krb5_keytab.c \
     src/util/sss_krb5.c \
     src/util/atomic_io.c \
     src/util/authtok.c \
     src/util/util.c \
-    src/util/signal.c
+    src/util/signal.c \
+    src/util/become_user.c \
+    $(NULL)
 ldap_child_CFLAGS = \
     $(AM_CFLAGS) \
     $(POPT_CFLAGS) \
@@ -2483,6 +2652,26 @@ ldap_child_LDADD = \
     $(POPT_LIBS) \
     $(DHASH_LIBS) \
     $(KRB5_LIBS)
+
+if BUILD_SEMANAGE
+selinux_child_SOURCES = \
+    src/providers/ipa/selinux_child.c \
+    src/util/sss_semanage.c \
+    src/util/atomic_io.c \
+    src/util/util.c \
+    $(NULL)
+selinux_child_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(POPT_CFLAGS) \
+    $(NULL)
+selinux_child_LDADD = \
+    libsss_debug.la \
+    $(TALLOC_LIBS) \
+    $(POPT_LIBS) \
+    $(DHASH_LIBS) \
+    $(SEMANAGE_LIBS) \
+    $(NULL)
+endif
 
 gpo_child_SOURCES = \
     src/providers/ad/ad_gpo_child.c \
@@ -2715,6 +2904,18 @@ src/sysv/systemd/journal.conf: src/sysv/systemd/journal.conf.in Makefile
 	@$(MKDIR_P) src/sysv/systemd/
 	$(replace_script)
 
+SSSD_USER_DIRS = \
+    $(DESTDIR)$(dbpath) \
+    $(DESTDIR)$(mcpath) \
+    $(DESTDIR)$(pipepath) \
+    $(DESTDIR)$(pipepath)/private \
+    $(DESTDIR)$(pubconfpath) \
+    $(DESTDIR)$(pubconfpath)/krb5.include.d \
+    $(DESTDIR)$(gpocachepath) \
+    $(DESTDIR)$(sssdconfdir) \
+    $(DESTDIR)$(logpath) \
+    $(NULL)
+
 installsssddirs::
 	$(MKDIR_P) \
     $(DESTDIR)$(includedir) \
@@ -2722,25 +2923,28 @@ installsssddirs::
     $(DESTDIR)$(bindir) \
     $(DESTDIR)$(sbindir) \
     $(DESTDIR)$(mandir) \
+    $(DESTDIR)$(pidpath) \
     $(DESTDIR)$(pluginpath) \
     $(DESTDIR)$(libdir)/ldb \
     $(DESTDIR)$(dbuspolicydir) \
     $(DESTDIR)$(dbusservicedir) \
-    $(DESTDIR)$(pipepath)/private \
     $(DESTDIR)$(sssdlibdir) \
     $(DESTDIR)$(pkglibdir) \
-    $(DESTDIR)$(sssdconfdir) \
     $(DESTDIR)$(sssddatadir) \
-    $(DESTDIR)$(dbpath) \
-    $(DESTDIR)$(mcpath) \
-    $(DESTDIR)$(pidpath) \
-    $(DESTDIR)$(logpath) \
-    $(DESTDIR)$(pubconfpath) \
-    $(DESTDIR)$(pubconfpath)/krb5.include.d \
-    $(DESTDIR)$(gpocachepath) \
     $(DESTDIR)$(sudolibdir) \
     $(DESTDIR)$(autofslibdir) \
-    $(NULL)
+    $(SSSD_USER_DIRS) \
+    $(NULL);
+if SSSD_USER
+	-chown $(SSSD_USER):$(SSSD_USER) \
+	$(SSSD_USER_DIRS)
+endif
+	$(INSTALL) -d -m 0700 $(DESTDIR)$(dbpath) $(DESTDIR)$(logpath) \
+            $(DESTDIR)$(pipepath)/private
+	$(INSTALL) -d -m 0755 $(DESTDIR)$(mcpath) $(DESTDIR)$(pipepath) \
+            $(DESTDIR)$(pubconfpath) \
+            $(DESTDIR)$(pubconfpath)/krb5.include.d $(DESTDIR)$(gpocachepath)
+	$(INSTALL) -d -m 0711 $(DESTDIR)$(sssdconfdir)
 
 if HAVE_DOXYGEN
 docs:
@@ -2794,6 +2998,17 @@ if HAVE_SYSTEMD_UNIT
 	$(MKDIR_P) $(DESTDIR)$(systemdconfdir)
 else
 	$(MKDIR_P) $(DESTDIR)$(initdir)
+endif
+
+if SSSD_USER
+	-chgrp $(SSSD_USER) $(DESTDIR)$(sssdlibexecdir)/ldap_child
+	chmod 4750 $(DESTDIR)$(sssdlibexecdir)/ldap_child
+	-chgrp $(SSSD_USER) $(DESTDIR)$(sssdlibexecdir)/krb5_child
+	chmod 4750 $(DESTDIR)$(sssdlibexecdir)/krb5_child
+if BUILD_SEMANAGE
+	-chgrp $(SSSD_USER) $(DESTDIR)$(sssdlibexecdir)/selinux_child
+	chmod 4750 $(DESTDIR)$(sssdlibexecdir)/selinux_child
+endif
 endif
 
 install-data-hook:

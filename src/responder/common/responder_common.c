@@ -159,7 +159,7 @@ errno_t check_allowed_uids(uid_t uid, size_t allowed_uids_count,
     return EACCES;
 }
 
-errno_t csv_string_to_uid_array(TALLOC_CTX *mem_ctx, const char *cvs_string,
+errno_t csv_string_to_uid_array(TALLOC_CTX *mem_ctx, const char *csv_string,
                                 bool allow_sss_loop,
                                 size_t *_uid_count, uid_t **_uids)
 {
@@ -169,9 +169,8 @@ errno_t csv_string_to_uid_array(TALLOC_CTX *mem_ctx, const char *cvs_string,
     int list_size;
     uid_t *uids = NULL;
     char *endptr;
-    struct passwd *pwd;
 
-    ret = split_on_separator(mem_ctx, cvs_string, ',', true, false,
+    ret = split_on_separator(mem_ctx, csv_string, ',', true, false,
                              &list, &list_size);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "split_on_separator failed [%d][%s].\n",
@@ -211,17 +210,16 @@ errno_t csv_string_to_uid_array(TALLOC_CTX *mem_ctx, const char *cvs_string,
                 goto done;
             }
 
-            errno = 0;
-            pwd = getpwnam(list[c]);
-            if (pwd == NULL) {
+            ret = sss_user_by_name_or_uid(list[c], &uids[c], NULL);
+            if (ret != EOK) {
                 DEBUG(SSSDBG_OP_FAILURE, "List item [%s] is neither a valid "
-                                          "UID nor a user name which cloud be "
-                                          "resolved by getpwnam().\n", list[c]);
-                ret = EINVAL;
+                                         "UID nor a user name which could be "
+                                         "resolved by getpwnam().\n", list[c]);
+                sss_log(SSS_LOG_WARNING, "List item [%s] is neither a valid "
+                                         "UID nor a user name which could be "
+                                         "resolved by getpwnam().\n", list[c]);
                 goto done;
             }
-
-            uids[c] = pwd->pw_uid;
         }
     }
 
@@ -589,10 +587,72 @@ static int sss_dp_init(struct resp_ctx *rctx,
     return EOK;
 }
 
+int create_pipe_fd(const char *sock_name, int *_fd, mode_t umaskval)
+{
+    struct sockaddr_un addr;
+    mode_t orig_umaskval;
+    errno_t ret;
+    int fd;
+
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd == -1) {
+        return EIO;
+    }
+
+    orig_umaskval = umask(umaskval);
+
+    ret = set_nonblocking(fd);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    ret = set_close_on_exec(fd);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, sock_name, sizeof(addr.sun_path) - 1);
+    addr.sun_path[sizeof(addr.sun_path) - 1] = '\0';
+
+    /* make sure we have no old sockets around */
+    ret = unlink(sock_name);
+    if (ret != 0 && errno != ENOENT) {
+        ret = errno;
+        DEBUG(SSSDBG_MINOR_FAILURE,
+              "Cannot remove old socket (errno=%d), bind might fail!\n", ret);
+    }
+
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "Unable to bind on socket '%s'\n", sock_name);
+        ret = EIO;
+        goto done;
+    }
+    if (listen(fd, 10) == -1) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "Unable to listen on socket '%s'\n", sock_name);
+        ret = EIO;
+        goto done;
+    }
+
+    ret = EOK;
+
+done:
+    /* restore previous umask value */
+    umask(orig_umaskval);
+    if (ret == EOK) {
+        *_fd = fd;
+    } else {
+        close(fd);
+    }
+    return ret;
+}
+
 /* create a unix socket and listen to it */
 static int set_unix_socket(struct resp_ctx *rctx)
 {
-    struct sockaddr_un addr;
     errno_t ret;
     struct accept_fd_ctx *accept_ctx;
 
@@ -633,42 +693,13 @@ static int set_unix_socket(struct resp_ctx *rctx)
 #endif
 
     if (rctx->sock_name != NULL ) {
-        rctx->lfd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (rctx->lfd == -1) {
-            return EIO;
-        }
-
         /* Set the umask so that permissions are set right on the socket.
          * It must be readable and writable by anybody on the system. */
-        umask(0111);
-
-        ret = set_nonblocking(rctx->lfd);
-        if (ret != EOK) {
-            goto failed;
-        }
-
-        ret = set_close_on_exec(rctx->lfd);
-        if (ret != EOK) {
-            goto failed;
-        }
-
-        memset(&addr, 0, sizeof(addr));
-        addr.sun_family = AF_UNIX;
-        strncpy(addr.sun_path, rctx->sock_name, sizeof(addr.sun_path)-1);
-        addr.sun_path[sizeof(addr.sun_path)-1] = '\0';
-
-        /* make sure we have no old sockets around */
-        unlink(rctx->sock_name);
-
-        if (bind(rctx->lfd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "Unable to bind on socket '%s'\n", rctx->sock_name);
-            goto failed;
-        }
-        if (listen(rctx->lfd, 10) != 0) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "Unable to listen on socket '%s'\n", rctx->sock_name);
-            goto failed;
+        if (rctx->lfd == -1) {
+            ret = create_pipe_fd(rctx->sock_name, &rctx->lfd, 0111);
+            if (ret != EOK) {
+                return ret;
+            }
         }
 
         accept_ctx = talloc_zero(rctx, struct accept_fd_ctx);
@@ -687,40 +718,11 @@ static int set_unix_socket(struct resp_ctx *rctx)
 
     if (rctx->priv_sock_name != NULL ) {
         /* create privileged pipe */
-        rctx->priv_lfd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (rctx->priv_lfd == -1) {
-            close(rctx->lfd);
-            return EIO;
-        }
-
-        umask(0177);
-
-        ret = set_nonblocking(rctx->priv_lfd);
-        if (ret != EOK) {
-            goto failed;
-        }
-
-        ret = set_close_on_exec(rctx->priv_lfd);
-        if (ret != EOK) {
-            goto failed;
-        }
-
-        memset(&addr, 0, sizeof(addr));
-        addr.sun_family = AF_UNIX;
-        strncpy(addr.sun_path, rctx->priv_sock_name, sizeof(addr.sun_path)-1);
-        addr.sun_path[sizeof(addr.sun_path)-1] = '\0';
-
-        unlink(rctx->priv_sock_name);
-
-        if (bind(rctx->priv_lfd, (struct sockaddr *)&addr, sizeof(addr)) == -1) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "Unable to bind on socket '%s'\n", rctx->priv_sock_name);
-            goto failed;
-        }
-        if (listen(rctx->priv_lfd, 10) != 0) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "Unable to listen on socket '%s'\n", rctx->priv_sock_name);
-            goto failed;
+            ret = create_pipe_fd(rctx->priv_sock_name, &rctx->priv_lfd, 0177);
+            if (ret != EOK) {
+                goto failed;
+            }
         }
 
         accept_ctx = talloc_zero(rctx, struct accept_fd_ctx);
@@ -738,15 +740,9 @@ static int set_unix_socket(struct resp_ctx *rctx)
         }
     }
 
-    /* we want default permissions on created files to be very strict,
-       so set our umask to 0177 */
-    umask(0177);
     return EOK;
 
 failed:
-    /* we want default permissions on created files to be very strict,
-       so set our umask to 0177 */
-    umask(0177);
     close(rctx->lfd);
     close(rctx->priv_lfd);
     return EIO;
@@ -769,7 +765,9 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
                      struct confdb_ctx *cdb,
                      struct sss_cmd_table sss_cmds[],
                      const char *sss_pipe_name,
+                     int pipe_fd,
                      const char *sss_priv_pipe_name,
+                     int priv_pipe_fd,
                      const char *confdb_service_path,
                      const char *svc_name,
                      uint16_t svc_version,
@@ -793,6 +791,8 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
     rctx->sss_cmds = sss_cmds;
     rctx->sock_name = sss_pipe_name;
     rctx->priv_sock_name = sss_priv_pipe_name;
+    rctx->lfd = pipe_fd;
+    rctx->priv_lfd = priv_pipe_fd;
     rctx->confdb_service_path = confdb_service_path;
     rctx->shutting_down = false;
 

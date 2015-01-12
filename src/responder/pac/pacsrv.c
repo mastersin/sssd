@@ -119,7 +119,7 @@ int pac_process_init(TALLOC_CTX *mem_ctx,
 
     ret = sss_process_init(mem_ctx, ev, cdb,
                            pac_cmds,
-                           SSS_PAC_SOCKET_NAME, NULL,
+                           SSS_PAC_SOCKET_NAME, -1, NULL, -1,
                            CONFDB_PAC_CONF_ENTRY,
                            PAC_SBUS_SERVICE_NAME,
                            PAC_SBUS_SERVICE_VERSION,
@@ -216,15 +216,20 @@ int main(int argc, const char *argv[])
     poptContext pc;
     struct main_context *main_ctx;
     int ret;
+    uid_t uid;
+    gid_t gid;
 
     struct poptOption long_options[] = {
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
+        SSSD_SERVER_OPTS(uid, gid)
         POPT_TABLEEND
     };
 
     /* Set debug level to invalid value so we can decide if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
+
+    umask(DFL_RSP_UMASK);
 
     pc = poptGetContext(argv[0], argc, argv, long_options, 0);
     while((opt = poptGetNextOpt(pc)) != -1) {
@@ -244,7 +249,8 @@ int main(int argc, const char *argv[])
     /* set up things like debug, signals, daemonization, etc... */
     debug_log_file = "sssd_pac";
 
-    ret = server_setup("sssd[pac]", 0, CONFDB_PAC_CONF_ENTRY, &main_ctx);
+    ret = server_setup("sssd[pac]", 0, uid, gid,
+                       CONFDB_PAC_CONF_ENTRY, &main_ctx);
     if (ret != EOK) return 2;
 
     ret = die_if_parent_died();

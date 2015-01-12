@@ -133,7 +133,7 @@ static void ipa_s2n_exop_done(struct sdap_op *op,
     }
 
     ret = ldap_parse_result(state->sh->ldap, reply->msg,
-                            &result, &errmsg, NULL, NULL,
+                            &result, NULL, &errmsg, NULL,
                             NULL, 0);
     if (ret != LDAP_SUCCESS) {
         DEBUG(SSSDBG_OP_FAILURE, "ldap_parse_result failed (%d)\n",
@@ -142,10 +142,13 @@ static void ipa_s2n_exop_done(struct sdap_op *op,
         goto done;
     }
 
-    DEBUG(SSSDBG_TRACE_FUNC, "ldap_extended_operation result: %s(%d), %s\n",
-            sss_ldap_err2string(result), result, errmsg);
+    DEBUG(result == LDAP_SUCCESS ? SSSDBG_TRACE_FUNC : SSSDBG_OP_FAILURE,
+          "ldap_extended_operation result: %s(%d), %s.\n",
+          sss_ldap_err2string(result), result, errmsg);
 
     if (result != LDAP_SUCCESS) {
+        DEBUG(SSSDBG_OP_FAILURE, "ldap_extended_operation failed, " \
+                                 "server logs might contain more details.\n");
         ret = ERR_NETWORK_IO;
         goto done;
     }
@@ -565,7 +568,7 @@ static errno_t add_v1_user_data(BerElement *ber, struct resp_attrs *attrs)
          attrs->ngroups++);
 
     if (attrs->ngroups > 0) {
-        attrs->groups = talloc_array(attrs, char *, attrs->ngroups);
+        attrs->groups = talloc_zero_array(attrs, char *, attrs->ngroups + 1);
         if (attrs->groups == NULL) {
             DEBUG(SSSDBG_OP_FAILURE, "talloc_array failed.\n");
             ret = ENOMEM;
@@ -957,10 +960,15 @@ static errno_t ipa_s2n_get_groups_step(struct tevent_req *req)
         return ret;
     }
 
-    state->obj_domain = find_domain_by_name(parent_domain, domain_name, true);
-    if (state->obj_domain == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "find_domain_by_name failed.\n");
-        return ENOMEM;
+    if (domain_name) {
+        state->obj_domain = find_domain_by_name(parent_domain,
+                                                domain_name, true);
+        if (state->obj_domain == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "find_domain_by_name failed.\n");
+            return ENOMEM;
+        }
+    } else {
+        state->obj_domain = parent_domain;
     }
 
     state->req_input.inp.name = group_name;
@@ -1192,6 +1200,11 @@ static errno_t process_members(struct sss_domain_info *domain,
     const char *dn_str;
     struct sss_domain_info *obj_domain;
     struct sss_domain_info *parent_domain;
+
+    if (members == NULL) {
+        DEBUG(SSSDBG_TRACE_INTERNAL, "No members\n");
+        return EOK;
+    }
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
@@ -1515,6 +1528,81 @@ done:
     return;
 }
 
+static errno_t get_groups_dns(TALLOC_CTX *mem_ctx, struct sss_domain_info *dom,
+                              char **name_list, char ***_dn_list)
+{
+    int ret;
+    TALLOC_CTX *tmp_ctx;
+    int c;
+    struct sss_domain_info *root_domain;
+    char **dn_list;
+
+    if (name_list == NULL) {
+        *_dn_list = NULL;
+        return EOK;
+    }
+
+    /* To handle cross-domain memberships we have to check the domain for
+     * each group the member should be added or deleted. Since sub-domains
+     * use fully-qualified names by default any short name can only belong
+     * to the root/head domain. find_domain_by_object_name() will return
+     * the domain given in the first argument if the second argument is a
+     * a short name hence we always use root_domain as first argument. */
+    root_domain = get_domains_head(dom);
+    if (root_domain->fqnames) {
+        DEBUG(SSSDBG_TRACE_FUNC,
+              "Root domain uses fully-qualified names, " \
+              "objects might not be correctly added to groups with " \
+              "short names.\n");
+    }
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    for (c = 0; name_list[c] != NULL; c++);
+
+    dn_list = talloc_zero_array(tmp_ctx, char *, c + 1);
+    if (dn_list == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_zero_array failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    for (c = 0; name_list[c] != NULL; c++) {
+        dom = find_domain_by_object_name(root_domain, name_list[c]);
+        if (dom == NULL) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "Cannot find domain for [%s].\n", name_list[c]);
+            ret = ENOENT;
+            goto done;
+        }
+
+        /* This might fail if some unexpected cases are used. But current
+         * sysdb code which handles group membership constructs DNs this way
+         * as well, IPA names are lowercased and AD names by default will be
+         * lowercased as well. If there are really use-cases which cause an
+         * issue here, sysdb_group_strdn() has to be replaced by a proper
+         * search. */
+        dn_list[c] = sysdb_group_strdn(dn_list, dom->name, name_list[c]);
+        if (dn_list[c] == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_group_strdn failed.\n");
+            ret = ENOMEM;
+            goto done;
+        }
+    }
+
+    *_dn_list = talloc_steal(mem_ctx, dn_list);
+    ret = EOK;
+
+done:
+    talloc_free(tmp_ctx);
+
+    return ret;
+}
+
 static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
                                     struct req_input *req_input,
                                     struct resp_attrs *attrs,
@@ -1530,11 +1618,19 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
     char *realm;
     char *upn = NULL;
     gid_t gid;
+    gid_t orig_gid = 0;
     TALLOC_CTX *tmp_ctx;
     const char *sid_str;
     const char *tmp_str;
     struct ldb_result *res;
     enum sysdb_member_type type;
+    char **sysdb_grouplist;
+    char **add_groups;
+    char **add_groups_dns;
+    char **del_groups;
+    char **del_groups_dns;
+    bool in_transaction = false;
+    int tret;
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
@@ -1701,7 +1797,39 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
             gid = 0;
             if (dom->mpg == false) {
                 gid = attrs->a.user.pw_gid;
+            } else {
+                /* The extdom plugin always returns the objects with the
+                 * default view applied. Since the GID is handled specially
+                 * for MPG domains we have add any overridden GID separately.
+                 */
+                ret = sysdb_attrs_get_uint32_t(attrs->sysdb_attrs,
+                                               ORIGINALAD_PREFIX SYSDB_GIDNUM,
+                                               &orig_gid);
+                if (ret == EOK || ret == ENOENT) {
+                    if ((orig_gid != 0 && orig_gid != attrs->a.user.pw_gid)
+                            || attrs->a.user.pw_uid != attrs->a.user.pw_gid) {
+                        ret = sysdb_attrs_add_uint32(attrs->sysdb_attrs,
+                                                     SYSDB_GIDNUM,
+                                                     attrs->a.user.pw_gid);
+                        if (ret != EOK) {
+                            DEBUG(SSSDBG_OP_FAILURE,
+                                  "sysdb_attrs_add_uint32 failed.\n");
+                            goto done;
+                        }
+                    }
+                } else {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                          "sysdb_attrs_get_uint32_t failed.\n");
+                    goto done;
+                }
             }
+
+            ret = sysdb_transaction_start(dom->sysdb);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_CRIT_FAILURE, "Failed to start transaction\n");
+                goto done;
+            }
+            in_transaction = true;
 
             ret = sysdb_store_user(dom, name, NULL,
                                    attrs->a.user.pw_uid,
@@ -1713,21 +1841,83 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
                 DEBUG(SSSDBG_OP_FAILURE, "sysdb_store_user failed.\n");
                 goto done;
             }
+
+            if (attrs->response_type == RESP_USER_GROUPLIST) {
+                ret = get_sysdb_grouplist(tmp_ctx, dom->sysdb, dom, name,
+                                          &sysdb_grouplist);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE, "get_sysdb_grouplist failed.\n");
+                    goto done;
+                }
+
+                ret = diff_string_lists(tmp_ctx, attrs->groups, sysdb_grouplist,
+                                        &add_groups, &del_groups, NULL);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE, "diff_string_lists failed.\n");
+                    goto done;
+                }
+
+                ret = get_groups_dns(tmp_ctx, dom, add_groups, &add_groups_dns);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE, "get_groups_dns failed.\n");
+                    goto done;
+                }
+
+                ret = get_groups_dns(tmp_ctx, dom, del_groups, &del_groups_dns);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE, "get_groups_dns failed.\n");
+                    goto done;
+                }
+
+                DEBUG(SSSDBG_TRACE_INTERNAL, "Updating memberships for %s\n",
+                                             name);
+                ret = sysdb_update_members_dn(dom, name, SYSDB_MEMBER_USER,
+                                          (const char *const *) add_groups_dns,
+                                          (const char *const *) del_groups_dns);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_CRIT_FAILURE, "Membership update failed [%d]: %s\n",
+                                               ret, sss_strerror(ret));
+                    goto done;
+                }
+            }
+
+            ret = sysdb_transaction_commit(dom->sysdb);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_CRIT_FAILURE, "Failed to commit transaction\n");
+                goto done;
+            }
+            in_transaction = false;
+
             break;
         case RESP_GROUP:
         case RESP_GROUP_MEMBERS:
             type = SYSDB_MEMBER_GROUP;
 
+            if (0 != strcmp(dom->name, attrs->domain_name)) {
+                dom = find_domain_by_name(get_domains_head(dom),
+                                          attrs->domain_name, true);
+                if (dom == NULL) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                          "Cannot find domain: [%s]\n", attrs->domain_name);
+                    ret = EINVAL;
+                    goto done;
+                }
+            }
+
             if (name == NULL) {
+                name = attrs->a.group.gr_name;
+            }
+
+            if (IS_SUBDOMAIN(dom)) {
                 /* we always use the fully qualified name for subdomain users */
-                name = sss_tc_fqname(tmp_ctx, dom->names, dom,
-                                     attrs->a.group.gr_name);
+                name = sss_tc_fqname(tmp_ctx, dom->names, dom, name);
                 if (!name) {
                     DEBUG(SSSDBG_OP_FAILURE, "failed to format user name,\n");
                     ret = ENOMEM;
                     goto done;
                 }
             }
+            DEBUG(SSSDBG_TRACE_FUNC, "Processing group %s\n", name);
 
             ret = sysdb_attrs_add_lc_name_alias(attrs->sysdb_attrs, name);
             if (ret != EOK) {
@@ -1804,6 +1994,13 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
     }
 
 done:
+    if (in_transaction) {
+        tret = sysdb_transaction_cancel(dom->sysdb);
+        if (tret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Failed to cancel transaction\n");
+        }
+    }
+
     talloc_free(tmp_ctx);
 
     return ret;

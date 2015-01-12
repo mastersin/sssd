@@ -105,6 +105,16 @@ static struct bet_data bet_data[] = {
     {BET_MAX, NULL, NULL}
 };
 
+struct bet_queue_item {
+    struct bet_queue_item *prev;
+    struct bet_queue_item *next;
+
+    TALLOC_CTX *mem_ctx;
+    struct be_req *be_req;
+    be_req_fn_t fn;
+
+};
+
 #define REQ_PHASE_ACCESS 0
 #define REQ_PHASE_SELINUX 1
 
@@ -1336,7 +1346,7 @@ static int be_pam_handler(struct sbus_request *dbus_req, void *user_data)
 
     ret = dp_unpack_pam_request(dbus_req->message, be_req, &pd, &dbus_error);
     if (!ret) {
-        DEBUG(SSSDBG_CRIT_FAILURE,"Failed, to parse message!\n");
+        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to parse message!\n");
         talloc_free(be_req);
         return EIO;
     }
@@ -2226,6 +2236,9 @@ static int be_client_init(struct sbus_connection *conn, void *data)
     becli->conn = conn;
     becli->initialized = false;
 
+    /* Allow access from the SSSD user */
+    sbus_allow_uid(conn, &bectx->uid);
+
     /* 5 seconds should be plenty */
     tv = tevent_timeval_current_ofs(5, 0);
 
@@ -2251,7 +2264,8 @@ static int be_client_init(struct sbus_connection *conn, void *data)
 
 /* be_srv_init
  * set up per-domain sbus channel */
-static int be_srv_init(struct be_ctx *ctx)
+static int be_srv_init(struct be_ctx *ctx,
+                       uid_t uid, gid_t gid)
 {
     char *sbus_address;
     int ret;
@@ -2263,7 +2277,10 @@ static int be_srv_init(struct be_ctx *ctx)
         return ret;
     }
 
-    ret = sbus_new_server(ctx, ctx->ev, sbus_address,
+    ctx->uid = uid;
+    ctx->gid = gid;
+
+    ret = sbus_new_server(ctx, ctx->ev, sbus_address, uid, gid,
                           true, &ctx->sbus_srv, be_client_init, ctx);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Could not set up sbus server.\n");
@@ -2554,6 +2571,7 @@ done:
 
 int be_process_init(TALLOC_CTX *mem_ctx,
                     const char *be_domain,
+                    uid_t uid, gid_t gid,
                     struct tevent_context *ev,
                     struct confdb_ctx *cdb)
 {
@@ -2609,7 +2627,7 @@ int be_process_init(TALLOC_CTX *mem_ctx,
         goto fail;
     }
 
-    ret = be_srv_init(ctx);
+    ret = be_srv_init(ctx, uid, gid);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "fatal error setting up server bus\n");
         goto fail;
@@ -2804,10 +2822,13 @@ int main(int argc, const char *argv[])
     struct main_context *main_ctx;
     char *confdb_path;
     int ret;
+    uid_t uid;
+    gid_t gid;
 
     struct poptOption long_options[] = {
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
+        SSSD_SERVER_OPTS(uid, gid)
         {"domain", 0, POPT_ARG_STRING, &be_domain, 0,
          _("Domain of the information provider (mandatory)"), NULL },
         POPT_TABLEEND
@@ -2847,7 +2868,7 @@ int main(int argc, const char *argv[])
     confdb_path = talloc_asprintf(NULL, CONFDB_DOMAIN_PATH_TMPL, be_domain);
     if (!confdb_path) return 2;
 
-    ret = server_setup(srv_name, 0, confdb_path, &main_ctx);
+    ret = server_setup(srv_name, 0, 0, 0, confdb_path, &main_ctx);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Could not set up mainloop [%d]\n", ret);
         return 2;
@@ -2867,12 +2888,25 @@ int main(int argc, const char *argv[])
     }
 
     ret = be_process_init(main_ctx,
-                          be_domain,
+                          be_domain, uid, gid,
                           main_ctx->event_ctx,
                           main_ctx->confdb_ctx);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Could not initialize backend [%d]\n", ret);
         return 3;
+    }
+
+    ret = chown_debug_file(NULL, uid, gid);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE,
+              "Cannot chown the debug files, debugging might not work!\n");
+    }
+
+    ret = become_user(uid, gid);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FUNC_DATA,
+              "Cannot become user [%"SPRIuid"][%"SPRIgid"].\n", uid, gid);
+        return ret;
     }
 
     DEBUG(SSSDBG_TRACE_FUNC, "Backend provider (%s) started!\n", be_domain);

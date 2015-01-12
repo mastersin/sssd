@@ -83,6 +83,10 @@ errno_t get_be_acct_req_for_sid(TALLOC_CTX *mem_ctx, const char *sid,
                                 const char *domain_name,
                                 struct be_acct_req **_ar);
 
+errno_t get_be_acct_req_for_uuid(TALLOC_CTX *mem_ctx, const char *uuid,
+                                 const char *domain_name,
+                                 struct be_acct_req **_ar);
+
 struct tevent_req *ipa_get_ad_override_send(TALLOC_CTX *mem_ctx,
                                             struct tevent_context *ev,
                                             struct sdap_id_ctx *sdap_id_ctx,
@@ -103,4 +107,11 @@ struct tevent_req *ipa_subdomain_account_send(TALLOC_CTX *memctx,
 
 errno_t ipa_subdomain_account_recv(struct tevent_req *req, int *dp_error_out);
 
+errno_t split_ipa_anchor(TALLOC_CTX *mem_ctx, const char *anchor,
+                         char **_anchor_domain, char **_ipa_uuid);
+
+errno_t get_object_from_cache(TALLOC_CTX *mem_ctx,
+                              struct sss_domain_info *dom,
+                              struct be_acct_req *ar,
+                              struct ldb_message **_msg);
 #endif

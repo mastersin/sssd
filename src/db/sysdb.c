@@ -1322,6 +1322,16 @@ int sysdb_init(TALLOC_CTX *mem_ctx,
                struct sss_domain_info *domains,
                bool allow_upgrade)
 {
+    return sysdb_init_ext(mem_ctx, domains, allow_upgrade, false, 0, 0);
+}
+
+int sysdb_init_ext(TALLOC_CTX *mem_ctx,
+                   struct sss_domain_info *domains,
+                   bool allow_upgrade,
+                   bool chown_dbfile,
+                   uid_t uid,
+                   gid_t gid)
+{
     struct sss_domain_info *dom;
     struct sysdb_ctx *sysdb;
     int ret;
@@ -1341,6 +1351,17 @@ int sysdb_init(TALLOC_CTX *mem_ctx,
                                          allow_upgrade, &sysdb);
         if (ret != EOK) {
             return ret;
+        }
+
+        if (chown_dbfile) {
+            ret = chown(sysdb->ldb_file, uid, gid);
+            if (ret != 0) {
+                ret = errno;
+                DEBUG(SSSDBG_CRIT_FAILURE,
+                      "Cannot set sysdb ownership to %"SPRIuid":%"SPRIgid"\n",
+                      uid, gid);
+                return ret;
+            }
         }
 
         dom->sysdb = talloc_move(dom, &sysdb);
@@ -1487,6 +1508,7 @@ errno_t sysdb_get_bool(struct sysdb_ctx *sysdb,
     errno_t ret;
     int lret;
     const char *attrs[2] = {attr_name, NULL};
+    struct ldb_message_element *el;
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
@@ -1509,12 +1531,18 @@ errno_t sysdb_get_bool(struct sysdb_ctx *sysdb,
          * to contain this attribute.
          */
         *value = false;
-        ret = EOK;
+        ret = ENOENT;
         goto done;
     } else if (res->count != 1) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Got more than one reply for base search!\n");
         ret = EIO;
+        goto done;
+    }
+
+    el = ldb_msg_find_element(res->msgs[0], attr_name);
+    if (el == NULL || el->num_values == 0) {
+        ret = ENOENT;
         goto done;
     }
 

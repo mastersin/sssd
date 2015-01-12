@@ -181,7 +181,8 @@ done:
 
 static int pam_process_init(TALLOC_CTX *mem_ctx,
                             struct tevent_context *ev,
-                            struct confdb_ctx *cdb)
+                            struct confdb_ctx *cdb,
+                            int pipe_fd, int priv_pipe_fd)
 {
     struct resp_ctx *rctx;
     struct sss_cmd_table *pam_cmds;
@@ -194,8 +195,8 @@ static int pam_process_init(TALLOC_CTX *mem_ctx,
     pam_cmds = get_pam_cmds();
     ret = sss_process_init(mem_ctx, ev, cdb,
                            pam_cmds,
-                           SSS_PAM_SOCKET_NAME,
-                           SSS_PAM_PRIV_SOCKET_NAME,
+                           SSS_PAM_SOCKET_NAME, pipe_fd,
+                           SSS_PAM_PRIV_SOCKET_NAME, priv_pipe_fd,
                            CONFDB_PAM_CONF_ENTRY,
                            SSS_PAM_SBUS_SERVICE_NAME,
                            SSS_PAM_SBUS_SERVICE_VERSION,
@@ -316,15 +317,22 @@ int main(int argc, const char *argv[])
     poptContext pc;
     struct main_context *main_ctx;
     int ret;
+    uid_t uid;
+    gid_t gid;
+    int pipe_fd;
+    int priv_pipe_fd;
 
     struct poptOption long_options[] = {
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
+        SSSD_SERVER_OPTS(uid, gid)
         POPT_TABLEEND
     };
 
     /* Set debug level to invalid value so we can deside if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
+
+    umask(DFL_RSP_UMASK);
 
     pc = poptGetContext(argv[0], argc, argv, long_options, 0);
     while((opt = poptGetNextOpt(pc)) != -1) {
@@ -344,7 +352,25 @@ int main(int argc, const char *argv[])
     /* set up things like debug, signals, daemonization, etc... */
     debug_log_file = "sssd_pam";
 
-    ret = server_setup("sssd[pam]", 0, CONFDB_PAM_CONF_ENTRY, &main_ctx);
+    /* Crate pipe file descriptors here before privileges are dropped
+     * in server_setup() */
+    ret = create_pipe_fd(SSS_PAM_SOCKET_NAME, &pipe_fd, 0111);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "create_pipe_fd failed [%d]: %s.\n",
+              ret, sss_strerror(ret));
+        return 2;
+    }
+
+    ret = create_pipe_fd(SSS_PAM_PRIV_SOCKET_NAME, &priv_pipe_fd, 0177);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "create_pipe_fd failed (priviledged pipe) [%d]: %s.\n",
+              ret, sss_strerror(ret));
+        return 2;
+    }
+
+    ret = server_setup("sssd[pam]", 0, uid, gid, CONFDB_PAM_CONF_ENTRY, &main_ctx);
     if (ret != EOK) return 2;
 
     ret = die_if_parent_died();
@@ -356,7 +382,8 @@ int main(int argc, const char *argv[])
 
     ret = pam_process_init(main_ctx,
                            main_ctx->event_ctx,
-                           main_ctx->confdb_ctx);
+                           main_ctx->confdb_ctx,
+                           pipe_fd, priv_pipe_fd);
     if (ret != EOK) return 3;
 
     /* loop on main */

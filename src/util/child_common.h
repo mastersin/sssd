@@ -45,6 +45,11 @@ struct io_buffer {
     size_t size;
 };
 
+struct child_io_fds {
+    int read_from_child_fd;
+    int write_to_child_fd;
+};
+
 /* COMMON SIGCHLD HANDLING */
 typedef void (*sss_child_fn_t)(int pid, int wait_status, void *pvt);
 
@@ -109,8 +114,13 @@ void child_sig_handler(struct tevent_context *ev,
 /* Never returns EOK, ether returns an error, or doesn't return on success */
 errno_t exec_child(TALLOC_CTX *mem_ctx,
                    int *pipefd_to_child, int *pipefd_from_child,
-                   const char *binary, int debug_fd);
+                   const char *binary, int debug_fd,
+                   const char *extra_argv[]);
 
 void child_cleanup(int readfd, int writefd);
+
+int child_io_destructor(void *ptr);
+
+errno_t child_debug_init(const char *logfile, int *debug_fd);
 
 #endif /* __CHILD_COMMON_H__ */

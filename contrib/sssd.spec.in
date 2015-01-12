@@ -394,6 +394,7 @@ Summary: The SSSD D-Bus responder helper library
 Group: Development/Libraries
 License: GPLv3+
 Requires: dbus-libs
+Requires: sssd-dbus = %{version}-%{release}
 Requires(post): /sbin/ldconfig
 Requires(postun): /sbin/ldconfig
 
@@ -467,7 +468,7 @@ make %{?_smp_mflags} docs
 
 %check
 export CK_TIMEOUT_MULTIPLIER=10
-make %{?_smp_mflags} check
+make %{?_smp_mflags} check VERBOSE=yes
 unset CK_TIMEOUT_MULTIPLIER
 
 %install
@@ -589,6 +590,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/%{name}/libsss_debug.so
 %{_libdir}/%{name}/libsss_ldap_common.so
 %{_libdir}/%{name}/libsss_util.so
+%{_libdir}/%{name}/libsss_semanage.so
 
 # 3rd party application libraries
 %{_libdir}/sssd/modules/libsss_autofs.so
@@ -603,17 +605,17 @@ rm -rf $RPM_BUILD_ROOT
 
 %dir %{sssdstatedir}
 %dir %{_localstatedir}/cache/krb5rcache
-%attr(700,root,root) %dir %{dbpath}
-%attr(755,root,root) %dir %{mcpath}
-%ghost %attr(0644,root,root) %verify(not md5 size mtime) %{mcpath}/passwd
-%ghost %attr(0644,root,root) %verify(not md5 size mtime) %{mcpath}/group
-%attr(755,root,root) %dir %{pipepath}
-%attr(755,root,root) %dir %{pubconfpath}
-%attr(755,root,root) %dir %{gpocachepath}
-%attr(700,root,root) %dir %{pipepath}/private
-%attr(750,root,root) %dir %{_var}/log/%{name}
-%attr(711,root,root) %dir %{_sysconfdir}/sssd
-%ghost %attr(0600,root,root) %config(noreplace) %{_sysconfdir}/sssd/sssd.conf
+%attr(700,sssd,sssd) %dir %{dbpath}
+%attr(755,sssd,sssd) %dir %{mcpath}
+%ghost %attr(0644,sssd,sssd) %verify(not md5 size mtime) %{mcpath}/passwd
+%ghost %attr(0644,sssd,sssd) %verify(not md5 size mtime) %{mcpath}/group
+%attr(755,sssd,sssd) %dir %{pipepath}
+%attr(755,sssd,sssd) %dir %{pubconfpath}
+%attr(755,sssd,sssd) %dir %{gpocachepath}
+%attr(700,sssd,sssd) %dir %{pipepath}/private
+%attr(750,sssd,sssd) %dir %{_var}/log/%{name}
+%attr(711,sssd,sssd) %dir %{_sysconfdir}/sssd
+%ghost %attr(0600,sssd,sssd) %config(noreplace) %{_sysconfdir}/sssd/sssd.conf
 %if (0%{?use_systemd} == 1)
 %attr(755,root,root) %dir %{_sysconfdir}/systemd/system/sssd.service.d
 %config(noreplace) %{_sysconfdir}/systemd/system/sssd.service.d/journal.conf
@@ -644,8 +646,8 @@ rm -rf $RPM_BUILD_ROOT
 %defattr(-,root,root,-)
 %doc COPYING
 %{_libdir}/%{name}/libsss_krb5_common.so
-%{_libexecdir}/%{servicename}/ldap_child
-%{_libexecdir}/%{servicename}/krb5_child
+%attr(4750,root,sssd) %{_libexecdir}/%{servicename}/ldap_child
+%attr(4750,root,sssd) %{_libexecdir}/%{servicename}/krb5_child
 
 %files krb5 -f sssd_krb5.lang
 %defattr(-,root,root,-)
@@ -664,6 +666,7 @@ rm -rf $RPM_BUILD_ROOT
 %doc COPYING
 %attr(755,root,root) %dir %{pubconfpath}/krb5.include.d
 %{_libdir}/%{name}/libsss_ipa.so
+%attr(4750,root,sssd) %{_libexecdir}/%{servicename}/selinux_child
 %{_mandir}/man5/sssd-ipa.5*
 
 %files ad -f sssd_ad.lang
@@ -801,6 +804,10 @@ rm -rf $RPM_BUILD_ROOT
 %{_includedir}/wbclient_sssd.h
 %{_libdir}/%{name}/modules/libwbclient.so
 %{_libdir}/pkgconfig/wbclient_sssd.pc
+
+%pre common
+getent group sssd >/dev/null || groupadd -r sssd
+getent passwd sssd >/dev/null || useradd -r -g sssd -d / -s /sbin/nologin -c "User for sssd" sssd
 
 %if (0%{?use_systemd} == 1)
 # systemd

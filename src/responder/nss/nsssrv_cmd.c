@@ -284,12 +284,19 @@ static const char *get_shell_override(TALLOC_CTX *mem_ctx,
     }
 
     if (nctx->allowed_shells) {
-        for (i=0; nctx->allowed_shells[i]; i++) {
-            if (strcmp(nctx->allowed_shells[i], user_shell) == 0) {
-                DEBUG(SSSDBG_FUNC_DATA,
-                      "The shell '%s' is allowed but does not exist. "
-                        "Using fallback\n", user_shell);
-                return talloc_strdup(mem_ctx, nctx->shell_fallback);
+        if (strcmp(nctx->allowed_shells[0], "*") == 0) {
+            DEBUG(SSSDBG_FUNC_DATA,
+                  "The shell '%s' is allowed but does not exist. "
+                  "Using fallback\n", user_shell);
+            return talloc_strdup(mem_ctx, nctx->shell_fallback);
+        } else {
+            for (i=0; nctx->allowed_shells[i]; i++) {
+                if (strcmp(nctx->allowed_shells[i], user_shell) == 0) {
+                    DEBUG(SSSDBG_FUNC_DATA,
+                          "The shell '%s' is allowed but does not exist. "
+                          "Using fallback\n", user_shell);
+                    return talloc_strdup(mem_ctx, nctx->shell_fallback);
+                }
             }
         }
     }
@@ -552,13 +559,32 @@ static int nss_cmd_getpw_send_reply(struct nss_dom_ctx *dctx, bool filter)
     return EOK;
 }
 
+/* Currently only refreshing expired netgroups is supported. */
+static bool
+is_refreshed_on_bg(enum sss_dp_acct_type req_type,
+                   enum sss_dp_acct_type refresh_expired_interval)
+{
+    if (refresh_expired_interval == 0) {
+        return false;
+    }
+
+    switch (req_type) {
+    case SSS_DP_NETGR:
+        return true;
+    default:
+        return false;
+    }
+
+    return false;
+}
+
 static void nsssrv_dp_send_acct_req_done(struct tevent_req *req);
 
 /* FIXME: do not check res->count, but get in a msgs and check in parent */
 errno_t check_cache(struct nss_dom_ctx *dctx,
                     struct nss_ctx *nctx,
                     struct ldb_result *res,
-                    int req_type,
+                    enum sss_dp_acct_type req_type,
                     const char *opt_name,
                     uint32_t opt_id,
                     const char *extra,
@@ -578,25 +604,35 @@ errno_t check_cache(struct nss_dom_ctx *dctx,
     if ((req_type == SSS_DP_USER || req_type == SSS_DP_NETGR) &&
             (res->count > 1)) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "getpwXXX call returned more than one result!"
-                  " DB Corrupted?\n");
+              "getpwXXX call returned more than one result! DB Corrupted?\n");
         return ENOENT;
     }
 
-    /* if we have any reply let's check cache validity */
+    /* if we have any reply let's check cache validity, but ignore netgroups
+     * if refresh_expired_interval is set (which implies that another method
+     * is used to refresh netgroups)
+     */
     if (res->count > 0) {
-        if (req_type == SSS_DP_INITGROUPS) {
-            cacheExpire = ldb_msg_find_attr_as_uint64(res->msgs[0],
-                                                      SYSDB_INITGR_EXPIRE, 1);
-        }
-        if (cacheExpire == 0) {
-            cacheExpire = ldb_msg_find_attr_as_uint64(res->msgs[0],
-                                                      SYSDB_CACHE_EXPIRE, 0);
-        }
+        if (is_refreshed_on_bg(req_type,
+                               dctx->domain->refresh_expired_interval)) {
+            ret = EOK;
+        } else {
+            if (req_type == SSS_DP_INITGROUPS) {
+                cacheExpire = ldb_msg_find_attr_as_uint64(res->msgs[0],
+                                                          SYSDB_INITGR_EXPIRE,
+                                                          1);
+            }
+            if (cacheExpire == 0) {
+                cacheExpire = ldb_msg_find_attr_as_uint64(res->msgs[0],
+                                                          SYSDB_CACHE_EXPIRE,
+                                                          0);
+            }
 
-        /* if we have any reply let's check cache validity */
-        ret = sss_cmd_check_cache(res->msgs[0], nctx->cache_refresh_percent,
-                                  cacheExpire);
+            /* if we have any reply let's check cache validity */
+            ret = sss_cmd_check_cache(res->msgs[0],
+                                      nctx->cache_refresh_percent,
+                                      cacheExpire);
+        }
         if (ret == EOK) {
             DEBUG(SSSDBG_TRACE_FUNC, "Cached entry is valid, returning..\n");
             return EOK;
@@ -2662,6 +2698,9 @@ static int fill_grent(struct sss_packet *packet,
         rsize = 0;
 
         /* find group name/gid */
+
+        /* start with an empty name for each iteration */
+        orig_name = NULL;
         if (DOM_HAS_VIEWS(dom)) {
             orig_name = ldb_msg_find_attr_as_string(msg,
                                                     OVERRIDE_PREFIX SYSDB_NAME,
@@ -4025,7 +4064,7 @@ static int nss_cmd_initgroups_search(struct nss_dom_ctx *dctx)
             if (ret == EOK && DOM_HAS_VIEWS(dom)) {
                 for (c = 0; c < dctx->res->count; c++) {
                     ret = sysdb_add_overrides_to_object(dom, dctx->res->msgs[c],
-                                                        NULL);
+                                                        NULL, NULL);
                     if (ret != EOK) {
                         DEBUG(SSSDBG_OP_FAILURE,
                               "sysdb_add_overrides_to_object failed.\n");
@@ -4109,18 +4148,20 @@ static errno_t nss_cmd_getsidby_search(struct nss_dom_ctx *dctx)
     struct nss_ctx *nctx;
     int ret;
     int err;
-    const char *attrs[] = {SYSDB_NAME, SYSDB_OBJECTCLASS, SYSDB_SID_STR,
-                           ORIGINALAD_PREFIX SYSDB_NAME,
-                           ORIGINALAD_PREFIX SYSDB_UIDNUM,
-                           ORIGINALAD_PREFIX SYSDB_GIDNUM,
-                           ORIGINALAD_PREFIX SYSDB_GECOS,
-                           ORIGINALAD_PREFIX SYSDB_HOMEDIR,
-                           ORIGINALAD_PREFIX SYSDB_SHELL,
-                           SYSDB_UPN,
-                           SYSDB_DEFAULT_OVERRIDE_NAME,
-                           SYSDB_AD_ACCOUNT_EXPIRES,
-                           SYSDB_AD_USER_ACCOUNT_CONTROL,
-                           SYSDB_DEFAULT_ATTRS, NULL};
+    const char *default_attrs[] = {SYSDB_NAME, SYSDB_OBJECTCLASS, SYSDB_SID_STR,
+                                   ORIGINALAD_PREFIX SYSDB_NAME,
+                                   ORIGINALAD_PREFIX SYSDB_UIDNUM,
+                                   ORIGINALAD_PREFIX SYSDB_GIDNUM,
+                                   ORIGINALAD_PREFIX SYSDB_GECOS,
+                                   ORIGINALAD_PREFIX SYSDB_HOMEDIR,
+                                   ORIGINALAD_PREFIX SYSDB_SHELL,
+                                   SYSDB_UPN,
+                                   SYSDB_DEFAULT_OVERRIDE_NAME,
+                                   SYSDB_AD_ACCOUNT_EXPIRES,
+                                   SYSDB_AD_USER_ACCOUNT_CONTROL,
+                                   SYSDB_SSH_PUBKEY,
+                                   SYSDB_DEFAULT_ATTRS, NULL};
+    const char **attrs;
     bool user_found = false;
     bool group_found = false;
     struct ldb_message *msg = NULL;
@@ -4128,7 +4169,7 @@ static errno_t nss_cmd_getsidby_search(struct nss_dom_ctx *dctx)
     char *name = NULL;
     char *req_name;
     uint32_t req_id;
-    int req_type;
+    enum sss_dp_acct_type req_type;
 
     nctx = talloc_get_type(cctx->rctx->pvt_ctx, struct nss_ctx);
 
@@ -4240,6 +4281,18 @@ static errno_t nss_cmd_getsidby_search(struct nss_dom_ctx *dctx)
                   "Fatal: Sysdb CTX not found for this domain!\n");
             ret = EIO;
             goto done;
+        }
+
+        attrs = default_attrs;
+        if (cmdctx->cmd == SSS_NSS_GETORIGBYNAME
+                && nctx->extra_attributes != NULL) {
+            ret = add_strings_lists(cmdctx, default_attrs,
+                                    nctx->extra_attributes, false,
+                                    discard_const(&attrs));
+            if (ret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE, "add_strings_lists failed.\n");
+                goto done;
+            }
         }
 
         if (cmdctx->cmd == SSS_NSS_GETSIDBYID) {
@@ -4438,7 +4491,19 @@ static errno_t nss_cmd_getbysid_search(struct nss_dom_ctx *dctx)
 
     ret = sysdb_search_object_by_sid(cmdctx, dom, cmdctx->secid, NULL,
                                      &dctx->res);
-    if (ret != EOK) {
+    if (ret == ENOENT) {
+        if (!dctx->check_provider) {
+            DEBUG(SSSDBG_OP_FAILURE, "No results for getbysid call.\n");
+
+            /* set negative cache only if not result of cache check */
+            ret = sss_ncache_set_sid(nctx->ncache, false, cmdctx->secid);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_MINOR_FAILURE,
+                      "Cannot set negative cache for %s\n", cmdctx->secid);
+            }
+        }
+        return ENOENT;
+    } else if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Failed to make request to our cache!\n");
         return EIO;
     }
@@ -4446,19 +4511,6 @@ static errno_t nss_cmd_getbysid_search(struct nss_dom_ctx *dctx)
     if (dctx->res->count > 1) {
         DEBUG(SSSDBG_FATAL_FAILURE, "getbysid call returned more than one " \
                                      "result !?!\n");
-        return ENOENT;
-    }
-
-    if (dctx->res->count == 0 && !dctx->check_provider) {
-        DEBUG(SSSDBG_OP_FAILURE, "No results for getbysid call.\n");
-
-        /* set negative cache only if not result of cache check */
-        ret = sss_ncache_set_sid(nctx->ncache, false, cmdctx->secid);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_MINOR_FAILURE,
-                  "Cannot set negative cache for %s\n", cmdctx->secid);
-        }
-
         return ENOENT;
     }
 
@@ -4554,16 +4606,21 @@ static errno_t fill_sid(struct sss_packet *packet,
 }
 
 static errno_t fill_orig(struct sss_packet *packet,
+                         struct resp_ctx *rctx,
                          enum sss_id_type id_type,
                          struct ldb_message *msg)
 {
     int ret;
+    TALLOC_CTX *tmp_ctx;
     const char *tmp_str;
     uint8_t *body;
     size_t blen;
     size_t pctr = 0;
     size_t c;
     size_t sum;
+    size_t found;
+    size_t extra_attrs_count = 0;
+    const char **extra_attrs_list = NULL;
     const char *orig_attr_list[] = {SYSDB_SID_STR,
                                     ORIGINALAD_PREFIX SYSDB_NAME,
                                     ORIGINALAD_PREFIX SYSDB_UIDNUM,
@@ -4575,43 +4632,85 @@ static errno_t fill_orig(struct sss_packet *packet,
                                     SYSDB_DEFAULT_OVERRIDE_NAME,
                                     SYSDB_AD_ACCOUNT_EXPIRES,
                                     SYSDB_AD_USER_ACCOUNT_CONTROL,
+                                    SYSDB_SSH_PUBKEY,
                                     NULL};
-    struct sized_string keys[sizeof(orig_attr_list)];
-    struct sized_string vals[sizeof(orig_attr_list)];
+    struct sized_string *keys;
+    struct sized_string *vals;
+    struct nss_ctx *nctx;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    nctx = talloc_get_type(rctx->pvt_ctx, struct nss_ctx);
+    if (nctx->extra_attributes != NULL) {
+        extra_attrs_list = nctx->extra_attributes;
+            for(extra_attrs_count = 0;
+                extra_attrs_list[extra_attrs_count] != NULL;
+                extra_attrs_count++);
+    }
+
+    keys = talloc_array(tmp_ctx, struct sized_string,
+                        sizeof(orig_attr_list) + extra_attrs_count);
+    vals = talloc_array(tmp_ctx, struct sized_string,
+                        sizeof(orig_attr_list) + extra_attrs_count);
+    if (keys == NULL || vals == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_array failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
 
     sum = 0;
+    found = 0;
     for (c = 0; orig_attr_list[c] != NULL; c++) {
         tmp_str = ldb_msg_find_attr_as_string(msg, orig_attr_list[c], NULL);
         if (tmp_str != NULL) {
-            to_sized_string(&keys[c], orig_attr_list[c]);
-            sum += keys[c].len;
-            to_sized_string(&vals[c], tmp_str);
-            sum += vals[c].len;
-        } else {
-            vals[c].len = 0;
+            to_sized_string(&keys[found], orig_attr_list[c]);
+            sum += keys[found].len;
+            to_sized_string(&vals[found], tmp_str);
+            sum += vals[found].len;
+
+            found++;
+        }
+    }
+
+    for (c = 0; c < extra_attrs_count; c++) {
+        tmp_str = ldb_msg_find_attr_as_string(msg, extra_attrs_list[c], NULL);
+        if (tmp_str != NULL) {
+            to_sized_string(&keys[found], extra_attrs_list[c]);
+            sum += keys[found].len;
+            to_sized_string(&vals[found], tmp_str);
+            sum += vals[found].len;
+
+            found++;
         }
     }
 
     ret = sss_packet_grow(packet, sum +  3 * sizeof(uint32_t));
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "sss_packet_grow failed.\n");
-        return ret;
+        goto done;
     }
 
     sss_packet_get_body(packet, &body, &blen);
     SAFEALIGN_SETMEM_UINT32(body, 1, &pctr); /* Num results */
     SAFEALIGN_SETMEM_UINT32(body + pctr, 0, &pctr); /* reserved */
     SAFEALIGN_COPY_UINT32(body + pctr, &id_type, &pctr);
-    for (c = 0; orig_attr_list[c] != NULL; c++) {
-        if (vals[c].len != 0) {
-            memcpy(&body[pctr], keys[c].str, keys[c].len);
-            pctr+= keys[c].len;
-            memcpy(&body[pctr], vals[c].str, vals[c].len);
-            pctr+= vals[c].len;
-        }
+    for (c = 0; c < found; c++) {
+        memcpy(&body[pctr], keys[c].str, keys[c].len);
+        pctr+= keys[c].len;
+        memcpy(&body[pctr], vals[c].str, vals[c].len);
+        pctr+= vals[c].len;
     }
 
-    return EOK;
+    ret = EOK;
+
+done:
+    talloc_free(tmp_ctx);
+
+    return ret;
 }
 
 static errno_t fill_name(struct sss_packet *packet,
@@ -4779,7 +4878,8 @@ static errno_t nss_cmd_getbysid_send_reply(struct nss_dom_ctx *dctx)
         ret = fill_sid(cctx->creq->out, id_type, dctx->res->msgs[0]);
         break;
     case SSS_NSS_GETORIGBYNAME:
-        ret = fill_orig(cctx->creq->out, id_type, dctx->res->msgs[0]);
+        ret = fill_orig(cctx->creq->out, cctx->rctx, id_type,
+                        dctx->res->msgs[0]);
         break;
     default:
         DEBUG(SSSDBG_CRIT_FAILURE, "Unsupported request type.\n");

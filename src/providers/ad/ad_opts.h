@@ -48,6 +48,7 @@ struct dp_option ad_basic_opts[] = {
     { "ad_gpo_map_permit", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ad_gpo_map_deny", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ad_gpo_default_right", DP_OPT_STRING, NULL_STRING, NULL_STRING },
+    { "krb5_confd_path", DP_OPT_STRING, { KRB5_MAPPING_DIR }, NULL_STRING },
     DP_OPTION_TERMINATOR
 };
 
@@ -187,6 +188,7 @@ struct sdap_attr_map ad_2008r2_user_map[] = {
     { "ldap_user_principal", "userPrincipalName", SYSDB_UPN, NULL },
     { "ldap_user_fullname", "name", SYSDB_FULLNAME, NULL },
     { "ldap_user_member_of", "memberOf", SYSDB_MEMBEROF, NULL },
+    { "ldap_user_uuid", "objectGUID", SYSDB_UUID, NULL },
     { "ldap_user_objectsid", "objectSID", SYSDB_SID, NULL },
     { "ldap_user_primary_group", "primaryGroupID", SYSDB_PRIMARY_GROUP, NULL },
     { "ldap_user_modify_timestamp", "whenChanged", SYSDB_ORIG_MODSTAMP, NULL },
@@ -210,6 +212,7 @@ struct sdap_attr_map ad_2008r2_user_map[] = {
     { "ldap_user_nds_login_expiration_time", NULL, SYSDB_NDS_LOGIN_EXPIRATION_TIME, NULL },
     { "ldap_user_nds_login_allowed_time_map", NULL, SYSDB_NDS_LOGIN_ALLOWED_TIME_MAP, NULL },
     { "ldap_user_ssh_public_key", NULL, SYSDB_SSH_PUBKEY, NULL },
+    { "ldap_user_auth_type", NULL, SYSDB_AUTH_TYPE, NULL },
     SDAP_ATTR_MAP_TERMINATOR
 };
 
@@ -220,6 +223,7 @@ struct sdap_attr_map ad_2008r2_group_map[] = {
     { "ldap_group_pwd", NULL, SYSDB_PWD, NULL },
     { "ldap_group_gid_number", "gidNumber", SYSDB_GIDNUM, NULL },
     { "ldap_group_member", "member", SYSDB_MEMBER, NULL },
+    { "ldap_group_uuid", "objectGUID", SYSDB_UUID, NULL },
     { "ldap_group_objectsid", "objectSID", SYSDB_SID, NULL },
     { "ldap_group_modify_timestamp", "whenChanged", SYSDB_ORIG_MODSTAMP, NULL },
     { "ldap_group_entry_usn", SDAP_AD_USN, SYSDB_USN, NULL },

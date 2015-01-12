@@ -342,6 +342,11 @@ FOREST:EXAMPLE.COM:(memberOf=cn=admins,ou=groups,dc=example,dc=com)
                             DenyInteractiveLogonRight policy settings.
                         </para>
                         <para>
+                            Note: Using the Group Policy Management Editor this
+                            value InteractiveLogonRight  is called "Allow log on
+                            locally" and "Deny log on locally".
+                        </para>
+                        <para>
                             It is possible to add another PAM service name
                             to the default set by using <quote>+service_name</quote>
                             or to explicitly remove a PAM service name from
@@ -405,6 +410,12 @@ FOREST:EXAMPLE.COM:(memberOf=cn=admins,ou=groups,dc=example,dc=com)
                             which GPO-based access control is evaluated based on
                             the RemoteInteractiveLogonRight and
                             DenyRemoteInteractiveLogonRight policy settings.
+                        </para>
+                        <para>
+                            Note: Using the Group Policy Management Editor this
+                            value is called "Allow log on through Remote Desktop
+                            Services" and "Deny log on through Remote Desktop
+                            Services".
                         </para>
                         <para>
                             It is possible to add another PAM service name
@@ -775,6 +786,24 @@ FOREST:EXAMPLE.COM:(memberOf=cn=admins,ou=groups,dc=example,dc=com)
                         <para>
                              Note that this default differs from the
                              traditional Kerberos provider back end.
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>krb5_confd_path (string)</term>
+                    <listitem>
+                        <para>
+                            Absolute path of a directory where SSSD should place
+                            Kerberos configuration snippets.
+                        </para>
+                        <para>
+                            To disable the creation of the configuration
+                            snippets set the parameter to 'none'.
+                        </para>
+                        <para>
+                            Default: not set (krb5.include.d subdirectory of
+                            SSSD's pubconf directory)
                         </para>
                     </listitem>
                 </varlistentry>

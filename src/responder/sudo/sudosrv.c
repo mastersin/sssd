@@ -93,7 +93,7 @@ int sudo_process_init(TALLOC_CTX *mem_ctx,
     sudo_cmds = get_sudo_cmds();
     ret = sss_process_init(mem_ctx, ev, cdb,
                            sudo_cmds,
-                           SSS_SUDO_SOCKET_NAME, NULL,
+                           SSS_SUDO_SOCKET_NAME, -1, NULL, -1,
                            CONFDB_SUDO_CONF_ENTRY,
                            SSS_SUDO_SBUS_SERVICE_NAME,
                            SSS_SUDO_SBUS_SERVICE_VERSION,
@@ -164,15 +164,20 @@ int main(int argc, const char *argv[])
     poptContext pc;
     struct main_context *main_ctx;
     int ret;
+    uid_t uid;
+    gid_t gid;
 
     struct poptOption long_options[] = {
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
+        SSSD_SERVER_OPTS(uid, gid)
         POPT_TABLEEND
     };
 
     /* Set debug level to invalid value so we can deside if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
+
+    umask(DFL_RSP_UMASK);
 
     pc = poptGetContext(argv[0], argc, argv, long_options, 0);
     while((opt = poptGetNextOpt(pc)) != -1) {
@@ -192,7 +197,8 @@ int main(int argc, const char *argv[])
     /* set up things like debug, signals, daemonization, etc... */
     debug_log_file = "sssd_sudo";
 
-    ret = server_setup("sssd[sudo]", 0, CONFDB_SUDO_CONF_ENTRY, &main_ctx);
+    ret = server_setup("sssd[sudo]", 0, uid, gid, CONFDB_SUDO_CONF_ENTRY,
+                       &main_ctx);
     if (ret != EOK) {
         return 2;
     }

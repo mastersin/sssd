@@ -181,6 +181,7 @@ remove_socket_symlink(const char *symlink_name)
 int sbus_new_server(TALLOC_CTX *mem_ctx,
                     struct tevent_context *ev,
                     const char *address,
+                    uid_t uid, gid_t gid,
                     bool use_symlink,
                     struct sbus_connection **_server,
                     sbus_server_conn_init_fn init_fn,
@@ -191,7 +192,7 @@ int sbus_new_server(TALLOC_CTX *mem_ctx,
     DBusError dbus_error;
     dbus_bool_t dbret;
     char *tmp;
-    int ret;
+    int ret, tmp_ret;
     char *filename;
     char *symlink_filename = NULL;
     const char *socket_address;
@@ -260,9 +261,22 @@ int sbus_new_server(TALLOC_CTX *mem_ctx,
     if ((stat_buf.st_mode & ~S_IFMT) != (S_IRUSR|S_IWUSR)) {
         ret = chmod(filename, (S_IRUSR|S_IWUSR));
         if (ret != EOK) {
+            ret = errno;
             DEBUG(SSSDBG_CRIT_FAILURE,
-                  "chmod failed for [%s]: [%d][%s].\n", filename, errno,
-                                                         strerror(errno));
+                  "chmod failed for [%s]: [%d][%s].\n", filename, ret,
+                                                        sss_strerror(ret));
+            ret = EIO;
+            goto done;
+        }
+    }
+
+    if (stat_buf.st_uid != uid || stat_buf.st_gid != gid) {
+        ret = chown(filename, uid, gid);
+        if (ret != EOK) {
+            ret = errno;
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "chown failed for [%s]: [%d][%s].\n", filename, ret,
+                                                        sss_strerror(ret));
             ret = EIO;
             goto done;
         }
@@ -329,9 +343,17 @@ int sbus_new_server(TALLOC_CTX *mem_ctx,
 
     *_server = talloc_steal(mem_ctx, server);
     ret = EOK;
+
 done:
     if (ret != EOK && symlink_filename) {
-        unlink(symlink_filename);
+        tmp_ret = unlink(symlink_filename);
+        /* non-fatal failure */
+        if (tmp_ret != EOK) {
+            tmp_ret = errno;
+            DEBUG(SSSDBG_MINOR_FAILURE,
+                  "Failed to remove symbolic link: %d [%s]!\n",
+                  tmp_ret, sss_strerror(tmp_ret));
+        }
     }
     talloc_free(tmp_ctx);
     return ret;

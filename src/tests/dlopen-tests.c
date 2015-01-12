@@ -38,6 +38,7 @@ struct so {
     const char *libs[6];
 } so[] = {
     { "libsss_debug.so", { LIBPFX"libsss_debug.so", NULL } },
+    { "libsss_semanage.so", { LIBPFX"libsss_semanage.so", NULL } },
     { "libipa_hbac.so", { LIBPFX"libipa_hbac.so", NULL } },
     { "libsss_idmap.so", { LIBPFX"libsss_idmap.so", NULL } },
     { "libsss_nss_idmap.so", { LIBPFX"libsss_nss_idmap.so", NULL } },
@@ -70,18 +71,10 @@ struct so {
     { "cifs_idmap_sss.so", { LIBPFX"cifs_idmap_sss.so", NULL } },
 #endif
     { "memberof.so", { LIBPFX"memberof.so", NULL } },
-    { "libsss_child.so", { "libtevent.so",
-                           LIBPFX"libsss_debug.so",
-                           LIBPFX"libsss_crypt.so",
-                           LIBPFX"libsss_util.so",
+    { "libsss_child.so", { LIBPFX"libsss_util.so",
                            LIBPFX"libsss_child.so", NULL } },
-    { "libsss_crypt.so", { "libtalloc.so",
-                           LIBPFX"libsss_debug.so",
-                           LIBPFX"libsss_crypt.so", NULL } },
-    { "libsss_util.so", { "libtalloc.so",
-                           LIBPFX"libsss_debug.so",
-                           LIBPFX"libsss_crypt.so",
-                           LIBPFX"libsss_util.so", NULL } },
+    { "libsss_crypt.so", { LIBPFX"libsss_crypt.so", NULL } },
+    { "libsss_util.so", { LIBPFX"libsss_util.so", NULL } },
     { "libsss_simple.so", { LIBPFX"libdlopen_test_providers.so",
                             LIBPFX"libsss_simple.so", NULL } },
 #ifdef BUILD_SAMBA

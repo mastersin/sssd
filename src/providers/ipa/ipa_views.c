@@ -125,6 +125,21 @@ static errno_t be_acct_req_to_override_filter(TALLOC_CTX *mem_ctx,
         }
         break;
 
+    case BE_FILTER_UUID:
+        if ((ar->entry_type & BE_REQ_TYPE_MASK) == BE_REQ_BY_UUID) {
+            filter = talloc_asprintf(mem_ctx, "(&(objectClass=%s)(%s=:IPA:%s:%s))",
+                       ipa_opts->override_map[IPA_OC_OVERRIDE].name,
+                       ipa_opts->override_map[IPA_AT_OVERRIDE_ANCHOR_UUID].name,
+                       dp_opt_get_string(ipa_opts->basic, IPA_DOMAIN),
+                       ar->filter_value);
+        } else {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "Unexpected entry type [%d] for UUID filter.\n",
+                  ar->entry_type);
+            return EINVAL;
+        }
+        break;
+
     default:
         DEBUG(SSSDBG_OP_FAILURE, "Invalid sub-domain filter type.\n");
         return EINVAL;
@@ -140,9 +155,10 @@ static errno_t be_acct_req_to_override_filter(TALLOC_CTX *mem_ctx,
     return EOK;
 }
 
-errno_t get_be_acct_req_for_sid(TALLOC_CTX *mem_ctx, const char *sid,
-                                const char *domain_name,
-                                struct be_acct_req **_ar)
+static errno_t get_be_acct_req_for_xyz(TALLOC_CTX *mem_ctx, const char *val,
+                                       const char *domain_name,
+                                       int type,
+                                       struct be_acct_req **_ar)
 {
     struct be_acct_req *ar;
 
@@ -152,9 +168,22 @@ errno_t get_be_acct_req_for_sid(TALLOC_CTX *mem_ctx, const char *sid,
         return ENOMEM;
     }
 
-    ar->entry_type = BE_REQ_BY_SECID;
-    ar->filter_type = BE_FILTER_SECID;
-    ar->filter_value = talloc_strdup(ar, sid);
+    switch (type) {
+    case BE_REQ_BY_SECID:
+        ar->entry_type = BE_REQ_BY_SECID;
+        ar->filter_type = BE_FILTER_SECID;
+        break;
+    case BE_REQ_BY_UUID:
+        ar->entry_type = BE_REQ_BY_UUID;
+        ar->filter_type = BE_FILTER_UUID;
+        break;
+    default:
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unsupported request type [%d].\n", type);
+        talloc_free(ar);
+        return EINVAL;
+    }
+
+    ar->filter_value = talloc_strdup(ar, val);
     ar->domain = talloc_strdup(ar, domain_name);
     if (ar->filter_value == NULL || ar->domain == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
@@ -166,6 +195,22 @@ errno_t get_be_acct_req_for_sid(TALLOC_CTX *mem_ctx, const char *sid,
     *_ar = ar;
 
     return EOK;
+}
+
+errno_t get_be_acct_req_for_sid(TALLOC_CTX *mem_ctx, const char *sid,
+                                const char *domain_name,
+                                struct be_acct_req **_ar)
+{
+    return get_be_acct_req_for_xyz(mem_ctx, sid, domain_name, BE_REQ_BY_SECID,
+                                   _ar);
+}
+
+errno_t get_be_acct_req_for_uuid(TALLOC_CTX *mem_ctx, const char *uuid,
+                                 const char *domain_name,
+                                 struct be_acct_req **_ar)
+{
+    return get_be_acct_req_for_xyz(mem_ctx, uuid, domain_name, BE_REQ_BY_UUID,
+                                   _ar);
 }
 
 struct ipa_get_ad_override_state {
@@ -208,15 +253,22 @@ struct tevent_req *ipa_get_ad_override_send(TALLOC_CTX *mem_ctx,
     state->sdap_id_ctx = sdap_id_ctx;
     state->ipa_options = ipa_options;
     state->ipa_realm = ipa_realm;
+    state->ar = ar;
+    state->dp_error = -1;
+    state->override_attrs = NULL;
+    state->filter = NULL;
+
+    if (view_name == NULL) {
+        DEBUG(SSSDBG_TRACE_ALL, "View not defined, nothing to do.\n");
+        ret = EOK;
+        goto done;
+    }
+
     if (strcmp(view_name, SYSDB_DEFAULT_VIEW_NAME) == 0) {
         state->ipa_view_name = IPA_DEFAULT_VIEW_NAME;
     } else {
         state->ipa_view_name = view_name;
     }
-    state->ar = ar;
-    state->dp_error = -1;
-    state->override_attrs = NULL;
-    state->filter = NULL;
 
     state->sdap_op = sdap_id_op_create(state,
                                        state->sdap_id_ctx->conn->conn_cache);

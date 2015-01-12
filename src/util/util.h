@@ -175,6 +175,12 @@ errno_t set_debug_file_from_fd(const int fd);
 
 #define SSSD_MAIN_OPTS SSSD_DEBUG_OPTS
 
+#define SSSD_SERVER_OPTS(uid, gid) \
+        {"uid", 0, POPT_ARG_INT, &uid, 0, \
+          _("The user ID to run the server as"), NULL}, \
+        {"gid", 0, POPT_ARG_INT, &gid, 0, \
+          _("The group ID to run the server as"), NULL},
+
 #define FLAGS_NONE 0x0000
 #define FLAGS_DAEMON 0x0001
 #define FLAGS_INTERACTIVE 0x0002
@@ -212,6 +218,7 @@ errno_t set_debug_file_from_fd(const int fd);
 /* From debug.c */
 void ldb_debug_messages(void *context, enum ldb_debug_level level,
                         const char *fmt, va_list ap);
+int chown_debug_file(const char *filename, uid_t uid, gid_t gid);
 int open_debug_file_ex(const char *filename, FILE **filep, bool want_cloexec);
 int open_debug_file(void);
 int rotate_debug_files(void);
@@ -242,6 +249,7 @@ errno_t server_common_rotate_logs(struct confdb_ctx *confdb,
 int die_if_parent_died(void);
 int pidfile(const char *path, const char *name);
 int server_setup(const char *name, int flags,
+                 uid_t uid, gid_t gid,
                  const char *conf_entry,
                  struct main_context **main_ctx);
 void server_loop(struct main_context *main_ctx);
@@ -396,6 +404,8 @@ bool check_ipv6_addr(struct in6_addr *addr, uint8_t check);
 
 const char * const * get_known_services(void);
 
+errno_t sss_user_by_name_or_uid(const char *input, uid_t *_uid, gid_t *_gid);
+
 int split_on_separator(TALLOC_CTX *mem_ctx, const char *str,
                        const char sep, bool trim, bool skip_empty,
                        char ***_list, int *size);
@@ -415,6 +425,24 @@ errno_t sss_hash_create_ex(TALLOC_CTX *mem_ctx,
                            unsigned long max_load_factor,
                            hash_delete_callback *delete_callback,
                            void *delete_private_data);
+
+/**
+ * @brief Add two list of strings
+ *
+ * Create a new NULL-termintated list of strings by adding two lists together.
+ *
+ * @param[in] mem_ctx      Talloc memory context for the new list.
+ * @param[in] l1           First NULL-termintated list of strings.
+ * @param[in] l2           Second NULL-termintated list of strings.
+ * @param[in] copy_strings If set to 'true' the list items will be copied
+ *                         otherwise only the pointers to the items are
+ *                         copied.
+ * @param[out] new_list    New NULL-terminated list of strings. Must be freed
+ *                         with talloc_free() by the caller. If copy_strings
+ *                         is 'true' the new elements will be freed as well.
+ */
+errno_t add_strings_lists(TALLOC_CTX *mem_ctx, const char **l1, const char **l2,
+                          bool copy_strings, char ***_new_list);
 
 /* Copy a NULL-terminated string list
  * Returns NULL on out of memory error or invalid input
@@ -546,10 +574,15 @@ errno_t sssd_domain_init(TALLOC_CTX *mem_ctx,
 
 #define IS_SUBDOMAIN(dom) ((dom)->parent != NULL)
 
-/* Currently views are only supported for subdomains */
-#define DOM_HAS_VIEWS(dom) ((dom)->has_views && IS_SUBDOMAIN(dom))
+#define DOM_HAS_VIEWS(dom) ((dom)->has_views)
+
+/* the directory domain - realm mappings and other krb5 config snippers are
+ * written to */
+#define KRB5_MAPPING_DIR PUBCONF_PATH"/krb5.include.d"
 
 errno_t sss_write_domain_mappings(struct sss_domain_info *domain);
+
+errno_t sss_write_krb5_conf_snippet(const char *path);
 
 errno_t get_dom_names(TALLOC_CTX *mem_ctx,
                       struct sss_domain_info *start_dom,
@@ -590,5 +623,10 @@ errno_t switch_creds(TALLOC_CTX *mem_ctx,
                      int num_gids, gid_t *gids,
                      struct sss_creds **saved_creds);
 errno_t restore_creds(struct sss_creds *saved_creds);
+
+/* from sss_semanage.c */
+int set_seuser(const char *login_name, const char *seuser_name,
+               const char *mlsrange);
+int del_seuser(const char *login_name);
 
 #endif /* __SSSD_UTIL_H__ */

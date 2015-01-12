@@ -123,16 +123,12 @@ errno_t sysdb_update_view_name(struct sysdb_ctx *sysdb,
             goto done;
         } else {
             /* view name changed */
-            /* not supported atm */
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "View name changed from [%s] to [%s]. NOT SUPPORTED.\n",
-                  tmp_str, view_name);
-            ret = ENOTSUP;
-            goto done;
+            DEBUG(SSSDBG_CONF_SETTINGS,
+                  "View name changed from [%s] to [%s].\n", tmp_str, view_name);
         }
+    } else {
+        add_view_name = true;
     }
-
-    add_view_name = true;
 
     msg = ldb_msg_new(tmp_ctx);
     if (msg == NULL) {
@@ -177,6 +173,164 @@ errno_t sysdb_update_view_name(struct sysdb_ctx *sysdb,
 
 done:
     talloc_free(tmp_ctx);
+    return ret;
+}
+
+errno_t sysdb_delete_view_tree(struct sysdb_ctx *sysdb, const char *view_name)
+{
+    struct ldb_dn *dn;
+    TALLOC_CTX *tmp_ctx;
+    int ret;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    dn = ldb_dn_new_fmt(tmp_ctx, sysdb->ldb, SYSDB_TMPL_VIEW_SEARCH_BASE,
+                        view_name);
+    if (dn == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "ldb_dn_new_fmt failed.\n");
+        ret = EIO;
+        goto done;
+    }
+
+    ret = sysdb_delete_recursive(sysdb, dn, true);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "sysdb_delete_recursive failed.\n");
+        goto done;
+    }
+
+    ret = EOK;
+
+done:
+    talloc_free(tmp_ctx);
+
+    return ret;
+}
+
+errno_t sysdb_invalidate_overrides(struct sysdb_ctx *sysdb)
+{
+    int ret;
+    int sret;
+    TALLOC_CTX *tmp_ctx;
+    bool in_transaction = false;
+    struct ldb_result *res;
+    size_t c;
+    struct ldb_message *msg;
+    struct ldb_dn *base_dn;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    msg = ldb_msg_new(tmp_ctx);
+    if (msg == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "ldb_msg_new failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    base_dn = ldb_dn_new(tmp_ctx, sysdb->ldb, SYSDB_BASE);
+    if (base_dn == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "ldb_dn_new failed");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_msg_add_empty(msg, SYSDB_CACHE_EXPIRE, LDB_FLAG_MOD_REPLACE,
+                            NULL);
+    if (ret != LDB_SUCCESS) {
+        DEBUG(SSSDBG_OP_FAILURE, "ldb_msg_add_empty failed.\n");
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+    ret = ldb_msg_add_string(msg, SYSDB_CACHE_EXPIRE, "1");
+    if (ret != LDB_SUCCESS) {
+        DEBUG(SSSDBG_OP_FAILURE, "ldb_msg_add_string failed.\n");
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    ret = ldb_msg_add_empty(msg, SYSDB_OVERRIDE_DN, LDB_FLAG_MOD_DELETE, NULL);
+    if (ret != LDB_SUCCESS) {
+        DEBUG(SSSDBG_OP_FAILURE, "ldb_msg_add_empty failed.\n");
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    ret = sysdb_transaction_start(sysdb);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "sysdb_transaction_start failed.\n");
+        goto done;
+    }
+    in_transaction = true;
+
+    ret = ldb_search(sysdb->ldb, tmp_ctx, &res, base_dn, LDB_SCOPE_SUBTREE,
+                     NULL, "%s", SYSDB_UC);
+    if (ret != LDB_SUCCESS) {
+        DEBUG(SSSDBG_OP_FAILURE, "sysdb_search_entry failed.\n");
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    for (c = 0; c < res->count; c++) {
+        msg->dn = res->msgs[c]->dn;
+
+        ret = ldb_modify(sysdb->ldb, msg);
+        if (ret != LDB_SUCCESS && ret != LDB_ERR_NO_SUCH_ATTRIBUTE) {
+            DEBUG(SSSDBG_OP_FAILURE, "ldb_modify failed.\n");
+            ret = sysdb_error_to_errno(ret);
+            goto done;
+        }
+    }
+
+    talloc_free(res);
+
+    ret = ldb_search(sysdb->ldb, tmp_ctx, &res, base_dn, LDB_SCOPE_SUBTREE,
+                     NULL, "%s", SYSDB_GC);
+    if (ret != LDB_SUCCESS) {
+        DEBUG(SSSDBG_OP_FAILURE, "sysdb_search_entry failed.\n");
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    for (c = 0; c < res->count; c++) {
+        msg->dn = res->msgs[c]->dn;
+
+        ret = ldb_modify(sysdb->ldb, msg);
+        if (ret != LDB_SUCCESS && ret != LDB_ERR_NO_SUCH_ATTRIBUTE) {
+            DEBUG(SSSDBG_OP_FAILURE, "ldb_modify failed.\n");
+            ret = sysdb_error_to_errno(ret);
+            goto done;
+        }
+    }
+
+    ret = EOK;
+
+done:
+    if (in_transaction) {
+        if (ret == EOK) {
+            sret = sysdb_transaction_commit(sysdb);
+            if (sret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE, "sysdb_transaction_commit failed, " \
+                                         "nothing we can do about.\n");
+                ret = sret;
+            }
+        } else {
+            sret = sysdb_transaction_cancel(sysdb);
+            if (sret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE, "sysdb_transaction_cancel failed, " \
+                                         "nothing we can do about.\n");
+            }
+        }
+    }
+
+    talloc_free(tmp_ctx);
+
     return ret;
 }
 
@@ -371,8 +525,14 @@ errno_t sysdb_store_override(struct sss_domain_info *domain,
             goto done;
         }
 
-        /* TODO: add nameAlias for case-insentitive searches */
         for (c = 0; c < attrs->num; c++) {
+            /* Set num_values to 1 because by default user and group overrides
+             * use the same attribute name for the GID and this cause SSSD
+             * machinery to add the same value twice */
+            if (attrs->a[c].num_values > 1
+                    && strcmp(attrs->a[c].name, SYSDB_GIDNUM) == 0) {
+                attrs->a[c].num_values = 1;
+            }
             msg->elements[c] = attrs->a[c];
             msg->elements[c].flags = LDB_FLAG_MOD_ADD;
         }
@@ -560,6 +720,8 @@ errno_t sysdb_apply_default_override(struct sss_domain_info *domain,
     TALLOC_CTX *tmp_ctx;
     struct sysdb_attrs *attrs;
     size_t c;
+    size_t d;
+    size_t num_values;
     struct ldb_message_element *el = NULL;
     const char *allowed_attrs[] = { SYSDB_UIDNUM,
                                     SYSDB_GIDNUM,
@@ -567,6 +729,7 @@ errno_t sysdb_apply_default_override(struct sss_domain_info *domain,
                                     SYSDB_HOMEDIR,
                                     SYSDB_SHELL,
                                     SYSDB_NAME,
+                                    SYSDB_SSH_PUBKEY,
                                     NULL };
     bool override_attrs_found = false;
 
@@ -584,7 +747,6 @@ errno_t sysdb_apply_default_override(struct sss_domain_info *domain,
     }
 
     for (c = 0; allowed_attrs[c] != NULL; c++) {
-        /* TODO: add nameAlias for case-insentitive searches */
         ret = sysdb_attrs_get_el_ext(override_attrs, allowed_attrs[c], false,
                                      &el);
         if (ret == EOK) {
@@ -607,17 +769,30 @@ errno_t sysdb_apply_default_override(struct sss_domain_info *domain,
                     goto done;
                 }
             } else {
-                ret = sysdb_attrs_add_val(attrs,  allowed_attrs[c],
-                                          &el->values[0]);
-                if (ret != EOK) {
-                    DEBUG(SSSDBG_OP_FAILURE, "sysdb_attrs_add_val failed.\n");
-                    goto done;
+                num_values = el->num_values;
+                /* Only SYSDB_SSH_PUBKEY is allowed to have multiple values. */
+                if (strcmp(allowed_attrs[c], SYSDB_SSH_PUBKEY) != 0
+                        && num_values != 1) {
+                    DEBUG(SSSDBG_MINOR_FAILURE,
+                          "Override attribute for [%s] has more [%zd] " \
+                          "than one value, using only the first.\n",
+                          allowed_attrs[c], num_values);
+                    num_values = 1;
                 }
-                DEBUG(SSSDBG_TRACE_ALL, "Override [%s] with [%.*s] for [%s].\n",
-                                        allowed_attrs[c],
-                                        (int) el->values[0].length,
-                                        el->values[0].data,
-                                        ldb_dn_get_linearized(obj_dn));
+
+                for (d = 0; d < num_values; d++) {
+                    ret = sysdb_attrs_add_val(attrs,  allowed_attrs[c],
+                                              &el->values[d]);
+                    if (ret != EOK) {
+                        DEBUG(SSSDBG_OP_FAILURE,
+                              "sysdb_attrs_add_val failed.\n");
+                        goto done;
+                    }
+                    DEBUG(SSSDBG_TRACE_ALL,
+                          "Override [%s] with [%.*s] for [%s].\n",
+                          allowed_attrs[c], (int) el->values[d].length,
+                          el->values[d].data, ldb_dn_get_linearized(obj_dn));
+                }
             }
         } else if (ret != ENOENT) {
             DEBUG(SSSDBG_OP_FAILURE, "sysdb_attrs_get_el_ext failed.\n");
@@ -721,7 +896,7 @@ static errno_t sysdb_search_override_by_name(TALLOC_CTX *mem_ctx,
         goto done;
     } else if (override_res->count > 1) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "Found more than one override for name [%s]\n.", name);
+              "Found more than one override for name [%s].\n", name);
         ret = EINVAL;
         goto done;
     }
@@ -878,7 +1053,7 @@ static errno_t sysdb_search_override_by_id(TALLOC_CTX *mem_ctx,
         goto done;
     } else if (override_res->count > 1) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "Found more than one override for id [%lu]\n.", id);
+              "Found more than one override for id [%lu].\n", id);
         ret = EINVAL;
         goto done;
     }
@@ -948,6 +1123,8 @@ errno_t sysdb_search_group_override_by_gid(TALLOC_CTX *mem_ctx,
  * @param[in] domain Domain struct, needed to access the cache
  * @oaram[in] obj The original object
  * @param[in] override_obj The object with the override data, may be NULL
+ * @param[in] req_attrs List of attributes to be requested, if not set a
+ *                      default list dependig on the object type will be used
  *
  * @return EOK - Override data was added successfully
  * @return ENOMEM - There was insufficient memory to complete the operation
@@ -958,7 +1135,8 @@ errno_t sysdb_search_group_override_by_gid(TALLOC_CTX *mem_ctx,
  */
 errno_t sysdb_add_overrides_to_object(struct sss_domain_info *domain,
                                       struct ldb_message *obj,
-                                      struct ldb_message *override_obj)
+                                      struct ldb_message *override_obj,
+                                      const char **req_attrs)
 {
     int ret;
     const char *override_dn_str;
@@ -980,10 +1158,12 @@ errno_t sysdb_add_overrides_to_object(struct sss_domain_info *domain,
         {SYSDB_HOMEDIR, OVERRIDE_PREFIX SYSDB_HOMEDIR},
         {SYSDB_SHELL, OVERRIDE_PREFIX SYSDB_SHELL},
         {SYSDB_NAME, OVERRIDE_PREFIX SYSDB_NAME},
+        {SYSDB_SSH_PUBKEY, OVERRIDE_PREFIX SYSDB_SSH_PUBKEY},
         {NULL, NULL}
     };
     size_t c;
-    const char *tmp_str;
+    size_t d;
+    struct ldb_message_element *tmp_el;
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
@@ -1016,12 +1196,15 @@ errno_t sysdb_add_overrides_to_object(struct sss_domain_info *domain,
             goto done;
         }
 
-        uid = ldb_msg_find_attr_as_uint64(obj, SYSDB_UIDNUM, 0);
-        if (uid == 0) {
-            /* No UID hence group object */
-            attrs = group_attrs;
-        } else {
-            attrs = user_attrs;
+        attrs = req_attrs;
+        if (attrs == NULL) {
+            uid = ldb_msg_find_attr_as_uint64(obj, SYSDB_UIDNUM, 0);
+            if (uid == 0) {
+                /* No UID hence group object */
+                attrs = group_attrs;
+            } else {
+                attrs = user_attrs;
+            }
         }
 
         ret = ldb_search(domain->sysdb->ldb, tmp_ctx, &res, override_dn,
@@ -1050,14 +1233,16 @@ errno_t sysdb_add_overrides_to_object(struct sss_domain_info *domain,
     }
 
     for (c = 0; attr_map[c].attr != NULL; c++) {
-        tmp_str = ldb_msg_find_attr_as_string(override, attr_map[c].attr, NULL);
-        if (tmp_str != NULL) {
-            talloc_steal(obj, tmp_str);
-            ret = ldb_msg_add_string(obj, attr_map[c].new_attr, tmp_str);
-            if (ret != LDB_SUCCESS) {
-                DEBUG(SSSDBG_OP_FAILURE, "ldb_msg_add_string failed.\n");
-                ret = sysdb_error_to_errno(ret);
-                goto done;
+        tmp_el = ldb_msg_find_element(override, attr_map[c].attr);
+        if (tmp_el != NULL) {
+            for (d = 0; d < tmp_el->num_values; d++) {
+                ret = ldb_msg_add_steal_value(obj, attr_map[c].new_attr,
+                                              &tmp_el->values[d]);
+                if (ret != LDB_SUCCESS) {
+                    DEBUG(SSSDBG_OP_FAILURE, "ldb_msg_add_value failed.\n");
+                    ret = sysdb_error_to_errno(ret);
+                    goto done;
+                }
             }
         }
     }

@@ -23,8 +23,11 @@
 #include <pcre.h>
 #include <errno.h>
 #include <talloc.h>
+#include <pwd.h>
+#include <grp.h>
 
 #include "confdb/confdb.h"
+#include "util/strtonum.h"
 #include "util/util.h"
 #include "util/safe-format-string.h"
 #include "responder/common/responder.h"
@@ -306,7 +309,7 @@ int sss_parse_name(TALLOC_CTX *memctx,
 
     ret = pcre_exec(re, NULL, orig, origlen, 0, PCRE_NOTEMPTY, ovec, 30);
     if (ret == PCRE_ERROR_NOMATCH) {
-        return EINVAL;
+        return ERR_REGEX_NOMATCH;
     } else if (ret < 0) {
         DEBUG(SSSDBG_MINOR_FAILURE, "PCRE Matching error, %d\n", ret);
         return EINVAL;
@@ -643,7 +646,13 @@ sss_get_domain_name(TALLOC_CTX *mem_ctx,
     /* check if the name already contains domain part */
     if (dom->names != NULL) {
         ret = sss_parse_name(mem_ctx, dom->names, orig_name, &domain, NULL);
-        if (ret != EOK) {
+        if (ret == ERR_REGEX_NOMATCH) {
+            DEBUG(SSSDBG_TRACE_FUNC,
+                  "sss_parse_name could not parse domain from [%s]. "
+                  "Assuming it is not FQDN.\n", orig_name);
+        } else if (ret != EOK) {
+            DEBUG(SSSDBG_TRACE_FUNC,
+                  "sss_parse_name failed [%d]: %s\n", ret, sss_strerror(ret));
             return NULL;
         }
     }
@@ -658,4 +667,45 @@ sss_get_domain_name(TALLOC_CTX *mem_ctx,
     talloc_free(domain);
 
     return user_name;
+}
+
+errno_t sss_user_by_name_or_uid(const char *input, uid_t *_uid, gid_t *_gid)
+{
+    uid_t uid;
+    errno_t ret;
+    char *endptr;
+    struct passwd *pwd;
+
+    /* Try if it's an ID first */
+    errno = 0;
+    uid = strtouint32(input, &endptr, 10);
+    if (errno != 0 || *endptr != '\0') {
+        ret = errno;
+        if (ret == ERANGE) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "UID [%s] is out of range.\n", input);
+            return ret;
+        }
+
+        /* Nope, maybe a username? */
+        pwd = getpwnam(input);
+    } else {
+        pwd = getpwuid(uid);
+    }
+
+    if (pwd == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "[%s] is neither a valid UID nor a user name which could be "
+              "resolved by getpwnam().\n", input);
+        return EINVAL;
+    }
+
+    if (_uid) {
+        *_uid = pwd->pw_uid;
+    }
+
+    if (_gid) {
+        *_gid = pwd->pw_gid;
+    }
+    return EOK;
 }

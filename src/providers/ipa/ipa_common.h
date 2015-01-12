@@ -54,6 +54,7 @@ enum ipa_basic_opt {
     IPA_ENABLE_DNS_SITES,
     IPA_SERVER_MODE,
     IPA_VIEWS_SEARCH_BASE,
+    IPA_KRB5_CONFD_PATH,
 
     IPA_OPTS_BASIC /* opts counter */
 };
@@ -128,6 +129,7 @@ enum ipa_override_attrs {
     IPA_AT_OVERRIDE_SHELL,
     IPA_AT_OVERRIDE_GROUP_NAME,
     IPA_AT_OVERRIDE_GROUP_GID_NUMBER,
+    IPA_AT_OVERRIDE_USER_SSH_PUBLIC_KEY,
 
     IPA_OPTS_OVERRIDE
 };

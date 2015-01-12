@@ -109,3 +109,45 @@
    fun:g_utf8_casefold
    ...
 }
+
+# uninitialised value in libselinux (fixed in fedora >= 21)
+{
+   libselinux-jump-or-move-depends-on-uninitialised-value-in-selabel_close
+   Memcheck:Cond
+   obj:/usr/lib64/libselinux.so.1
+   fun:selabel_close
+   obj:/usr/lib64/libkrb5support.so.0.1
+   fun:_dl_fini
+   fun:__run_exit_handlers
+   fun:exit
+   fun:(below main)
+}
+
+# long-standing memory leak in popt
+{
+   popt-memleak-from-poptGetNextOpt-malloc
+   Memcheck:Leak
+   fun:malloc
+   ...
+   fun:poptGetNextOpt
+   fun:main
+}
+
+# long-standing memory leak in popt
+{
+   popt-memleak-from-poptGetNextOpt-realloc
+   Memcheck:Leak
+   fun:realloc
+   ...
+   fun:poptGetNextOpt
+   fun:main
+}
+
+# popt was not good with read access either. Applies for popt <= 1.13
+{
+    popt-suppress-invalid-read
+    Memcheck:Addr4
+    ...
+    fun:poptGetNextOpt
+    fun:main
+}

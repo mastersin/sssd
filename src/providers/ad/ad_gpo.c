@@ -1313,29 +1313,10 @@ ad_gpo_access_check(TALLOC_CTX *mem_ctx,
 }
 
 #define GPO_CHILD_LOG_FILE "gpo_child"
+
 static errno_t gpo_child_init(void)
 {
-    int ret;
-    FILE *debug_filep;
-
-    if (debug_to_file != 0 && gpo_child_debug_fd == -1) {
-        ret = open_debug_file_ex(GPO_CHILD_LOG_FILE, &debug_filep, false);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_FATAL_FAILURE, "Error setting up logging (%d) [%s]\n",
-                        ret, strerror(ret));
-            return ret;
-        }
-
-        gpo_child_debug_fd = fileno(debug_filep);
-        if (gpo_child_debug_fd == -1) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "fileno failed [%d][%s]\n", errno, strerror(errno));
-            ret = errno;
-            return ret;
-        }
-    }
-
-    return EOK;
+    return child_debug_init(GPO_CHILD_LOG_FILE, &gpo_child_debug_fd);
 }
 
 /*
@@ -1358,7 +1339,10 @@ parse_policy_setting_value(TALLOC_CTX *mem_ctx,
     char **sids_list = NULL;
 
     ret = sysdb_gpo_get_gpo_result_setting(mem_ctx, domain, key, &value);
-    if (ret != EOK) {
+    if (ret == ENOENT) {
+        DEBUG(SSSDBG_TRACE_FUNC, "No previous GPO result\n");
+        value = NULL;
+    } else if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE,
               "Cannot retrieve settings from sysdb for key: '%s' [%d][%s].\n",
               key, ret, sss_strerror(ret));
@@ -3756,45 +3740,8 @@ struct ad_gpo_process_cse_state {
     pid_t child_pid;
     uint8_t *buf;
     ssize_t len;
-    struct io *io;
+    struct child_io_fds *io;
 };
-
-struct io {
-    int read_from_child_fd;
-    int write_to_child_fd;
-};
-
-static errno_t
-gpo_child_io_destructor(void *ptr)
-{
-    int ret;
-    struct io *io;
-
-    io = talloc_get_type(ptr, struct io);
-    if (io == NULL) return EOK;
-
-    if (io->write_to_child_fd != -1) {
-        ret = close(io->write_to_child_fd);
-        io->write_to_child_fd = -1;
-        if (ret != EOK) {
-            ret = errno;
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "close failed [%d][%s].\n", ret, strerror(ret));
-        }
-    }
-
-    if (io->read_from_child_fd != -1) {
-        ret = close(io->read_from_child_fd);
-        io->read_from_child_fd = -1;
-        if (ret != EOK) {
-            ret = errno;
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "close failed [%d][%s].\n", ret, strerror(ret));
-        }
-    }
-
-    return EOK;
-}
 
 static errno_t gpo_fork_child(struct tevent_req *req);
 static void gpo_cse_step(struct tevent_req *subreq);
@@ -3849,7 +3796,7 @@ ad_gpo_process_cse_send(TALLOC_CTX *mem_ctx,
     state->gpo_guid = gpo_guid;
     state->smb_path = smb_path;
     state->smb_cse_suffix = smb_cse_suffix;
-    state->io = talloc(state, struct io);
+    state->io = talloc(state, struct child_io_fds);
     if (state->io == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "talloc failed.\n");
         ret = ENOMEM;
@@ -3858,7 +3805,7 @@ ad_gpo_process_cse_send(TALLOC_CTX *mem_ctx,
 
     state->io->write_to_child_fd = -1;
     state->io->read_from_child_fd = -1;
-    talloc_set_destructor((void *) state->io, gpo_child_io_destructor);
+    talloc_set_destructor((void *) state->io, child_io_destructor);
 
     /* prepare the data to pass to child */
     ret = create_cse_send_buffer(state, smb_server, smb_share, smb_path,
@@ -3954,11 +3901,13 @@ static void gpo_cse_done(struct tevent_req *subreq)
               "ad_gpo_parse_gpo_child_response failed: [%d][%s]\n",
               ret, strerror(ret));
         tevent_req_error(req, ret);
+        return;
     } else if (child_result != 0){
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Error in gpo_child: [%d][%s]\n",
               child_result, strerror(child_result));
         tevent_req_error(req, child_result);
+        return;
     }
 
     now = time(NULL);
@@ -4014,7 +3963,7 @@ gpo_fork_child(struct tevent_req *req)
     if (pid == 0) { /* child */
         err = exec_child(state,
                          pipefd_to_child, pipefd_from_child,
-                         GPO_CHILD, gpo_child_debug_fd);
+                         GPO_CHILD, gpo_child_debug_fd, NULL);
         DEBUG(SSSDBG_CRIT_FAILURE, "Could not exec gpo_child: [%d][%s].\n",
               err, strerror(err));
         return err;

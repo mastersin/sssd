@@ -310,7 +310,7 @@ int ifp_process_init(TALLOC_CTX *mem_ctx,
     ifp_cmds = get_ifp_cmds();
     ret = sss_process_init(mem_ctx, ev, cdb,
                            ifp_cmds,
-                           NULL, NULL,
+                           NULL, -1, NULL, -1,
                            CONFDB_IFP_CONF_ENTRY,
                            SSS_IFP_SBUS_SERVICE_NAME,
                            SSS_IFP_SBUS_SERVICE_VERSION,
@@ -376,7 +376,7 @@ int ifp_process_init(TALLOC_CTX *mem_ctx,
                             CONFDB_IFP_CONF_ENTRY, CONFDB_IFP_USER_ATTR_LIST,
                             NULL, &attr_list_str);
     if (ret != EOK) {
-        DEBUG(SSSDBG_FATAL_FAILURE, "Failed to get allowed UIDs.\n");
+        DEBUG(SSSDBG_FATAL_FAILURE, "Failed to get user attribute list.\n");
         goto fail;
     }
 
@@ -441,15 +441,20 @@ int main(int argc, const char *argv[])
     poptContext pc;
     struct main_context *main_ctx;
     int ret;
+    uid_t uid;
+    gid_t gid;
 
     struct poptOption long_options[] = {
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
+        SSSD_SERVER_OPTS(uid, gid)
         POPT_TABLEEND
     };
 
     /* Set debug level to invalid value so we can deside if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
+
+    umask(DFL_RSP_UMASK);
 
     pc = poptGetContext(argv[0], argc, argv, long_options, 0);
     while((opt = poptGetNextOpt(pc)) != -1) {
@@ -469,7 +474,8 @@ int main(int argc, const char *argv[])
     /* set up things like debug, signals, daemonization, etc... */
     debug_log_file = "sssd_ifp";
 
-    ret = server_setup("sssd[ifp]", 0, CONFDB_IFP_CONF_ENTRY, &main_ctx);
+    ret = server_setup("sssd[ifp]", 0, 0, 0,
+                       CONFDB_IFP_CONF_ENTRY, &main_ctx);
     if (ret != EOK) return 2;
 
     ret = die_if_parent_died();

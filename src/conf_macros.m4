@@ -353,7 +353,7 @@ AC_DEFUN([WITH_KRB5_CONF],
                 ]
                )
 
-    KRB5_CONF_PATH="${sysconfdir}/krb5.conf"
+    KRB5_CONF_PATH="\"SYSCONFDIR\"/krb5.conf"
     if test x"$with_krb5_conf" != x; then
         KRB5_CONF_PATH=$with_krb5_conf
     fi
@@ -708,6 +708,19 @@ AC_ARG_ENABLE([dbus-tests],
               [build_dbus_tests=yes])
 AM_CONDITIONAL([BUILD_DBUS_TESTS], [test x$build_dbus_tests = xyes])
 
+AC_ARG_ENABLE([sss-default-nss-plugin],
+              [AS_HELP_STRING([--enable-sss-default-nss-plugin],
+                              [This option change standard behaviour of sss nss
+                               plugin. If this option is enabled the sss nss
+                               plugin will behave as it was not in
+                               nsswitch.conf when sssd is not running.
+                               [default=no]])],
+              [enable_sss_default_nss_plugin=$enableval],
+              [enable_sss_default_nss_plugin=no])
+AS_IF([test x$enable_sss_default_nss_plugin = xyes],
+      AC_DEFINE_UNQUOTED([NONSTANDARD_SSS_NSS_BEHAVIOUR], [1],
+          [whether to build sssd nss plugin with nonstandard glibc behaviour]))
+
 AC_DEFUN([WITH_NFS],
   [ AC_ARG_WITH([nfsv4-idmapd-plugin],
                 [AC_HELP_STRING([--with-nfsv4-idmapd-plugin],
@@ -736,4 +749,23 @@ AC_DEFUN([WITH_NFS_LIB_PATH],
         nfslibpath=$with_nfs_lib_path
     fi
     AC_SUBST(nfslibpath)
+  ])
+
+AC_DEFUN([WITH_SSSD_USER],
+  [ AC_ARG_WITH([sssd-user],
+                [AS_HELP_STRING([--with-sssd-user=<user>],
+                                [User for running SSSD (root)]
+                               )
+                ]
+               )
+
+    SSSD_USER=root
+
+    if test x"$with_sssd_user" != x; then
+        SSSD_USER=$with_sssd_user
+    fi
+
+    AC_SUBST(SSSD_USER)
+    AC_DEFINE_UNQUOTED(SSSD_USER, "$SSSD_USER", ["The default user to run SSSD as"])
+    AM_CONDITIONAL([SSSD_USER], [test x"$with_sssd_user" != x])
   ])

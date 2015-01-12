@@ -214,6 +214,7 @@ static int nss_get_config(struct nss_ctx *nctx,
                           struct confdb_ctx *cdb)
 {
     int ret;
+    char *tmp_str;
 
     ret = confdb_get_int(cdb, CONFDB_NSS_CONF_ENTRY,
                          CONFDB_NSS_ENUM_CACHE_TIMEOUT, 120,
@@ -297,6 +298,25 @@ static int nss_get_config(struct nss_ctx *nctx,
                             CONFDB_DEFAULT_HOMEDIR_SUBSTRING,
                             &nctx->homedir_substr);
     if (ret != EOK) goto done;
+
+
+    ret = confdb_get_string(cdb, nctx, CONFDB_NSS_CONF_ENTRY,
+                            CONFDB_IFP_USER_ATTR_LIST, NULL, &tmp_str);
+    if (ret != EOK) goto done;
+
+    if (tmp_str == NULL) {
+        ret = confdb_get_string(cdb, nctx, CONFDB_IFP_CONF_ENTRY,
+                                CONFDB_IFP_USER_ATTR_LIST, NULL, &tmp_str);
+        if (ret != EOK) goto done;
+    }
+
+    if (tmp_str != NULL) {
+        nctx->extra_attributes = parse_attr_list_ex(nctx, tmp_str, NULL);
+        if (nctx->extra_attributes == NULL) {
+            ret = ENOMEM;
+            goto done;
+        }
+    }
 
     ret = 0;
 done:
@@ -392,7 +412,7 @@ int nss_process_init(TALLOC_CTX *mem_ctx,
 
     ret = sss_process_init(mem_ctx, ev, cdb,
                            nss_cmds,
-                           SSS_NSS_SOCKET_NAME, NULL,
+                           SSS_NSS_SOCKET_NAME, -1, NULL, -1,
                            CONFDB_NSS_CONF_ENTRY,
                            NSS_SBUS_SERVICE_NAME,
                            NSS_SBUS_SERVICE_VERSION,
@@ -537,15 +557,20 @@ int main(int argc, const char *argv[])
     poptContext pc;
     struct main_context *main_ctx;
     int ret;
+    uid_t uid;
+    gid_t gid;
 
     struct poptOption long_options[] = {
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
+        SSSD_SERVER_OPTS(uid, gid)
         POPT_TABLEEND
     };
 
     /* Set debug level to invalid value so we can deside if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
+
+    umask(DFL_RSP_UMASK);
 
     pc = poptGetContext(argv[0], argc, argv, long_options, 0);
     while((opt = poptGetNextOpt(pc)) != -1) {
@@ -565,7 +590,8 @@ int main(int argc, const char *argv[])
     /* set up things like debug, signals, daemonization, etc... */
     debug_log_file = "sssd_nss";
 
-    ret = server_setup("sssd[nss]", 0, CONFDB_NSS_CONF_ENTRY, &main_ctx);
+    ret = server_setup("sssd[nss]", 0, uid, gid, CONFDB_NSS_CONF_ENTRY,
+                       &main_ctx);
     if (ret != EOK) return 2;
 
     ret = die_if_parent_died();

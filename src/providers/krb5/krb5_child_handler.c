@@ -41,11 +41,6 @@
 #define TIME_T_MAX LONG_MAX
 #define int64_to_time_t(val) ((time_t)((val) < TIME_T_MAX ? val : TIME_T_MAX))
 
-struct io {
-    int read_from_child_fd;
-    int write_to_child_fd;
-};
-
 struct handle_child_state {
     struct tevent_context *ev;
     struct krb5child_req *kr;
@@ -55,37 +50,8 @@ struct handle_child_state {
     struct tevent_timer *timeout_handler;
     pid_t child_pid;
 
-    struct io *io;
+    struct child_io_fds *io;
 };
-
-static int child_io_destructor(void *ptr)
-{
-    int ret;
-    struct io *io = talloc_get_type(ptr, struct io);
-    if (io == NULL) return EOK;
-
-    if (io->write_to_child_fd != -1) {
-        ret = close(io->write_to_child_fd);
-        io->write_to_child_fd = -1;
-        if (ret != EOK) {
-            ret = errno;
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "close failed [%d][%s].\n", ret, strerror(ret));
-        }
-    }
-
-    if (io->read_from_child_fd != -1) {
-        ret = close(io->read_from_child_fd);
-        io->read_from_child_fd = -1;
-        if (ret != EOK) {
-            ret = errno;
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "close failed [%d][%s].\n", ret, strerror(ret));
-        }
-    }
-
-    return EOK;
-}
 
 static errno_t pack_authtok(struct io_buffer *buf, size_t *rp,
                             struct sss_auth_token *tok)
@@ -178,6 +144,11 @@ static errno_t create_send_buffer(struct krb5child_req *kr,
         kr->pd->cmd == SSS_PAM_CHAUTHTOK) {
         buf->size += 4*sizeof(uint32_t) + strlen(kr->ccname) + strlen(keytab) +
                      sss_authtok_get_size(kr->pd->authtok);
+
+        buf->size += sizeof(uint32_t);
+        if (kr->old_ccname) {
+            buf->size += strlen(kr->old_ccname);
+        }
     }
 
     if (kr->pd->cmd == SSS_PAM_CHAUTHTOK) {
@@ -215,6 +186,14 @@ static errno_t create_send_buffer(struct krb5child_req *kr,
         kr->pd->cmd == SSS_PAM_CHAUTHTOK) {
         SAFEALIGN_SET_UINT32(&buf->data[rp], strlen(kr->ccname), &rp);
         safealign_memcpy(&buf->data[rp], kr->ccname, strlen(kr->ccname), &rp);
+
+        if (kr->old_ccname) {
+            SAFEALIGN_SET_UINT32(&buf->data[rp], strlen(kr->old_ccname), &rp);
+            safealign_memcpy(&buf->data[rp], kr->old_ccname,
+                             strlen(kr->old_ccname), &rp);
+        } else {
+            SAFEALIGN_SET_UINT32(&buf->data[rp], 0, &rp);
+        }
 
         SAFEALIGN_SET_UINT32(&buf->data[rp], strlen(keytab), &rp);
         safealign_memcpy(&buf->data[rp], keytab, strlen(keytab), &rp);
@@ -299,6 +278,14 @@ static errno_t fork_child(struct tevent_req *req)
     errno_t err;
     struct handle_child_state *state = tevent_req_data(req,
                                                      struct handle_child_state);
+    const char *k5c_extra_args[3];
+
+    k5c_extra_args[0] = talloc_asprintf(state, "--fast-ccache-uid=%"SPRIuid, getuid());
+    k5c_extra_args[1] = talloc_asprintf(state, "--fast-ccache-gid=%"SPRIgid, getgid());
+    k5c_extra_args[2] = NULL;
+    if (k5c_extra_args[0] == NULL || k5c_extra_args[1] == NULL) {
+        return ENOMEM;
+    }
 
     ret = pipe(pipefd_from_child);
     if (ret == -1) {
@@ -318,17 +305,10 @@ static errno_t fork_child(struct tevent_req *req)
     pid = fork();
 
     if (pid == 0) { /* child */
-        if (state->kr->run_as_user) {
-            ret = become_user(state->kr->uid, state->kr->gid);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "become_user failed.\n");
-                return ret;
-            }
-        }
-
         err = exec_child(state,
                          pipefd_to_child, pipefd_from_child,
-                         KRB5_CHILD, state->kr->krb5_ctx->child_debug_fd);
+                         KRB5_CHILD, state->kr->krb5_ctx->child_debug_fd,
+                         k5c_extra_args);
         if (err != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Could not exec KRB5 child: [%d][%s].\n",
                       err, strerror(err));
@@ -391,7 +371,7 @@ struct tevent_req *handle_child_send(TALLOC_CTX *mem_ctx,
     state->child_pid = -1;
     state->timeout_handler = NULL;
 
-    state->io = talloc(state, struct io);
+    state->io = talloc(state, struct child_io_fds);
     if (state->io == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "talloc failed.\n");
         ret = ENOMEM;

@@ -212,6 +212,14 @@ errno_t select_principal_from_keytab(TALLOC_CTX *mem_ctx,
             sss_krb5_princ_realm(krb_ctx, client_princ,
                                  &realm_name,
                                  &realm_len);
+            if (realm_len == 0) {
+                DEBUG(SSSDBG_CRIT_FAILURE, "sss_krb5_princ_realm failed.\n");
+                if (_principal) talloc_zfree(*_principal);
+                if (_primary) talloc_zfree(*_primary);
+                ret = EINVAL;
+                goto done;
+            }
+
             *_realm = talloc_asprintf(mem_ctx, "%.*s",
                                       realm_len, realm_name);
             if (!*_realm) {
@@ -247,82 +255,6 @@ done:
     return ret;
 }
 
-int sss_krb5_verify_keytab_ex(const char *principal, const char *keytab_name,
-                              krb5_context context, krb5_keytab keytab)
-{
-    bool found;
-    char *kt_principal;
-    krb5_error_code krberr;
-    krb5_kt_cursor cursor;
-    krb5_keytab_entry entry;
-
-    krberr = krb5_kt_start_seq_get(context, keytab, &cursor);
-    if (krberr) {
-        DEBUG(SSSDBG_FATAL_FAILURE,
-              "Cannot read keytab [%s].\n", KEYTAB_CLEAN_NAME);
-
-        sss_log(SSS_LOG_ERR, "Error reading keytab file [%s]: [%d][%s]. "
-                             "Unable to create GSSAPI-encrypted LDAP "
-                             "connection.",
-                             KEYTAB_CLEAN_NAME, krberr,
-                             sss_krb5_get_error_message(context, krberr));
-
-        return EIO;
-    }
-
-    found = false;
-    while((krb5_kt_next_entry(context, keytab, &entry, &cursor)) == 0){
-        krberr = krb5_unparse_name(context, entry.principal, &kt_principal);
-        if (krberr) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "Could not parse keytab entry\n");
-            sss_log(SSS_LOG_ERR, "Could not parse keytab entry\n");
-            return EIO;
-        }
-
-        if (strcmp(principal, kt_principal) == 0) {
-            found = true;
-        }
-        free(kt_principal);
-        krberr = sss_krb5_free_keytab_entry_contents(context, &entry);
-        if (krberr) {
-            /* This should never happen. The API docs for this function
-             * specify only success for this function
-             */
-            DEBUG(SSSDBG_CRIT_FAILURE,"Could not free keytab entry contents\n");
-            /* This is non-fatal, so we'll continue here */
-        }
-
-        if (found) {
-            break;
-        }
-    }
-
-    krberr = krb5_kt_end_seq_get(context, keytab, &cursor);
-    if (krberr) {
-        DEBUG(SSSDBG_FATAL_FAILURE, "Could not close keytab.\n");
-        sss_log(SSS_LOG_ERR, "Could not close keytab file [%s].",
-                             KEYTAB_CLEAN_NAME);
-        return EIO;
-    }
-
-    if (!found) {
-        DEBUG(SSSDBG_FATAL_FAILURE,
-              "Principal [%s] not found in keytab [%s]\n",
-               principal,
-               KEYTAB_CLEAN_NAME);
-        sss_log(SSS_LOG_ERR, "Error processing keytab file [%s]: "
-                             "Principal [%s] was not found. "
-                             "Unable to create GSSAPI-encrypted LDAP connection.",
-                             KEYTAB_CLEAN_NAME, principal);
-
-        return EFAULT;
-    }
-
-    return EOK;
-}
-
-
 enum matching_mode {MODE_NORMAL, MODE_PREFIX, MODE_POSTFIX};
 /**
  * We only have primary and instances stored separately, we need to
@@ -355,6 +287,10 @@ static bool match_principal(krb5_context ctx,
     bool ret = false;
 
     sss_krb5_princ_realm(ctx, principal, &realm_name, &realm_len);
+    if (realm_len == 0) {
+        DEBUG(SSSDBG_MINOR_FAILURE, "sss_krb5_princ_realm failed.\n");
+        return false;
+    }
 
     tmp_ctx = talloc_new(NULL);
     if (!tmp_ctx) {
@@ -834,8 +770,15 @@ void sss_krb5_get_init_creds_opt_set_canonicalize(krb5_get_init_creds_opt *opts,
 void sss_krb5_princ_realm(krb5_context context, krb5_const_principal princ,
                           const char **realm, int *len)
 {
-    *realm = krb5_principal_get_realm(context, princ);
-    *len = strlen(*realm);
+    const char *realm_str = krb5_principal_get_realm(context, princ);
+
+    if (realm_str != NULL) {
+        *realm = realm_str;
+        *len = strlen(realm_str);
+    } else {
+        *realm = NULL;
+        *len = 0;
+    }
 }
 #else
 void sss_krb5_princ_realm(krb5_context context, krb5_const_principal princ,
@@ -1085,4 +1028,44 @@ done:
 #else
     return NULL;
 #endif /* HAVE_KRB5_CC_COLLECTION */
+}
+
+krb5_error_code sss_krb5_kt_have_content(krb5_context context,
+                                         krb5_keytab keytab)
+{
+#ifdef HAVE_KRB5_KT_HAVE_CONTENT
+    return krb5_kt_have_content(context, keytab);
+#else
+    krb5_keytab_entry entry;
+    krb5_kt_cursor cursor;
+    krb5_error_code kerr;
+    krb5_error_code kerr_end;
+
+    kerr = krb5_kt_start_seq_get(context, keytab, &cursor);
+    if (kerr != 0) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "krb5_kt_start_seq_get failed, assuming no entries.\n");
+        return KRB5_KT_NOTFOUND;
+    }
+
+    kerr = krb5_kt_next_entry(context, keytab, &entry, &cursor);
+    kerr_end = krb5_kt_end_seq_get(context, keytab, &cursor);
+    if (kerr != 0) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "krb5_kt_next_entry failed, assuming no entries.\n");
+        return KRB5_KT_NOTFOUND;
+    }
+    kerr = krb5_free_keytab_entry_contents(context, &entry);
+
+    if (kerr_end != 0) {
+        DEBUG(SSSDBG_TRACE_FUNC,
+              "krb5_kt_end_seq_get failed, ignored.\n");
+    }
+    if (kerr != 0) {
+        DEBUG(SSSDBG_TRACE_FUNC,
+              "krb5_free_keytab_entry_contents failed, ignored.\n");
+    }
+
+    return 0;
+#endif
 }

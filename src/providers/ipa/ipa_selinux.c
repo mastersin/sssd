@@ -24,6 +24,7 @@
 #include <security/pam_modules.h>
 
 #include "db/sysdb_selinux.h"
+#include "util/child_common.h"
 #include "util/sss_selinux.h"
 #include "providers/ldap/sdap_async.h"
 #include "providers/ipa/ipa_common.h"
@@ -37,7 +38,22 @@
 #include "providers/ipa/ipa_subdomains.h"
 
 #if defined HAVE_SELINUX && defined HAVE_SELINUX_LOGIN_DIR
+
+#ifndef SELINUX_CHILD_DIR
+#ifndef SSSD_LIBEXEC_PATH
+#error "SSSD_LIBEXEC_PATH not defined"
+#endif  /* SSSD_LIBEXEC_PATH */
+
+#define SELINUX_CHILD_DIR SSSD_LIBEXEC_PATH
+#endif /* SELINUX_CHILD_DIR */
+
+#define SELINUX_CHILD SELINUX_CHILD_DIR"/selinux_child"
+#define SELINUX_CHILD_LOG_FILE "selinux_child"
+
 #include <selinux/selinux.h>
+
+/* fd used by the selinux_child process for logging */
+int selinux_child_debug_fd = -1;
 
 static struct tevent_req *
 ipa_get_selinux_send(TALLOC_CTX *mem_ctx,
@@ -274,12 +290,27 @@ struct map_order_ctx {
 
 static errno_t init_map_order_ctx(TALLOC_CTX *mem_ctx, const char *map_order,
                                   struct map_order_ctx **_mo_ctx);
-static errno_t choose_best_seuser(struct sysdb_attrs **usermaps,
+
+struct selinux_child_input {
+    const char *seuser;
+    const char *mls_range;
+    const char *username;
+};
+
+static errno_t choose_best_seuser(TALLOC_CTX *mem_ctx,
+                                  struct sysdb_attrs **usermaps,
                                   struct pam_data *pd,
                                   struct sss_domain_info *user_domain,
                                   struct map_order_ctx *mo_ctx,
-                                  const char *default_user);
+                                  const char *default_user,
+                                  struct selinux_child_input **_sci);
 
+static struct tevent_req *selinux_child_send(TALLOC_CTX *mem_ctx,
+                                             struct tevent_context *ev,
+                                             struct selinux_child_input *sci);
+static errno_t selinux_child_recv(struct tevent_req *req);
+
+static void ipa_selinux_child_done(struct tevent_req *child_req);
 
 static void ipa_selinux_handler_done(struct tevent_req *req)
 {
@@ -299,6 +330,8 @@ static void ipa_selinux_handler_done(struct tevent_req *req)
     struct sysdb_attrs **hbac_rules = 0;
     struct sysdb_attrs **best_match_maps;
     struct map_order_ctx *map_order_ctx;
+    struct selinux_child_input *sci;
+    struct tevent_req *child_req;
 
     ret = ipa_get_selinux_recv(req, breq, &map_count, &maps,
                                &hbac_count, &hbac_rules,
@@ -360,21 +393,25 @@ static void ipa_selinux_handler_done(struct tevent_req *req)
         goto fail;
     }
 
-    ret = choose_best_seuser(best_match_maps, pd, op_ctx->user_domain,
-                             map_order_ctx, default_user);
+    ret = choose_best_seuser(breq,
+                             best_match_maps, pd, op_ctx->user_domain,
+                             map_order_ctx, default_user, &sci);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Failed to evaluate ordered SELinux users array.\n");
         goto fail;
     }
 
-    /* If we got here in online mode, set last_update to current time */
-    if (!be_is_offline(be_ctx)) {
-        op_ctx->selinux_ctx->last_update = time(NULL);
+    /* Update the SELinux context in a privileged child as the back end is
+     * running unprivileged
+     */
+    child_req = selinux_child_send(breq, be_ctx->ev, sci);
+    if (child_req == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "selinux_child_send() failed\n");
+        ret = ENOMEM;
+        goto fail;
     }
-
-    pd->pam_status = PAM_SUCCESS;
-    be_req_terminate(breq, DP_ERR_OK, EOK, "Success");
+    tevent_req_set_callback(child_req, ipa_selinux_child_done, op_ctx);
     return;
 
 fail:
@@ -389,6 +426,35 @@ fail:
     } else {
         be_req_terminate(breq, DP_ERR_FATAL, ret, NULL);
     }
+}
+
+static void ipa_selinux_child_done(struct tevent_req *child_req)
+{
+    errno_t ret;
+    struct ipa_selinux_op_ctx *op_ctx;
+    struct be_req *breq;
+    struct pam_data *pd;
+    struct be_ctx *be_ctx;
+
+    op_ctx = tevent_req_callback_data(child_req, struct ipa_selinux_op_ctx);
+    breq = op_ctx->be_req;
+    pd = talloc_get_type(be_req_get_data(breq), struct pam_data);
+    be_ctx = be_req_get_be_ctx(breq);
+
+    ret = selinux_child_recv(child_req);
+    talloc_free(child_req);
+    if (ret != EOK) {
+        be_req_terminate(breq, DP_ERR_FATAL, ret, NULL);
+        return;
+    }
+
+    /* If we got here in online mode, set last_update to current time */
+    if (!be_is_offline(be_ctx)) {
+        op_ctx->selinux_ctx->last_update = time(NULL);
+    }
+
+    pd->pam_status = PAM_SUCCESS;
+    be_req_terminate(breq, DP_ERR_OK, EOK, "Success");
 }
 
 static errno_t
@@ -652,24 +718,28 @@ done:
     return ret;
 }
 
-static errno_t write_selinux_login_file(const char *orig_name,
-                                        struct sss_domain_info *dom,
-                                        char *string);
-static errno_t remove_selinux_login_file(const char *username);
+static errno_t selinux_child_setup(TALLOC_CTX *mem_ctx,
+                                   const char *orig_name,
+                                   struct sss_domain_info *dom,
+                                   const char *seuser_mls_string,
+                                   struct selinux_child_input **_sci);
 
 /* Choose best selinux user based on given order and write
  * the user to selinux login file. */
-static errno_t choose_best_seuser(struct sysdb_attrs **usermaps,
+static errno_t choose_best_seuser(TALLOC_CTX *mem_ctx,
+                                  struct sysdb_attrs **usermaps,
                                   struct pam_data *pd,
                                   struct sss_domain_info *user_domain,
                                   struct map_order_ctx *mo_ctx,
-                                  const char *default_user)
+                                  const char *default_user,
+                                  struct selinux_child_input **_sci)
 {
     TALLOC_CTX *tmp_ctx;
-    char *file_content = NULL;
+    char *seuser_mls_str = NULL;
     const char *tmp_str;
-    errno_t ret, err;
+    errno_t ret;
     int i, j;
+    struct selinux_child_input *sci;
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
@@ -679,8 +749,8 @@ static errno_t choose_best_seuser(struct sysdb_attrs **usermaps,
 
     /* If no maps match, we'll use the default SELinux user from the
      * config */
-    file_content = talloc_strdup(tmp_ctx, default_user);
-    if (file_content == NULL) {
+    seuser_mls_str = talloc_strdup(tmp_ctx, default_user);
+    if (seuser_mls_str == NULL) {
         ret = ENOMEM;
         goto done;
     }
@@ -702,12 +772,12 @@ static errno_t choose_best_seuser(struct sysdb_attrs **usermaps,
             tmp_str = sss_selinux_map_get_seuser(usermaps[j]);
 
             if (tmp_str && !strcasecmp(tmp_str, mo_ctx->order_array[i])) {
-                /* If file_content contained something, overwrite it.
+                /* If seuser_mls_str contained something, overwrite it.
                  * This record has higher priority.
                  */
-                talloc_zfree(file_content);
-                file_content = talloc_strdup(tmp_ctx, tmp_str);
-                if (file_content == NULL) {
+                talloc_zfree(seuser_mls_str);
+                seuser_mls_str = talloc_strdup(tmp_ctx, tmp_str);
+                if (seuser_mls_str == NULL) {
                     ret = ENOMEM;
                     goto done;
                 }
@@ -716,42 +786,58 @@ static errno_t choose_best_seuser(struct sysdb_attrs **usermaps,
         }
     }
 
-    ret = write_selinux_login_file(pd->user, user_domain, file_content);
-done:
-    if (!file_content) {
-        err = remove_selinux_login_file(pd->user);
-        /* Don't overwrite original error condition if there was one */
-        if (ret == EOK) ret = err;
+    ret = selinux_child_setup(tmp_ctx, pd->user, user_domain, seuser_mls_str, &sci);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Cannot set up child input buffer");
+        goto done;
     }
+
+    *_sci = talloc_steal(mem_ctx, sci);
+    ret = EOK;
+done:
     talloc_free(tmp_ctx);
     return ret;
 }
 
-static errno_t write_selinux_login_file(const char *orig_name,
-                                        struct sss_domain_info *dom,
-                                        char *string)
+static errno_t
+selinux_child_setup(TALLOC_CTX *mem_ctx,
+                    const char *orig_name,
+                    struct sss_domain_info *dom,
+                    const char *seuser_mls_string,
+                    struct selinux_child_input **_sci)
 {
-    char *path = NULL;
-    char *tmp_path = NULL;
-    ssize_t written;
-    size_t len;
-    int fd = -1;
-    mode_t oldmask;
+    errno_t ret;
+    char *seuser;
+    char *mls_range;
+    char *ptr;
+    char *username;
+    char *username_final;
+    char *domain_name = NULL;
     TALLOC_CTX *tmp_ctx;
-    char *full_string = NULL;
-    int enforce;
-    errno_t ret = EOK;
-    const char *username;
-
-    len = strlen(string);
-    if (len == 0) {
-        return EINVAL;
-    }
+    struct selinux_child_input *sci;
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_new() failed\n");
         return ENOMEM;
+    }
+
+    /* Split seuser and mls_range */
+    seuser = talloc_strdup(tmp_ctx, seuser_mls_string);
+    if (seuser == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ptr = seuser;
+    while (*ptr != ':' && *ptr != '\0') {
+        ptr++;
+    }
+    if (*ptr == '\0') {
+        /* No mls_range specified */
+        mls_range = NULL;
+    } else {
+        *ptr = '\0'; /* split */
+        mls_range = ptr + 1;
     }
 
     /* pam_selinux needs the username in the same format getpwnam() would
@@ -763,112 +849,323 @@ static errno_t write_selinux_login_file(const char *orig_name,
         goto done;
     }
 
-    path = selogin_path(tmp_ctx, username);
-    if (path == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
-
-    tmp_path = talloc_asprintf(tmp_ctx, "%sXXXXXX", path);
-    if (tmp_path == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
-
-    oldmask = umask(022);
-    fd = mkstemp(tmp_path);
-    ret = errno;
-    umask(oldmask);
-    if (fd < 0) {
-        if (ret == ENOENT) {
-            /* if selinux is disabled and selogin dir does not exist,
-             * just ignore the error */
-            if (selinux_getenforcemode(&enforce) == 0 && enforce == -1) {
-                ret = EOK;
+    if (dom->fqnames) {
+        ret = sss_parse_name(tmp_ctx, dom->names, username, &domain_name,
+                             NULL);
+        if (ret == EOK && domain_name != NULL) {
+            /* username is already a fully qualified name */
+            username_final = username;
+        } else if ((ret == EOK && domain_name == NULL)
+                   || ret == ERR_REGEX_NOMATCH) {
+            username_final = talloc_asprintf(tmp_ctx, dom->names->fq_fmt,
+                                             username, dom->name);
+            if (username_final == NULL) {
+                ret = ENOMEM;
                 goto done;
             }
-
-            /* continue if we can't get enforce mode or selinux is enabled */
+        } else {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "sss_parse_name failed: [%d] %s", ret, sss_strerror(ret));
+            goto done;
         }
-
-        DEBUG(SSSDBG_OP_FAILURE, "unable to create temp file [%s] "
-              "for SELinux data [%d]: %s\n", tmp_path, ret, strerror(ret));
-        goto done;
+    } else {
+        username_final = username;
     }
 
-    full_string = talloc_asprintf(tmp_ctx, "%s:%s", ALL_SERVICES, string);
-    if (full_string == NULL) {
+    sci = talloc(tmp_ctx, struct selinux_child_input);
+    if (sci == NULL) {
         ret = ENOMEM;
         goto done;
     }
 
-    len = strlen(full_string);
-
-    errno = 0;
-    written = sss_atomic_write_s(fd, full_string, len);
-    if (written == -1) {
-        ret = errno;
-        DEBUG(SSSDBG_OP_FAILURE, "writing to SELinux data file %s"
-                                  "failed [%d]: %s", tmp_path, ret,
-                                  strerror(ret));
+    sci->seuser = talloc_strdup(sci, seuser);
+    sci->mls_range = talloc_strdup(sci, mls_range);
+    sci->username = talloc_strdup(sci, username_final);
+    if (sci->seuser == NULL || sci->mls_range == NULL
+        || sci->username == NULL) {
+        ret = ENOMEM;
         goto done;
     }
 
-    if (written != len) {
-        DEBUG(SSSDBG_OP_FAILURE, "Expected to write %zd bytes, wrote %zu",
-                                  written, len);
-        ret = EIO;
-        goto done;
-    }
-
-    errno = 0;
-    if (rename(tmp_path, path) < 0) {
-        ret = errno;
-    } else {
-        ret = EOK;
-    }
-    close(fd);
-    fd = -1;
-
+    *_sci = talloc_steal(mem_ctx, sci);
+    ret = EOK;
 done:
-    if (fd != -1) {
-        close(fd);
-        if (unlink(tmp_path) < 0) {
-            DEBUG(SSSDBG_MINOR_FAILURE, "Could not remove file [%s]",
-                                         tmp_path);
-        }
-    }
-
     talloc_free(tmp_ctx);
     return ret;
 }
 
-static errno_t remove_selinux_login_file(const char *username)
+struct selinux_child_state {
+    struct selinux_child_input *sci;
+    struct tevent_context *ev;
+    struct io_buffer *buf;
+    struct child_io_fds *io;
+};
+
+static errno_t selinux_child_init(void);
+static errno_t selinux_child_create_buffer(struct selinux_child_state *state);
+static errno_t selinux_fork_child(struct selinux_child_state *state);
+static void selinux_child_step(struct tevent_req *subreq);
+static void selinux_child_done(struct tevent_req *subreq);
+static errno_t selinux_child_parse_response(uint8_t *buf, ssize_t len,
+                                            uint32_t *_child_result);
+
+static struct tevent_req *selinux_child_send(TALLOC_CTX *mem_ctx,
+                                             struct tevent_context *ev,
+                                             struct selinux_child_input *sci)
 {
-    char *path;
+    struct tevent_req *req;
+    struct tevent_req *subreq;
+    struct selinux_child_state *state;
     errno_t ret;
 
-    path = selogin_path(NULL, username);
-    if (!path) return ENOMEM;
-
-    errno = 0;
-    ret = unlink(path);
-    if (ret < 0) {
-        ret = errno;
-        if (ret == ENOENT) {
-            /* Just return success if the file was not there */
-            ret = EOK;
-        } else {
-            DEBUG(SSSDBG_OP_FAILURE,
-                  "Could not remove login file %s [%d]: %s\n",
-                   path, ret, strerror(ret));
-        }
+    req = tevent_req_create(mem_ctx, &state, struct selinux_child_state);
+    if (req == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "tevent_req_create() failed\n");
+        return NULL;
     }
 
-    talloc_free(path);
-    return ret;
+    state->sci = sci;
+    state->ev = ev;
+    state->io = talloc(state, struct child_io_fds);
+    state->buf = talloc(state, struct io_buffer);
+    if (state->io == NULL || state->buf == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc failed.\n");
+        ret = ENOMEM;
+        goto immediately;
+    }
+
+    state->io->write_to_child_fd = -1;
+    state->io->read_from_child_fd = -1;
+    talloc_set_destructor((void *) state->io, child_io_destructor);
+
+    ret = selinux_child_init();
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Failed to init the child\n");
+        goto immediately;
+    }
+
+    ret = selinux_child_create_buffer(state);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Failed to create the send buffer\n");
+        ret = ENOMEM;
+        goto immediately;
+    }
+
+    ret = selinux_fork_child(state);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "Failed to fork the child\n");
+        goto immediately;
+    }
+
+    subreq = write_pipe_send(state, ev, state->buf->data, state->buf->size,
+                             state->io->write_to_child_fd);
+    if (subreq == NULL) {
+        ret = ENOMEM;
+        goto immediately;
+    }
+    tevent_req_set_callback(subreq, selinux_child_step, req);
+
+    ret = EOK;
+immediately:
+    if (ret != EOK) {
+        tevent_req_error(req, ret);
+        tevent_req_post(req, ev);
+    }
+    return req;
 }
 
+static errno_t selinux_child_init(void)
+{
+    return child_debug_init(SELINUX_CHILD_LOG_FILE, &selinux_child_debug_fd);
+}
+
+static errno_t selinux_child_create_buffer(struct selinux_child_state *state)
+{
+    size_t rp;
+    size_t seuser_len;
+    size_t mls_range_len;
+    size_t username_len;
+
+    seuser_len = strlen(state->sci->seuser);
+    mls_range_len = strlen(state->sci->mls_range);
+    username_len = strlen(state->sci->username);
+
+    state->buf->size = 3 * sizeof(uint32_t);
+    state->buf->size += seuser_len + mls_range_len + username_len;
+
+    DEBUG(SSSDBG_TRACE_ALL, "buffer size: %zu\n", state->buf->size);
+
+    state->buf->data = talloc_size(state->buf, state->buf->size);
+    if (state->buf->data == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_size failed.\n");
+        return ENOMEM;
+    }
+
+    rp = 0;
+
+    /* seuser */
+    SAFEALIGN_SET_UINT32(&state->buf->data[rp], seuser_len, &rp);
+    safealign_memcpy(&state->buf->data[rp], state->sci->seuser,
+                     seuser_len, &rp);
+
+    /* mls_range */
+    SAFEALIGN_SET_UINT32(&state->buf->data[rp], mls_range_len, &rp);
+    safealign_memcpy(&state->buf->data[rp], state->sci->mls_range,
+                     mls_range_len, &rp);
+
+    /* username */
+    SAFEALIGN_SET_UINT32(&state->buf->data[rp], username_len, &rp);
+    safealign_memcpy(&state->buf->data[rp], state->sci->username,
+                     username_len, &rp);
+
+    return EOK;
+}
+
+static errno_t selinux_fork_child(struct selinux_child_state *state)
+{
+    int pipefd_to_child[2];
+    int pipefd_from_child[2];
+    pid_t pid;
+    errno_t ret;
+
+    ret = pipe(pipefd_from_child);
+    if (ret == -1) {
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "pipe failed [%d][%s].\n", errno, sss_strerror(errno));
+        return ret;
+    }
+
+    ret = pipe(pipefd_to_child);
+    if (ret == -1) {
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "pipe failed [%d][%s].\n", errno, sss_strerror(errno));
+        return ret;
+    }
+
+    pid = fork();
+
+    if (pid == 0) { /* child */
+        ret = exec_child(state,
+                         pipefd_to_child, pipefd_from_child,
+                         SELINUX_CHILD, selinux_child_debug_fd,
+                         NULL);
+        DEBUG(SSSDBG_CRIT_FAILURE, "Could not exec selinux_child: [%d][%s].\n",
+              ret, sss_strerror(ret));
+        return ret;
+    } else if (pid > 0) { /* parent */
+        state->io->read_from_child_fd = pipefd_from_child[0];
+        close(pipefd_from_child[1]);
+        state->io->write_to_child_fd = pipefd_to_child[1];
+        close(pipefd_to_child[0]);
+        fd_nonblocking(state->io->read_from_child_fd);
+        fd_nonblocking(state->io->write_to_child_fd);
+
+        ret = child_handler_setup(state->ev, pid, NULL, NULL, NULL);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "Could not set up child signal handler\n");
+            return ret;
+        }
+    } else { /* error */
+        ret = errno;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "fork failed [%d][%s].\n", errno, sss_strerror(errno));
+        return ret;
+    }
+
+    return EOK;
+}
+
+static void selinux_child_step(struct tevent_req *subreq)
+{
+    struct tevent_req *req;
+    errno_t ret;
+    struct selinux_child_state *state;
+
+
+    req = tevent_req_callback_data(subreq, struct tevent_req);
+    state = tevent_req_data(req, struct selinux_child_state);
+
+    ret = write_pipe_recv(subreq);
+    talloc_zfree(subreq);
+    if (ret != EOK) {
+        tevent_req_error(req, ret);
+        return;
+    }
+
+    close(state->io->write_to_child_fd);
+    state->io->write_to_child_fd = -1;
+
+    subreq = read_pipe_send(state, state->ev, state->io->read_from_child_fd);
+    if (subreq == NULL) {
+        tevent_req_error(req, ENOMEM);
+        return;
+    }
+    tevent_req_set_callback(subreq, selinux_child_done, req);
+}
+
+static void selinux_child_done(struct tevent_req *subreq)
+{
+    struct tevent_req *req;
+    struct selinux_child_state *state;
+    uint32_t child_result;
+    errno_t ret;
+    ssize_t len;
+    uint8_t *buf;
+
+    req = tevent_req_callback_data(subreq, struct tevent_req);
+    state = tevent_req_data(req, struct selinux_child_state);
+
+    ret = read_pipe_recv(subreq, state, &buf, &len);
+    talloc_zfree(subreq);
+    if (ret != EOK) {
+        tevent_req_error(req, ret);
+        return;
+    }
+
+    close(state->io->read_from_child_fd);
+    state->io->read_from_child_fd = -1;
+
+    ret = selinux_child_parse_response(buf, len, &child_result);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "selinux_child_parse_response failed: [%d][%s]\n",
+              ret, strerror(ret));
+        tevent_req_error(req, ret);
+        return;
+    } else if (child_result != 0){
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Error in selinux_child: [%d][%s]\n",
+              child_result, strerror(child_result));
+        tevent_req_error(req, ERR_SELINUX_CONTEXT);
+        return;
+    }
+
+    tevent_req_done(req);
+    return;
+}
+
+static errno_t selinux_child_parse_response(uint8_t *buf,
+                                            ssize_t len,
+                                            uint32_t *_child_result)
+{
+    size_t p = 0;
+    uint32_t child_result;
+
+    /* semanage retval */
+    SAFEALIGN_COPY_UINT32_CHECK(&child_result, buf + p, len, &p);
+
+    *_child_result = child_result;
+    return EOK;
+}
+
+static errno_t selinux_child_recv(struct tevent_req *req)
+{
+    TEVENT_REQ_RETURN_ON_ERROR(req);
+    return EOK;
+}
 
 /* A more generic request to gather all SELinux and HBAC rules. Updates
  * cache if necessary

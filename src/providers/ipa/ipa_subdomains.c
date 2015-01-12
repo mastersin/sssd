@@ -80,7 +80,16 @@ struct ipa_subdomains_ctx {
     struct tevent_timer *timer_event;
     bool configured_explicit;
     time_t disabled_until;
+    bool view_read_at_init;
 };
+
+static void ipa_subdomains_done(struct ipa_subdomains_ctx *sd_ctx,
+                                struct be_req *req, int dp_err,
+                                int error, const char *errstr)
+{
+    sd_ctx->view_read_at_init = true;
+    return be_req_terminate(req, dp_err, error, errstr);
+}
 
 struct be_ctx *ipa_get_subdomains_be_ctx(struct be_ctx *be_ctx)
 {
@@ -109,6 +118,7 @@ ipa_ad_ctx_new(struct be_ctx *be_ctx,
     char *ad_domain;
     struct sdap_domain *sdom;
     errno_t ret;
+    const char *extra_attrs;
 
     ad_options = ad_create_default_options(id_ctx, id_ctx->server_mode->realm,
                                            id_ctx->server_mode->hostname);
@@ -133,6 +143,36 @@ ipa_ad_ctx_new(struct be_ctx *be_ctx,
         DEBUG(SSSDBG_OP_FAILURE, "Cannot set AD realm\n");
         talloc_free(ad_options);
         return ret;
+    }
+
+    extra_attrs = dp_opt_get_string(id_ctx->sdap_id_ctx->opts->basic,
+                            SDAP_USER_EXTRA_ATTRS);
+    if (extra_attrs != NULL) {
+        DEBUG(SSSDBG_TRACE_ALL,
+              "Setting extra attrs for subdomain [%s] to [%s].\n", ad_domain,
+                                                                   extra_attrs);
+
+        ret = dp_opt_set_string(ad_options->id->basic, SDAP_USER_EXTRA_ATTRS,
+                                extra_attrs);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "dp_opt_get_string failed.\n");
+            talloc_free(ad_options);
+            return ret;
+        }
+
+        ret = sdap_extend_map_with_list(ad_options->id, ad_options->id,
+                                        SDAP_USER_EXTRA_ATTRS,
+                                        ad_options->id->user_map,
+                                        SDAP_OPTS_USER,
+                                        &ad_options->id->user_map,
+                                        &ad_options->id->user_map_cnt);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sdap_extend_map_with_list failed.\n");
+            talloc_free(ad_options);
+            return ret;
+        }
+    } else {
+        DEBUG(SSSDBG_TRACE_ALL, "No extra attrs set.\n");
     }
 
     gc_service_name = talloc_asprintf(ad_options, "%s%s", "gc_", subdom->name);
@@ -280,6 +320,14 @@ static errno_t
 ipa_subdom_reinit(struct ipa_subdomains_ctx *ctx)
 {
     errno_t ret;
+
+    ret = sss_write_krb5_conf_snippet(
+                              dp_opt_get_string(ctx->id_ctx->ipa_options->basic,
+                                                IPA_KRB5_CONFD_PATH));
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE, "sss_write_krb5_conf_snippet failed.\n");
+        /* Just continue */
+    }
 
     ret = sysdb_update_subdomains(ctx->be_ctx->domain);
     if (ret != EOK) {
@@ -864,7 +912,7 @@ done:
     if (ret == EOK) {
         dp_error = DP_ERR_OK;
     }
-    be_req_terminate(be_req, dp_error, ret, NULL);
+    ipa_subdomains_done(ctx, be_req, dp_error, ret, NULL);
 }
 
 static void ipa_subdomains_get_conn_done(struct tevent_req *req)
@@ -899,7 +947,7 @@ static void ipa_subdomains_get_conn_done(struct tevent_req *req)
     return;
 
 fail:
-    be_req_terminate(ctx->be_req, dp_error, ret, NULL);
+    ipa_subdomains_done(ctx->sd_ctx, ctx->be_req, dp_error, ret, NULL);
 }
 
 static errno_t
@@ -991,6 +1039,7 @@ static errno_t ipa_get_view_name(struct ipa_subdomains_req_ctx *ctx)
 static void ipa_get_view_name_done(struct tevent_req *req)
 {
     int ret;
+    int sret;
     struct ipa_subdomains_req_ctx *ctx;
     size_t reply_count;
     struct sdap_deref_attrs **reply = NULL;
@@ -1002,7 +1051,19 @@ static void ipa_get_view_name_done(struct tevent_req *req)
     ret = sdap_deref_search_with_filter_recv(req, ctx, &reply_count, &reply);
     talloc_zfree(req);
     if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "get_view_name request failed.\n");
+        if (ret == EOPNOTSUPP) {
+            DEBUG(SSSDBG_TRACE_FUNC, "get_view_name request failed, looks " \
+                                     "like server does not support views.\n");
+            ret = ipa_check_master(ctx);
+            if (ret == EAGAIN) {
+                return;
+            } else if (ret != EOK) {
+                goto done;
+            }
+
+        } else {
+            DEBUG(SSSDBG_OP_FAILURE, "get_view_name request failed.\n");
+        }
         goto done;
     }
 
@@ -1038,26 +1099,110 @@ static void ipa_get_view_name_done(struct tevent_req *req)
         view_name = SYSDB_DEFAULT_VIEW_NAME;
     }
 
+    DEBUG(SSSDBG_TRACE_ALL, "read_at_init [%s] current view  [%s].\n",
+                             ctx->sd_ctx->view_read_at_init ? "true" : "false",
+                             ctx->sd_ctx->id_ctx->view_name);
+
     if (ctx->sd_ctx->id_ctx->view_name != NULL
-            && strcmp(ctx->sd_ctx->id_ctx->view_name, view_name) != 0) {
+            && strcmp(ctx->sd_ctx->id_ctx->view_name, view_name) != 0
+            && ctx->sd_ctx->view_read_at_init) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "View name changed, this is currently not supported!\n");
+              "View name changed, this is not supported at runtime. " \
+              "Please restart SSSD to get the new view applied.\n");
     } else {
-        ret = sysdb_update_view_name(ctx->sd_ctx->be_ctx->domain->sysdb,
-                                     view_name);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "Cannot add/update view name to sysdb.\n");
-        } else {
-            if (ctx->sd_ctx->id_ctx->view_name == NULL) {
-                ctx->sd_ctx->id_ctx->view_name =
-                                              talloc_strdup(ctx->sd_ctx->id_ctx,
+        if (ctx->sd_ctx->id_ctx->view_name == NULL
+            || strcmp(ctx->sd_ctx->id_ctx->view_name, view_name) != 0) {
+            /* View name changed */
+
+            if (ctx->sd_ctx->id_ctx->view_name != NULL) {
+                ret = sysdb_transaction_start(
+                                            ctx->sd_ctx->be_ctx->domain->sysdb);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                          "sysdb_transaction_start failed.\n");
+                    goto done;
+                }
+
+                if (strcmp(ctx->sd_ctx->id_ctx->view_name,
+                           SYSDB_DEFAULT_VIEW_NAME) != 0) {
+                    /* Old view was not the default view, delete view tree */
+                    ret = sysdb_delete_view_tree(
+                                             ctx->sd_ctx->be_ctx->domain->sysdb,
+                                             ctx->sd_ctx->id_ctx->view_name);
+                    if (ret != EOK) {
+                        DEBUG(SSSDBG_OP_FAILURE,
+                              "sysdb_delete_view_tree failed.\n");
+                        sret = sysdb_transaction_cancel(
+                                            ctx->sd_ctx->be_ctx->domain->sysdb);
+                        if (sret != EOK) {
+                            DEBUG(SSSDBG_OP_FAILURE,
+                                  "sysdb_transaction_cancel failed.\n");
+                            goto done;
+                        }
+                        goto done;
+                    }
+                }
+
+                ret = sysdb_invalidate_overrides(
+                                            ctx->sd_ctx->be_ctx->domain->sysdb);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                          "sysdb_invalidate_overrides failed.\n");
+                    sret = sysdb_transaction_cancel(
+                                            ctx->sd_ctx->be_ctx->domain->sysdb);
+                    if (sret != EOK) {
+                        DEBUG(SSSDBG_OP_FAILURE,
+                              "sysdb_transaction_cancel failed.\n");
+                        goto done;
+                    }
+                    goto done;
+                }
+
+                ret = sysdb_transaction_commit(
+                                            ctx->sd_ctx->be_ctx->domain->sysdb);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                                          "sysdb_transaction_commit failed.\n");
+                    goto done;
+                }
+
+                /* TODO: start referesh task */
+            }
+
+            ret = sysdb_update_view_name(ctx->sd_ctx->be_ctx->domain->sysdb,
+                                         view_name);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_CRIT_FAILURE,
+                      "Cannot add/update view name to sysdb.\n");
+            } else {
+                talloc_free(ctx->sd_ctx->id_ctx->view_name);
+                ctx->sd_ctx->id_ctx->view_name = talloc_strdup(
+                                                            ctx->sd_ctx->id_ctx,
                                                             view_name);
                 if (ctx->sd_ctx->id_ctx->view_name == NULL) {
                     DEBUG(SSSDBG_CRIT_FAILURE, "Cannot copy view name.\n");
                 }
             }
         }
+
+        if (!ctx->sd_ctx->view_read_at_init) {
+            /* refresh view data of all domains at startup */
+            ret = sysdb_master_domain_update(ctx->sd_ctx->be_ctx->domain);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE,
+                      "sysdb_master_domain_update failed.\n");
+                goto done;
+            }
+
+            ret = sysdb_update_subdomains(ctx->sd_ctx->be_ctx->domain);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE, "sysdb_update_subdomains failed.\n");
+                goto done;
+            }
+        }
+
+        ctx->sd_ctx->view_read_at_init = true;
+
     }
 
     ret = ipa_check_master(ctx);
@@ -1071,7 +1216,7 @@ done:
     if (ret == EOK) {
         dp_error = DP_ERR_OK;
     }
-    be_req_terminate(ctx->be_req, dp_error, ret, NULL);
+    ipa_subdomains_done(ctx->sd_ctx, ctx->be_req, dp_error, ret, NULL);
 }
 
 static void ipa_subdomains_handler_done(struct tevent_req *req)
@@ -1171,7 +1316,7 @@ done:
     if (ret == EOK) {
         dp_error = DP_ERR_OK;
     }
-    be_req_terminate(ctx->be_req, dp_error, ret, NULL);
+    ipa_subdomains_done(ctx->sd_ctx, ctx->be_req, dp_error, ret, NULL);
 }
 
 static errno_t ipa_check_master(struct ipa_subdomains_req_ctx *ctx)
@@ -1257,14 +1402,14 @@ done:
     if (ret == EOK) {
         dp_error = DP_ERR_OK;
     }
-    be_req_terminate(ctx->be_req, dp_error, ret, NULL);
+    ipa_subdomains_done(ctx->sd_ctx, ctx->be_req, dp_error, ret, NULL);
 }
 
 static void ipa_subdomains_handler_master_done(struct tevent_req *req)
 {
     errno_t ret;
     int dp_error = DP_ERR_FATAL;
-    size_t reply_count;
+    size_t reply_count = 0;
     struct sysdb_attrs **reply = NULL;
     struct ipa_subdomains_req_ctx *ctx;
 
@@ -1319,7 +1464,7 @@ done:
     if (ret == EOK) {
         dp_error = DP_ERR_OK;
     }
-    be_req_terminate(ctx->be_req, dp_error, ret, NULL);
+    ipa_subdomains_done(ctx->sd_ctx, ctx->be_req, dp_error, ret, NULL);
 }
 
 static void ipa_subdom_online_cb(void *pvt);
@@ -1454,12 +1599,12 @@ void ipa_subdomains_handler(struct be_req *be_req)
 
     if (ctx->disabled_until > now) {
         DEBUG(SSSDBG_TRACE_ALL, "Subdomain provider disabled.\n");
-        be_req_terminate(be_req, DP_ERR_OK, EOK, NULL);
+        ipa_subdomains_done(ctx, be_req, DP_ERR_OK, EOK, NULL);
         return;
     }
 
     if (ctx->last_refreshed > now - IPA_SUBDOMAIN_REFRESH_LIMIT) {
-        be_req_terminate(be_req, DP_ERR_OK, EOK, NULL);
+        ipa_subdomains_done(ctx, be_req, DP_ERR_OK, EOK, NULL);
         return;
     }
 

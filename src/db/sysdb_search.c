@@ -124,7 +124,8 @@ errno_t sysdb_getpwnam_with_views(TALLOC_CTX *mem_ctx,
      * the original object. */
     if (DOM_HAS_VIEWS(domain) && orig_obj->count == 1) {
         ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
-                          override_obj == NULL ? NULL : override_obj ->msgs[0]);
+                          override_obj == NULL ? NULL : override_obj->msgs[0],
+                          NULL);
         if (ret != EOK && ret != ENOENT) {
             DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
             goto done;
@@ -229,7 +230,8 @@ errno_t sysdb_getpwuid_with_views(TALLOC_CTX *mem_ctx,
      * the original object. */
     if (DOM_HAS_VIEWS(domain) && orig_obj->count == 1) {
         ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
-                           override_obj == NULL ? NULL : override_obj->msgs[0]);
+                           override_obj == NULL ? NULL : override_obj->msgs[0],
+                           NULL);
         if (ret != EOK && ret != ENOENT) {
             DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
             goto done;
@@ -314,7 +316,8 @@ int sysdb_enumpwent_with_views(TALLOC_CTX *mem_ctx,
 
     if (DOM_HAS_VIEWS(domain)) {
         for (c = 0; c < res->count; c++) {
-            ret = sysdb_add_overrides_to_object(domain, res->msgs[c], NULL);
+            ret = sysdb_add_overrides_to_object(domain, res->msgs[c], NULL,
+                                                NULL);
             /* enumeration assumes that the cache is up-to-date, hence we do not
              * need to handle ENOENT separately. */
             if (ret != EOK) {
@@ -426,7 +429,8 @@ int sysdb_getgrnam_with_views(TALLOC_CTX *mem_ctx,
         }
 
         ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
-                          override_obj == NULL ? NULL : override_obj ->msgs[0]);
+                          override_obj == NULL ? NULL : override_obj ->msgs[0],
+                          NULL);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
             goto done;
@@ -578,7 +582,8 @@ int sysdb_getgrgid_with_views(TALLOC_CTX *mem_ctx,
         }
 
         ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
-                          override_obj == NULL ? NULL : override_obj ->msgs[0]);
+                          override_obj == NULL ? NULL : override_obj ->msgs[0],
+                          NULL);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
             goto done;
@@ -734,7 +739,8 @@ int sysdb_enumgrent_with_views(TALLOC_CTX *mem_ctx,
 
     if (DOM_HAS_VIEWS(domain)) {
         for (c = 0; c < res->count; c++) {
-            ret = sysdb_add_overrides_to_object(domain, res->msgs[c], NULL);
+            ret = sysdb_add_overrides_to_object(domain, res->msgs[c], NULL,
+                                                NULL);
             /* enumeration assumes that the cache is up-to-date, hence we do not
              * need to handle ENOENT separately. */
             if (ret != EOK) {
@@ -956,7 +962,8 @@ int sysdb_initgroups_with_views(TALLOC_CTX *mem_ctx,
     if (DOM_HAS_VIEWS(domain)) {
         /* Skip user entry because it already has override values added */
         for (c = 1; c < res->count; c++) {
-            ret = sysdb_add_overrides_to_object(domain, res->msgs[c], NULL);
+            ret = sysdb_add_overrides_to_object(domain, res->msgs[c], NULL,
+                                                NULL);
             if (ret != EOK) {
                 DEBUG(SSSDBG_OP_FAILURE,
                       "sysdb_add_overrides_to_object failed.\n");
@@ -1037,11 +1044,11 @@ int sysdb_get_user_attr_with_views(TALLOC_CTX *mem_ctx,
     int ret;
     struct ldb_result *orig_obj = NULL;
     struct ldb_result *override_obj = NULL;
-    struct ldb_message_element *el = NULL;
     const char **attrs = NULL;
-    bool has_override_dn;
+    const char *mandatory_override_attrs[] = {SYSDB_OVERRIDE_DN,
+                                              SYSDB_OVERRIDE_OBJECT_DN,
+                                              NULL};
     TALLOC_CTX *tmp_ctx;
-    int count;
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
@@ -1049,35 +1056,15 @@ int sysdb_get_user_attr_with_views(TALLOC_CTX *mem_ctx,
         return ENOMEM;
     }
 
-    /* Assume that overrideDN is requested to simplify the code. If no view
-     * is applied it doesn't really matter. */
-    has_override_dn = true;
     attrs = attributes;
 
     /* If there are views we first have to search the overrides for matches */
     if (DOM_HAS_VIEWS(domain)) {
-        /* We need overrideDN for views, so append it if missing. */
-        has_override_dn = false;
-        for (count = 0; attributes[count] != NULL; count++) {
-            if (strcmp(attributes[count], SYSDB_OVERRIDE_DN) == 0) {
-                has_override_dn = true;
-                break;
-            }
-        }
-
-        if (!has_override_dn) {
-            /* Copy original attributes and add overrideDN. */
-            attrs = talloc_zero_array(tmp_ctx, const char *, count + 2);
-            if (attrs == NULL) {
-                ret = ENOMEM;
-                goto done;
-            }
-
-            for (count = 0; attributes[count] != NULL; count++) {
-                attrs[count] = attributes[count];
-            }
-
-            attrs[count] = SYSDB_OVERRIDE_DN;
+        ret = add_strings_lists(tmp_ctx, attributes, mandatory_override_attrs,
+                                false, discard_const(&attrs));
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "add_strings_lists failed.\n");
+            goto done;
         }
 
         ret = sysdb_search_user_override_attrs_by_name(tmp_ctx, domain, name,
@@ -1103,7 +1090,8 @@ int sysdb_get_user_attr_with_views(TALLOC_CTX *mem_ctx,
      * the original object. */
     if (DOM_HAS_VIEWS(domain) && orig_obj->count == 1) {
         ret = sysdb_add_overrides_to_object(domain, orig_obj->msgs[0],
-                          override_obj == NULL ? NULL : override_obj ->msgs[0]);
+                          override_obj == NULL ? NULL : override_obj ->msgs[0],
+                          attrs);
         if (ret != EOK && ret != ENOENT) {
             DEBUG(SSSDBG_OP_FAILURE, "sysdb_add_overrides_to_object failed.\n");
             return ret;
@@ -1119,17 +1107,6 @@ int sysdb_get_user_attr_with_views(TALLOC_CTX *mem_ctx,
             }
             goto done;
         }
-    }
-
-    /* Remove overrideDN if needed. */
-    if (!has_override_dn && orig_obj != NULL && orig_obj->count == 1) {
-        el = ldb_msg_find_element(orig_obj->msgs[0], SYSDB_OVERRIDE_DN);
-        if (el == NULL) {
-            ret = EINVAL;
-            goto done;
-        }
-
-        ldb_msg_remove_element(orig_obj->msgs[0], el);
     }
 
     *_res = talloc_steal(mem_ctx, orig_obj);

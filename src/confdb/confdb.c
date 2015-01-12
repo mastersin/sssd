@@ -297,7 +297,7 @@ done:
 int confdb_set_string(struct confdb_ctx *cdb,
                       const char *section,
                       const char *attribute,
-                      char *val)
+                      const char *val)
 {
     TALLOC_CTX *tmp_ctx;
     struct ldb_dn *dn;
@@ -1056,6 +1056,21 @@ static int confdb_get_domain_internal(struct confdb_ctx *cdb,
               "Invalid value for [%s]\n",
                CONFDB_DOMAIN_REFRESH_EXPIRED_INTERVAL);
         goto done;
+    }
+
+    /* detect and fix misconfiguration */
+    if (domain->refresh_expired_interval > entry_cache_timeout) {
+        DEBUG(SSSDBG_CONF_SETTINGS,
+              "refresh_expired_interval (%d) cannot be greater than "
+              "entry_cache_timeout (%u)\n",
+              domain->refresh_expired_interval, entry_cache_timeout);
+
+        domain->refresh_expired_interval = 0.75 * entry_cache_timeout;
+
+        DEBUG(SSSDBG_CONF_SETTINGS,
+              "refresh_expired_interval is being set to recommended value "
+              "entry_cache_timeout * 0.75 (%u).\n",
+              domain->refresh_expired_interval);
     }
 
     /* Set the PAM warning time, if specified. If not specified, pass on

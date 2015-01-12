@@ -319,7 +319,7 @@ struct write_pipe_state {
     int fd;
     uint8_t *buf;
     size_t len;
-    size_t written;
+    ssize_t written;
 };
 
 static void write_pipe_handler(struct tevent_context *ev,
@@ -384,7 +384,7 @@ static void write_pipe_handler(struct tevent_context *ev,
     }
 
     if (state->len != state->written) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Wrote %zu bytes, expected %zu\n",
+        DEBUG(SSSDBG_CRIT_FAILURE, "Wrote %zd bytes, expected %zu\n",
               state->written, state->len);
         tevent_req_error(req, EIO);
         return;
@@ -623,6 +623,7 @@ static void child_invoke_callback(struct tevent_context *ev,
 static errno_t prepare_child_argv(TALLOC_CTX *mem_ctx,
                                   int child_debug_fd,
                                   const char *binary,
+                                  const char *extra_argv[],
                                   char ***_argv)
 {
     /*
@@ -632,6 +633,7 @@ static errno_t prepare_child_argv(TALLOC_CTX *mem_ctx,
     uint_t argc = 5;
     char ** argv;
     errno_t ret = EINVAL;
+    size_t i;
 
     /* Save the current state in case an interrupt changes it */
     bool child_debug_to_file = debug_to_file;
@@ -641,6 +643,10 @@ static errno_t prepare_child_argv(TALLOC_CTX *mem_ctx,
 
     if (child_debug_to_file) argc++;
     if (child_debug_stderr) argc++;
+
+    if (extra_argv) {
+        for (i = 0; extra_argv[i]; i++) argc++;
+    }
 
     /*
      * program name, debug_level, debug_to_file, debug_timestamps,
@@ -653,6 +659,17 @@ static errno_t prepare_child_argv(TALLOC_CTX *mem_ctx,
     }
 
     argv[--argc] = NULL;
+
+    /* Add extra_attrs first */
+    if (extra_argv) {
+        for (i = 0; extra_argv[i]; i++) {
+            argv[--argc] = talloc_strdup(argv, extra_argv[i]);
+            if (argv[argc] == NULL) {
+                ret = ENOMEM;
+                goto fail;
+            }
+        }
+    }
 
     argv[--argc] = talloc_asprintf(argv, "--debug-level=%#.4x",
                               debug_level);
@@ -714,7 +731,8 @@ fail:
 
 errno_t exec_child(TALLOC_CTX *mem_ctx,
                    int *pipefd_to_child, int *pipefd_from_child,
-                   const char *binary, int debug_fd)
+                   const char *binary, int debug_fd,
+                   const char *extra_argv[])
 {
     int ret;
     errno_t err;
@@ -739,7 +757,8 @@ errno_t exec_child(TALLOC_CTX *mem_ctx,
     }
 
     ret = prepare_child_argv(mem_ctx, debug_fd,
-                             binary, &argv);
+                             binary, extra_argv,
+                             &argv);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "prepare_child_argv.\n");
         return ret;
@@ -771,4 +790,62 @@ void child_cleanup(int readfd, int writefd)
                   "close failed [%d][%s].\n", ret, strerror(ret));
         }
     }
+}
+
+int child_io_destructor(void *ptr)
+{
+    int ret;
+    struct child_io_fds *io = talloc_get_type(ptr, struct child_io_fds);
+    if (io == NULL) return EOK;
+
+    if (io->write_to_child_fd != -1) {
+        ret = close(io->write_to_child_fd);
+        io->write_to_child_fd = -1;
+        if (ret != EOK) {
+            ret = errno;
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "close failed [%d][%s].\n", ret, strerror(ret));
+        }
+    }
+
+    if (io->read_from_child_fd != -1) {
+        ret = close(io->read_from_child_fd);
+        io->read_from_child_fd = -1;
+        if (ret != EOK) {
+            ret = errno;
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "close failed [%d][%s].\n", ret, strerror(ret));
+        }
+    }
+
+    return EOK;
+}
+
+errno_t child_debug_init(const char *logfile, int *debug_fd)
+{
+    int ret;
+    FILE *debug_filep;
+
+    if (debug_fd == NULL) {
+        return EOK;
+    }
+
+    if (debug_to_file != 0 && *debug_fd == -1) {
+        ret = open_debug_file_ex(logfile, &debug_filep, false);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_FATAL_FAILURE, "Error setting up logging (%d) [%s]\n",
+                        ret, sss_strerror(ret));
+            return ret;
+        }
+
+        *debug_fd = fileno(debug_filep);
+        if (*debug_fd == -1) {
+            DEBUG(SSSDBG_FATAL_FAILURE,
+                  "fileno failed [%d][%s]\n", errno, strerror(errno));
+            ret = errno;
+            return ret;
+        }
+    }
+
+    return EOK;
 }

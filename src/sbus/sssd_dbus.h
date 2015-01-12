@@ -132,6 +132,7 @@ sbus_new_interface(TALLOC_CTX *mem_ctx,
 int sbus_new_server(TALLOC_CTX *mem_ctx,
                     struct tevent_context *ev,
                     const char *address,
+                    uid_t uid, gid_t gid,
                     bool use_symlink,
                     struct sbus_connection **server,
                     sbus_server_conn_init_fn init_fn, void *init_pvt_data);
@@ -207,6 +208,10 @@ int sbus_conn_send(struct sbus_connection *conn,
 
 void sbus_conn_send_reply(struct sbus_connection *conn,
                           DBusMessage *reply);
+
+/* Set up D-BUS access control. If there is a SSSD user, we must allow
+ * him to connect. root is always allowed */
+void sbus_allow_uid(struct sbus_connection *conn, uid_t *uid);
 
 /*
  * This structure is passed to all dbus method and property

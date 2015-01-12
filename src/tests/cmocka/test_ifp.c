@@ -209,6 +209,8 @@ void test_el_to_dict(void **state)
     dbus_message_iter_get_basic(&iter_dict, &attr_val);
     assert_string_equal(attr_val, "two");
     assert_false(dbus_message_iter_next(&iter_dict));
+
+    talloc_free(sr);
 }
 
 static void assert_string_list_equal(const char **s1,
@@ -233,6 +235,29 @@ static void attr_parse_test(const char *expected[], const char *input)
     assert_non_null(test_ctx);
 
     res = ifp_parse_attr_list(test_ctx, input);
+
+    if (expected) {
+        /* Positive test */
+        assert_non_null(res);
+        assert_string_list_equal(res, expected);
+    } else {
+        /* Negative test */
+        assert_null(res);
+    }
+
+    talloc_free(test_ctx);
+}
+
+static void attr_parse_test_ex(const char *expected[], const char *input,
+                               const char **defaults)
+{
+    const char **res;
+    TALLOC_CTX *test_ctx;
+
+    test_ctx = talloc_new(NULL);
+    assert_non_null(test_ctx);
+
+    res = parse_attr_list_ex(test_ctx, input, defaults);
 
     if (expected) {
         /* Positive test */
@@ -294,6 +319,33 @@ void test_attr_acl(void **state)
 
     /* Malformed list */
     attr_parse_test(NULL,  "missing_plus_or_minus");
+}
+
+void test_attr_acl_ex(void **state)
+{
+    /* Test defaults */
+    const char *exp_defaults[] = { "abc", "123", "xyz", NULL };
+    attr_parse_test_ex(exp_defaults, NULL, exp_defaults);
+
+    /* Test adding some attributes to the defaults */
+    const char *exp_add[] = { "telephoneNumber", "streetAddress",
+                              "abc", "123", "xyz",
+                              NULL };
+    attr_parse_test_ex(exp_add, "+telephoneNumber, +streetAddress",
+                       exp_defaults);
+
+    /* Test removing some attributes to the defaults */
+    const char *exp_rm[] = { "123", NULL };
+    attr_parse_test_ex(exp_rm, "-abc, -xyz", exp_defaults);
+
+    /* Test adding with empty defaults */
+    const char *exp_add_empty[] = { "telephoneNumber", "streetAddress",
+                                    NULL };
+    attr_parse_test_ex(exp_add_empty, "+telephoneNumber, +streetAddress", NULL);
+
+    /* Test removing with empty defaults */
+    const char *rm_all[] = { NULL };
+    attr_parse_test_ex(rm_all, "-telephoneNumber, -streetAddress", NULL);
 }
 
 void test_attr_allowed(void **state)
@@ -450,8 +502,10 @@ int main(int argc, const char *argv[])
         unit_test(ifp_test_req_create),
         unit_test(ifp_test_req_wrong_uid),
         unit_test(test_path_prefix),
-        unit_test(test_el_to_dict),
+        unit_test_setup_teardown(test_el_to_dict,
+                                 ifp_test_req_setup, ifp_test_req_teardown),
         unit_test(test_attr_acl),
+        unit_test(test_attr_acl_ex),
         unit_test(test_attr_allowed),
         unit_test(test_path_escape_unescape),
         unit_test_setup_teardown(test_reply_path,

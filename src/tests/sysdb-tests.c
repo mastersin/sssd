@@ -3474,6 +3474,58 @@ START_TEST (test_sysdb_memberof_user_cleanup)
 }
 END_TEST
 
+START_TEST (test_sysdb_set_get_bool)
+{
+    struct sysdb_test_ctx *test_ctx;
+    struct ldb_dn *dn, *ne_dn;
+    bool value;
+    int ret;
+    const char *attr_val = "BOOL_VALUE";
+
+    /* Setup */
+    ret = setup_sysdb_tests(&test_ctx);
+    if (ret != EOK) {
+        fail("Could not set up the test");
+        return;
+    }
+
+    dn = sysdb_domain_dn(test_ctx, test_ctx->domain);
+    fail_unless(dn != NULL);
+
+    /* attribute is not created yet */
+    ret = sysdb_get_bool(test_ctx->sysdb, dn, attr_val,
+                         &value);
+    fail_unless(ret == ENOENT,
+                "sysdb_get_bool returned %d:[%s], but ENOENT is expected",
+                ret, sss_strerror(ret));
+
+    /* add attribute */
+    ret = sysdb_set_bool(test_ctx->sysdb, dn, test_ctx->domain->name,
+                         attr_val, true);
+    fail_unless(ret == EOK);
+
+    /* successfully obtain attribute */
+    ret = sysdb_get_bool(test_ctx->sysdb, dn, attr_val,
+                         &value);
+    fail_unless(ret == EOK, "sysdb_get_bool failed %d:[%s]",
+                ret, sss_strerror(ret));
+    fail_unless(value == true);
+
+    /* use non-existing DN */
+    ne_dn = ldb_dn_new_fmt(test_ctx, test_ctx->sysdb->ldb, SYSDB_DOM_BASE,
+                        "non-existing domain");
+    fail_unless(ne_dn != NULL);
+    ret = sysdb_get_bool(test_ctx->sysdb, ne_dn, attr_val,
+                         &value);
+    fail_unless(ret == ENOENT,
+                "sysdb_get_bool returned %d:[%s], but ENOENT is expected",
+                ret, sss_strerror(ret));
+
+    /* free ctx */
+    talloc_free(test_ctx);
+}
+END_TEST
+
 START_TEST (test_sysdb_attrs_to_list)
 {
     struct sysdb_attrs *attrs_list[3];
@@ -4746,6 +4798,12 @@ START_TEST (test_sysdb_search_return_ENOENT)
     fail_if(ret != EOK, "Could not set up the test");
     check_leaks_push(test_ctx);
 
+    /* id mapping */
+    ret = sysdb_idmap_get_mappings(test_ctx, test_ctx->domain, &res);
+    fail_unless(ret == ENOENT, "sysdb_idmap_get_mappings error [%d][%s].",
+                ret, strerror(ret));
+    talloc_zfree(res);
+
     /* Search user */
     ret = sysdb_search_user_by_name(test_ctx, test_ctx->domain,
                                     "nonexisting_user", NULL, &msg);
@@ -4803,13 +4861,10 @@ START_TEST (test_sysdb_search_return_ENOENT)
     talloc_zfree(res);
 
     /* Search object */
-    /* TODO: Should return ENOENT */
     ret = sysdb_search_object_by_sid(test_ctx, test_ctx->domain,
                                      "S-5-4-3-2-1", NULL, &res);
-    fail_unless(ret == EOK, "sysdb_search_object_by_sid_str failed with "
-                             "[%d][%s].", ret, strerror(ret));
-    fail_unless(res->count == 0, "sysdb_search_object_by_sid_str should not "
-                                 "return anything.");
+    fail_unless(ret == ENOENT, "sysdb_search_object_by_sid failed with "
+                               "[%d][%s].", ret, strerror(ret));
     talloc_zfree(res);
 
     /* Search can return more results */
@@ -4901,10 +4956,9 @@ START_TEST(test_sysdb_has_enumerated)
     fail_if(ret != EOK, "Could not set up the test");
 
     ret = sysdb_has_enumerated(test_ctx->domain, &enumerated);
-    fail_if(ret != EOK, "Error [%d][%s] checking enumeration",
-                        ret, strerror(ret));
-
-    fail_if(enumerated, "Enumeration should default to false");
+    fail_if(ret != ENOENT,
+            "Error [%d][%s] checking enumeration ENOENT is expected",
+            ret, strerror(ret));
 
     ret = sysdb_set_enumerated(test_ctx->domain, true);
     fail_if(ret != EOK, "Error [%d][%s] setting enumeration",
@@ -5026,6 +5080,75 @@ START_TEST(test_sysdb_search_sid_str)
 }
 END_TEST
 
+START_TEST(test_sysdb_search_object_by_uuid)
+{
+    errno_t ret;
+    struct sysdb_test_ctx *test_ctx;
+    struct ldb_result *res;
+    struct sysdb_attrs *attrs = NULL;
+
+    /* Setup */
+    ret = setup_sysdb_tests(&test_ctx);
+    fail_if(ret != EOK, "Could not set up the test");
+
+    attrs = sysdb_new_attrs(test_ctx);
+    fail_unless(attrs != NULL, "sysdb_new_attrs failed");
+
+    ret = sysdb_attrs_add_string(attrs, SYSDB_UUID,
+                                 "11111111-2222-3333-4444-555555555555");
+    fail_unless(ret == EOK, "sysdb_attrs_add_string failed with [%d][%s].",
+                ret, strerror(ret));
+
+    ret = sysdb_add_user(test_ctx->domain, "UUIDuser",
+                         123456, 0, "UUID user", "/home/uuiduser", "/bin/bash",
+                         NULL, attrs, 0, 0);
+    fail_unless(ret == EOK, "sysdb_add_user failed with [%d][%s].",
+                ret, strerror(ret));
+
+    ret = sysdb_search_object_by_uuid(test_ctx, test_ctx->domain,
+                                      "11111111-2222-3333-4444-555555555556",
+                                      NULL, &res);
+    fail_unless(ret == ENOENT,
+                "Unexpected return code from sysdb_search_object_by_uuid for "
+                "missing object, expected [%d], got [%d].", ENOENT, ret);
+
+    ret = sysdb_search_object_by_uuid(test_ctx, test_ctx->domain,
+                                      "11111111-2222-3333-4444-555555555555",
+                                      NULL, &res);
+    fail_unless(ret == EOK, "sysdb_search_object_by_uuid failed with [%d][%s].",
+                ret, strerror(ret));
+    fail_unless(res->count == 1, "Unexpected number of results, " \
+                                 "expected [%u], get [%u].", 1, res->count);
+    fail_unless(strcmp(ldb_msg_find_attr_as_string(res->msgs[0],
+                                                   SYSDB_NAME, ""),
+                      "UUIDuser") == 0, "Unexpected object found, " \
+                      "expected [%s], got [%s].", "UUIDuser",
+                      ldb_msg_find_attr_as_string(res->msgs[0],SYSDB_NAME, ""));
+    talloc_free(test_ctx);
+}
+END_TEST
+
+START_TEST(test_sysdb_delete_by_sid)
+{
+    errno_t ret;
+    struct sysdb_test_ctx *test_ctx;
+
+    /* Setup */
+    ret = setup_sysdb_tests(&test_ctx);
+    fail_if(ret != EOK, "Could not set up the test");
+
+    check_leaks_push(test_ctx);
+
+    /* Delete the group by SID */
+    ret = sysdb_delete_by_sid(test_ctx->sysdb, test_ctx->domain,
+                              "S-1-2-3-4-NON_EXISTING_SID");
+    fail_unless(ret == EOK, "sysdb_delete_by_sid failed with [%d][%s].",
+                ret, strerror(ret));
+
+    fail_unless(check_leaks_pop(test_ctx) == true, "Memory leak");
+    talloc_free(test_ctx);
+}
+END_TEST
 
 START_TEST(test_sysdb_subdomain_create)
 {
@@ -5892,6 +6015,83 @@ START_TEST(test_gpo_replace)
 }
 END_TEST
 
+START_TEST(test_gpo_result)
+{
+    errno_t ret;
+    struct sysdb_test_ctx *test_ctx;
+    const char *allow_key = "SeRemoteInteractiveLogonRight";
+    const char *deny_key = "SeDenyRemoteInteractiveLogonRight";
+    const char *value = NULL;
+
+    ret = setup_sysdb_tests(&test_ctx);
+    fail_if(ret != EOK, "Could not setup the test");
+
+    /* No result in cache */
+    ret = sysdb_gpo_get_gpo_result_setting(test_ctx, test_ctx->domain,
+                                           allow_key, &value);
+    ck_assert_int_eq(ret, ENOENT);
+
+    ret = sysdb_gpo_get_gpo_result_setting(test_ctx, test_ctx->domain,
+                                           deny_key, &value);
+    ck_assert_int_eq(ret, ENOENT);
+
+    /* Delete with no result object is a noop */
+    ret = sysdb_gpo_delete_gpo_result_object(test_ctx, test_ctx->domain);
+    ck_assert_int_eq(ret, EOK);
+
+    /* Store an allow value, triggering a new result object */
+    ret = sysdb_gpo_store_gpo_result_setting(test_ctx->domain,
+                                             allow_key, "allow_val1");
+    ck_assert_int_eq(ret, EOK);
+
+    /* Now both searches should succeed, but only allow_key should return
+     * a valid value
+     */
+    ret = sysdb_gpo_get_gpo_result_setting(test_ctx, test_ctx->domain,
+                                           allow_key, &value);
+    ck_assert_int_eq(ret, EOK);
+    ck_assert_str_eq(value, "allow_val1");
+
+    ret = sysdb_gpo_get_gpo_result_setting(test_ctx, test_ctx->domain,
+                                           deny_key, &value);
+    ck_assert_int_eq(ret, EOK);
+    fail_unless(value == NULL);
+
+    /* Updating replaces the original value */
+    ret = sysdb_gpo_store_gpo_result_setting(test_ctx->domain,
+                                             allow_key, "allow_val2");
+    ck_assert_int_eq(ret, EOK);
+
+    ret = sysdb_gpo_get_gpo_result_setting(test_ctx, test_ctx->domain,
+                                           allow_key, &value);
+    ck_assert_int_eq(ret, EOK);
+    ck_assert_str_eq(value, "allow_val2");
+
+    /* NULL removes the value completely */
+    ret = sysdb_gpo_store_gpo_result_setting(test_ctx->domain,
+                                             allow_key, NULL);
+    ck_assert_int_eq(ret, EOK);
+
+    ret = sysdb_gpo_get_gpo_result_setting(test_ctx, test_ctx->domain,
+                                           allow_key, &value);
+    ck_assert_int_eq(ret, EOK);
+    fail_unless(value == NULL);
+
+    /* Delete the result */
+    ret = sysdb_gpo_delete_gpo_result_object(test_ctx, test_ctx->domain);
+    ck_assert_int_eq(ret, EOK);
+
+    /* No result in cache */
+    ret = sysdb_gpo_get_gpo_result_setting(test_ctx, test_ctx->domain,
+                                           allow_key, &value);
+    ck_assert_int_eq(ret, ENOENT);
+
+    ret = sysdb_gpo_get_gpo_result_setting(test_ctx, test_ctx->domain,
+                                           deny_key, &value);
+    ck_assert_int_eq(ret, ENOENT);
+}
+END_TEST
+
 START_TEST(test_confdb_list_all_domain_names_multi_dom)
 {
     int ret;
@@ -6070,6 +6270,7 @@ Suite *create_sysdb_suite(void)
     tcase_add_test(tc_sysdb, test_sysdb_search_custom_update);
     tcase_add_test(tc_sysdb, test_sysdb_search_custom);
     tcase_add_test(tc_sysdb, test_sysdb_delete_custom);
+    tcase_add_test(tc_sysdb, test_sysdb_delete_by_sid);
 
     /* test recursive delete */
     tcase_add_test(tc_sysdb, test_sysdb_delete_recursive);
@@ -6089,6 +6290,9 @@ Suite *create_sysdb_suite(void)
 
     /* Test SID string searches */
     tcase_add_test(tc_sysdb, test_sysdb_search_sid_str);
+
+    /* Test UUID string searches */
+    tcase_add_test(tc_sysdb, test_sysdb_search_object_by_uuid);
 
     /* Test canonicalizing names */
     tcase_add_test(tc_sysdb, test_sysdb_get_real_name);
@@ -6139,6 +6343,9 @@ Suite *create_sysdb_suite(void)
 
 /* ===== Test search return empty result ===== */
     tcase_add_test(tc_sysdb, test_sysdb_search_return_ENOENT);
+
+/* ===== Misc ===== */
+    tcase_add_test(tc_sysdb, test_sysdb_set_get_bool);
 
 /* Add all test cases to the test suite */
     suite_add_tcase(s, tc_sysdb);
@@ -6316,6 +6523,7 @@ Suite *create_sysdb_suite(void)
     TCase *tc_gpo = tcase_create("SYSDB GPO tests");
     tcase_add_test(tc_gpo, test_gpo_store_retrieve);
     tcase_add_test(tc_gpo, test_gpo_replace);
+    tcase_add_test(tc_gpo, test_gpo_result);
     suite_add_tcase(s, tc_gpo);
 
     /* ConfDB tests -- modify confdb, must always be last!! */

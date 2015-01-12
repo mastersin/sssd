@@ -69,16 +69,6 @@ struct loaded_be {
     void *handle;
 };
 
-struct bet_queue_item {
-    struct bet_queue_item *prev;
-    struct bet_queue_item *next;
-
-    TALLOC_CTX *mem_ctx;
-    struct be_req *be_req;
-    be_req_fn_t fn;
-
-};
-
 struct bet_info {
     enum bet_type bet_type;
     struct bet_ops *bet_ops;
@@ -116,6 +106,8 @@ struct be_ctx {
     struct sss_domain_info *domain;
     const char *identity;
     const char *conf_path;
+    uid_t uid;
+    gid_t gid;
     struct be_failover_ctx *be_fo;
     struct be_resolv_ctx *be_res;
 

@@ -206,7 +206,7 @@ static size_t add_string_item(enum pam_item_type type, const char *str,
     return rp;
 }
 
-static void overwrite_and_free_pam_items(struct pam_items *pi)
+static void overwrite_and_free_authtoks(struct pam_items *pi)
 {
     if (pi->pam_authtok != NULL) {
         _pam_overwrite_n((void *)pi->pam_authtok, pi->pam_authtok_size);
@@ -222,6 +222,11 @@ static void overwrite_and_free_pam_items(struct pam_items *pi)
 
     pi->pamstack_authtok = NULL;
     pi->pamstack_oldauthtok = NULL;
+}
+
+static void overwrite_and_free_pam_items(struct pam_items *pi)
+{
+    overwrite_and_free_authtoks(pi);
 
     free(pi->domain_name);
     pi->domain_name = NULL;
@@ -998,6 +1003,15 @@ static int eval_response(pam_handle_t *pamh, size_t buflen, uint8_t *buf,
                     D(("do_pam_conversation failed."));
                 }
                 break;
+            case SSS_OTP:
+                D(("OTP was used, removing authtokens."));
+                overwrite_and_free_authtoks(pi);
+                ret = pam_set_item(pamh, PAM_AUTHTOK, NULL);
+                if (ret != PAM_SUCCESS) {
+                    D(("Failed to remove PAM_AUTHTOK after using otp [%s]",
+                       pam_strerror(pamh,ret)));
+                }
+                break;
             default:
                 D(("Unknown response type [%d]", type));
         }
@@ -1472,6 +1486,12 @@ static int pam_sss(enum sss_cli_command task, pam_handle_t *pamh,
     D(("Hello pam_sssd: %d", task));
 
     eval_argv(pamh, argc, argv, &flags, &retries, &quiet_mode, &domains);
+
+    /* Fail all authentication on misconfigured domains= parameter. The admin
+     * probably wanted to restrict authentication, so it's safer to fail */
+    if (domains && strcmp(domains, "") == 0) {
+        return PAM_SYSTEM_ERR;
+    }
 
     pi.requested_domains = domains;
 

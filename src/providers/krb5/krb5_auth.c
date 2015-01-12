@@ -39,60 +39,7 @@
 #include "util/child_common.h"
 #include "providers/krb5/krb5_auth.h"
 #include "providers/krb5/krb5_utils.h"
-
-static errno_t safe_remove_old_ccache_file(const char *old_ccache,
-                                           const char *new_ccache,
-                                           uid_t uid, gid_t gid)
-{
-    if ((old_ccache == new_ccache)
-        || (old_ccache && new_ccache
-            && (strcmp(old_ccache, new_ccache) == 0))) {
-        DEBUG(SSSDBG_TRACE_FUNC, "New and old ccache file are the same, "
-                                  "none will be deleted.\n");
-        return EOK;
-    }
-
-    return sss_krb5_cc_destroy(old_ccache, uid, gid);
-}
-
-static errno_t
-check_old_ccache(const char *old_ccache, struct krb5child_req *kr,
-                 const char *realm, bool *active, bool *valid)
-{
-    errno_t ret;
-
-    *active = false;
-    *valid = false;
-
-    ret = sss_krb5_cc_verify_ccache(old_ccache,
-                                    kr->uid, kr->gid,
-                                    realm, kr->upn);
-    switch (ret) {
-    case ERR_NOT_FOUND:
-    case ENOENT:
-        DEBUG(SSSDBG_TRACE_FUNC,
-              "Saved ccache %s doesn't exist.\n", old_ccache);
-        return ENOENT;
-    case EINVAL:
-        /* cache found but no tgt or expired */
-    case EOK:
-        *valid = true;
-        break;
-    default:
-        DEBUG(SSSDBG_OP_FAILURE,
-              "Cannot check if saved ccache %s is valid\n",
-               old_ccache);
-        return ret;
-    }
-
-    ret = check_if_uid_is_active(kr->uid, active);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "check_if_uid_is_active failed.\n");
-        return ret;
-    }
-
-    return EOK;
-}
+#include "providers/krb5/krb5_ccache.h"
 
 static int krb5_mod_ccname(TALLOC_CTX *mem_ctx,
                            struct sysdb_ctx *sysdb,
@@ -239,7 +186,6 @@ errno_t krb5_setup(TALLOC_CTX *mem_ctx, struct pam_data *pd,
         return ENOMEM;
     }
     kr->is_offline = false;
-    kr->active_ccache = true;
     kr->run_as_user = true;
     talloc_set_destructor((TALLOC_CTX *) kr, krb5_cleanup);
 
@@ -290,46 +236,26 @@ static void krb5_auth_cache_creds(struct krb5_ctx *krb5_ctx,
 }
 
 static errno_t krb5_auth_prepare_ccache_name(struct krb5child_req *kr,
+                                             struct ldb_message *user_msg,
                                              struct be_ctx *be_ctx)
 {
     const char *ccname_template;
-    errno_t ret;
 
-    if (!kr->is_offline) {
-        kr->is_offline = be_is_offline(be_ctx);
+    ccname_template = dp_opt_get_cstring(kr->krb5_ctx->opts, KRB5_CCNAME_TMPL);
+
+    kr->ccname = expand_ccname_template(kr, kr, ccname_template,
+                                        kr->krb5_ctx->illegal_path_re, true,
+                                        be_ctx->domain->case_sensitive);
+    if (kr->ccname == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "expand_ccname_template failed.\n");
+        return ENOMEM;
     }
 
-    /* The ccache file should be (re)created if one of the following conditions
-     * is true:
-     * - it doesn't exist (kr->ccname == NULL)
-     * - the backend is online and the current ccache file is not used, i.e
-     *   the related user is currently not logged in and it is not a renewal
-     *   request
-     *   (!kr->is_offline && !kr->active_ccache && kr->pd->cmd != SSS_CMD_RENEW)
-     * - the backend is offline and the current cache file not used and
-     *   it does not contain a valid tgt
-     *   (kr->is_offline && !kr->active_ccache && !kr->valid_tgt)
-     */
-    if (kr->ccname == NULL ||
-        (kr->is_offline && !kr->active_ccache && !kr->valid_tgt) ||
-        (!kr->is_offline && !kr->active_ccache && kr->pd->cmd != SSS_CMD_RENEW)) {
-            DEBUG(SSSDBG_TRACE_ALL, "Recreating  ccache file.\n");
-            ccname_template = dp_opt_get_cstring(kr->krb5_ctx->opts,
-                                                 KRB5_CCNAME_TMPL);
-            kr->ccname = expand_ccname_template(kr, kr, ccname_template, true,
-                                                be_ctx->domain->case_sensitive);
-            if (kr->ccname == NULL) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "expand_ccname_template failed.\n");
-                return ENOMEM;
-            }
-
-            ret = sss_krb5_precreate_ccache(kr->ccname,
-                                            kr->krb5_ctx->illegal_path_re,
-                                            kr->uid, kr->gid);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_OP_FAILURE, "ccache creation failed.\n");
-                return ret;
-            }
+    kr->old_ccname = ldb_msg_find_attr_as_string(user_msg,
+                                                 SYSDB_CCACHE_FILE, NULL);
+    if (kr->old_ccname == NULL) {
+        DEBUG(SSSDBG_TRACE_LIBS,
+                "No ccache file for user [%s] found.\n", kr->pd->user);
     }
 
     return EOK;
@@ -385,6 +311,25 @@ static void krb5_auth_store_creds(struct sss_domain_info *domain,
     }
 }
 
+static bool is_otp_enabled(struct ldb_message *user_msg)
+{
+    struct ldb_message_element *el;
+    size_t i;
+
+    el = ldb_msg_find_element(user_msg, SYSDB_AUTH_TYPE);
+    if (el == NULL) {
+        return false;
+    }
+
+    for (i = 0; i < el->num_values; i++) {
+        if (strcmp((const char * )el->values[i].data, "otp") == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /* krb5_auth request */
 
 struct krb5_auth_state {
@@ -415,12 +360,12 @@ struct tevent_req *krb5_auth_send(TALLOC_CTX *mem_ctx,
     struct krb5_auth_state *state;
     struct ldb_result *res;
     struct krb5child_req *kr = NULL;
-    const char *ccache_file = NULL;
     const char *realm;
     struct tevent_req *req;
     struct tevent_req *subreq;
-    int authtok_type;
+    enum sss_authtok_type authtok_type;
     int ret;
+    bool otp;
 
     req = tevent_req_create(mem_ctx, &state, struct krb5_auth_state);
     if (req == NULL) {
@@ -516,7 +461,7 @@ struct tevent_req *krb5_auth_send(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    attrs = talloc_array(state, const char *, 7);
+    attrs = talloc_array(state, const char *, 8);
     if (attrs == NULL) {
         ret = ENOMEM;
         goto done;
@@ -528,7 +473,8 @@ struct tevent_req *krb5_auth_send(TALLOC_CTX *mem_ctx,
     attrs[3] = SYSDB_UIDNUM;
     attrs[4] = SYSDB_GIDNUM;
     attrs[5] = SYSDB_CANONICAL_UPN;
-    attrs[6] = NULL;
+    attrs[6] = SYSDB_AUTH_TYPE;
+    attrs[7] = NULL;
 
     ret = krb5_setup(state, pd, krb5_ctx, &state->kr);
     if (ret != EOK) {
@@ -537,8 +483,8 @@ struct tevent_req *krb5_auth_send(TALLOC_CTX *mem_ctx,
     }
     kr = state->kr;
 
-    ret = sysdb_get_user_attr(state, state->domain, state->pd->user, attrs,
-                              &res);
+    ret = sysdb_get_user_attr_with_views(state, state->domain, state->pd->user,
+                                         attrs, &res);
     if (ret) {
         DEBUG(SSSDBG_FUNC_DATA,
               "sysdb search for upn of user [%s] failed.\n", pd->user);
@@ -578,14 +524,18 @@ struct tevent_req *krb5_auth_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        kr->homedir = ldb_msg_find_attr_as_string(res->msgs[0], SYSDB_HOMEDIR,
-                                                  NULL);
+        kr->homedir = sss_view_ldb_msg_find_attr_as_string(state->domain,
+                                                           res->msgs[0],
+                                                           SYSDB_HOMEDIR,
+                                                           NULL);
         if (kr->homedir == NULL) {
             DEBUG(SSSDBG_CONF_SETTINGS,
                   "Home directory for user [%s] not known.\n", pd->user);
         }
 
-        kr->uid = ldb_msg_find_attr_as_uint64(res->msgs[0], SYSDB_UIDNUM, 0);
+        kr->uid = sss_view_ldb_msg_find_attr_as_uint64(state->domain,
+                                                       res->msgs[0],
+                                                       SYSDB_UIDNUM, 0);
         if (kr->uid == 0) {
             DEBUG(SSSDBG_CONF_SETTINGS,
                   "UID for user [%s] not known.\n", pd->user);
@@ -593,7 +543,9 @@ struct tevent_req *krb5_auth_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        kr->gid = ldb_msg_find_attr_as_uint64(res->msgs[0], SYSDB_GIDNUM, 0);
+        kr->gid = sss_view_ldb_msg_find_attr_as_uint64(state->domain,
+                                                       res->msgs[0],
+                                                       SYSDB_GIDNUM, 0);
         if (kr->gid == 0) {
             DEBUG(SSSDBG_CONF_SETTINGS,
                   "GID for user [%s] not known.\n", pd->user);
@@ -601,45 +553,10 @@ struct tevent_req *krb5_auth_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        ccache_file = ldb_msg_find_attr_as_string(res->msgs[0],
-                                                  SYSDB_CCACHE_FILE,
-                                                  NULL);
-        if (ccache_file != NULL) {
-            ret = check_old_ccache(ccache_file, kr, realm,
-                                   &kr->active_ccache,
-                                   &kr->valid_tgt);
-            if (ret == ENOENT) {
-                DEBUG(SSSDBG_FUNC_DATA,
-                      "Ignoring ccache attribute [%s], because it doesn't"
-                       "exist.\n", ccache_file);
-                ccache_file = NULL;
-            } else if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE,
-                      "check_if_ccache_file_is_used failed.\n");
-                ccache_file = NULL;
-            }
-        } else {
-            kr->active_ccache = false;
-            kr->valid_tgt = false;
-            DEBUG(SSSDBG_CONF_SETTINGS,
-                  "No ccache file for user [%s] found.\n", pd->user);
-        }
-        DEBUG(SSSDBG_TRACE_ALL,
-              "Ccache_file is [%s] and is %s active and TGT is %s valid.\n",
-                  ccache_file ? ccache_file : "not set",
-                  kr->active_ccache ? "" : "not",
-                  kr->valid_tgt ? "" : "not");
-        if (ccache_file != NULL) {
-            kr->ccname = ccache_file;
-            kr->old_ccname = talloc_strdup(kr, ccache_file);
-            if (kr->old_ccname == NULL) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "talloc_strdup failed.\n");
-                ret = ENOMEM;
-                goto done;
-            }
-        } else {
-            kr->ccname = NULL;
-            kr->old_ccname = NULL;
+        ret = krb5_auth_prepare_ccache_name(kr, res->msgs[0], state->be_ctx);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Cannot prepare ccache names!\n");
+            goto done;
         }
         break;
 
@@ -649,6 +566,17 @@ struct tevent_req *krb5_auth_send(TALLOC_CTX *mem_ctx,
         ret = EINVAL;
         goto done;
         break;
+    }
+
+    otp = is_otp_enabled(res->msgs[0]);
+    if (pd->cmd == SSS_PAM_CHAUTHTOK_PRELIM && otp == true) {
+        /* To avoid consuming the OTP */
+        DEBUG(SSSDBG_TRACE_FUNC,
+              "Skipping password checks for OTP-enabled user\n");
+        state->pam_status = PAM_SUCCESS;
+        state->dp_err = DP_ERR_OK;
+        ret = EOK;
+        goto done;
     }
 
     kr->srv = NULL;
@@ -682,7 +610,6 @@ static void krb5_auth_resolve_done(struct tevent_req *subreq)
     struct tevent_req *req = tevent_req_callback_data(subreq, struct tevent_req);
     struct krb5_auth_state *state = tevent_req_data(req, struct krb5_auth_state);
     struct krb5child_req *kr = state->kr;
-    char *msg;
     int ret;
 
     if (!state->search_kpasswd) {
@@ -741,45 +668,8 @@ static void krb5_auth_resolve_done(struct tevent_req *subreq)
         }
     }
 
-    ret = krb5_auth_prepare_ccache_name(kr, state->be_ctx);
-    if (ret) {
-        goto done;
-    }
-
-    if (kr->is_offline) {
-        DEBUG(SSSDBG_TRACE_ALL, "Preparing for offline operation.\n");
-
-        if (kr->valid_tgt || kr->active_ccache) {
-            DEBUG(SSSDBG_TRACE_ALL, "Valid TGT available or "
-                      "ccache file is already in use.\n");
-            kr->ccname = kr->old_ccname;
-            msg = talloc_asprintf(kr->pd,
-                                  "%s=%s", CCACHE_ENV_NAME, kr->ccname);
-            if (msg == NULL) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
-            } else {
-                ret = pam_add_response(kr->pd, SSS_PAM_ENV_ITEM,
-                                       strlen(msg) + 1, (uint8_t *) msg);
-                if (ret != EOK) {
-                    DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
-                }
-            }
-
-            if (dp_opt_get_bool(kr->krb5_ctx->opts,
-                                KRB5_STORE_PASSWORD_IF_OFFLINE)) {
-                krb5_auth_cache_creds(state->kr->krb5_ctx,
-                                      state->domain,
-                                      state->be_ctx->cdb,
-                                      kr->pd, kr->uid,
-                                      &state->pam_status, &state->dp_err);
-            } else {
-                state->pam_status = PAM_AUTHINFO_UNAVAIL;
-                state->dp_err = DP_ERR_OFFLINE;
-            }
-            ret = EOK;
-            goto done;
-
-        }
+    if (!kr->is_offline) {
+        kr->is_offline = be_is_offline(state->be_ctx);
     }
 
     /* We need to keep the root privileges to read the keytab file if
@@ -827,7 +717,6 @@ static void krb5_auth_done(struct tevent_req *subreq)
     char *renew_interval_str;
     time_t renew_interval_time = 0;
     bool use_enterprise_principal;
-    uint32_t user_info_type;
 
     ret = handle_child_recv(subreq, pd, &buf, &len);
     talloc_zfree(subreq);
@@ -987,6 +876,14 @@ static void krb5_auth_done(struct tevent_req *subreq)
         }
         break;
 
+    case ERR_CREDS_EXPIRED_CCACHE:
+        ret = krb5_delete_ccname(state, state->sysdb, state->domain,
+                pd->user, kr->old_ccname);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "krb5_delete_ccname failed.\n");
+        }
+        /* FALLTHROUGH */
+
     case ERR_CREDS_EXPIRED:
         /* If the password is expired we can safely remove the ccache from the
          * cache and disk if it is not actively used anymore. This will allow
@@ -994,14 +891,6 @@ static void krb5_auth_done(struct tevent_req *subreq)
          * used. */
         if (pd->cmd == SSS_PAM_AUTHENTICATE && !kr->active_ccache) {
             if (kr->old_ccname != NULL) {
-                ret = safe_remove_old_ccache_file(kr->old_ccname, NULL,
-                                                  kr->uid, kr->gid);
-                if (ret != EOK) {
-                    DEBUG(SSSDBG_CRIT_FAILURE,
-                          "Failed to remove old ccache file [%s], "
-                              "please remove it manually.\n", kr->old_ccname);
-                }
-
                 ret = krb5_delete_ccname(state, state->sysdb, state->domain,
                                          pd->user, kr->old_ccname);
                 if (ret != EOK) {
@@ -1075,37 +964,6 @@ static void krb5_auth_done(struct tevent_req *subreq)
         goto done;
     }
 
-    ret = sss_krb5_check_ccache_princ(kr->uid, kr->gid, kr->ccname, kr->upn);
-    if (ret) {
-        if (res->otp == true && pd->cmd == SSS_PAM_CHAUTHTOK) {
-            DEBUG(SSSDBG_IMPORTANT_INFO,
-                  "Password change succeeded but currently "
-                  "post-chpass kinit is not implemented\n");
-
-            user_info_type = SSS_PAM_USER_INFO_OTP_CHPASS;
-            ret = pam_add_response(pd, SSS_PAM_USER_INFO, sizeof(uint32_t),
-                                   (const uint8_t *) &user_info_type);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
-                /* Not fatal */
-            }
-        } else {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "No ccache for %s in %s?\n", kr->upn, kr->ccname);
-            goto done;
-        }
-    }
-
-    if (kr->old_ccname) {
-        ret = safe_remove_old_ccache_file(kr->old_ccname, kr->ccname,
-                                          kr->uid, kr->gid);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_MINOR_FAILURE,
-                  "Failed to remove old ccache file [%s], "
-                   "please remove it manually.\n", kr->old_ccname);
-        }
-    }
-
     ret = krb5_save_ccname(state, state->sysdb, state->domain,
                            pd->user, kr->ccname);
     if (ret) {
@@ -1159,6 +1017,20 @@ static void krb5_auth_done(struct tevent_req *subreq)
 
     if (state->be_ctx->domain->cache_credentials == TRUE && !res->otp) {
         krb5_auth_store_creds(state->domain, pd);
+    }
+
+    if (res->otp == true && pd->cmd == SSS_PAM_AUTHENTICATE) {
+        uint32_t otp_flag = 1;
+        ret = pam_add_response(pd, SSS_OTP, sizeof(uint32_t),
+                               (const uint8_t *) &otp_flag);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "pam_add_response failed: %d (%s).\n",
+                  ret, sss_strerror(ret));
+            state->pam_status = PAM_SYSTEM_ERR;
+            state->dp_err = DP_ERR_OK;
+            goto done;
+        }
     }
 
     state->pam_status = PAM_SUCCESS;

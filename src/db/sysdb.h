@@ -127,6 +127,8 @@
 
 #define SYSDB_SSH_PUBKEY "sshPublicKey"
 
+#define SYSDB_AUTH_TYPE "authType"
+
 #define SYSDB_SUBDOMAIN_REALM "realmName"
 #define SYSDB_SUBDOMAIN_FLAT "flatName"
 #define SYSDB_SUBDOMAIN_ID "domainID"
@@ -185,6 +187,7 @@
 #define SYSDB_NETGR_TRIPLES_FILTER "(|("SYSDB_NAME_ALIAS"=%s)("SYSDB_NAME"=%s)("SYSDB_NAME_ALIAS"=%s)("SYSDB_MEMBEROF"=%s))"
 
 #define SYSDB_SID_FILTER "(&(|("SYSDB_UC")("SYSDB_GC"))("SYSDB_SID_STR"=%s))"
+#define SYSDB_UUID_FILTER "(&(|("SYSDB_UC")("SYSDB_GC"))("SYSDB_UUID"=%s))"
 
 #define SYSDB_HAS_ENUMERATED "has_enumerated"
 
@@ -443,6 +446,10 @@ errno_t sysdb_update_view_name(struct sysdb_ctx *sysdb, const char *view_name);
 errno_t sysdb_get_view_name(TALLOC_CTX *mem_ctx, struct sysdb_ctx *sysdb,
                             char **view_name);
 
+errno_t sysdb_delete_view_tree(struct sysdb_ctx *sysdb, const char *view_name);
+
+errno_t sysdb_invalidate_overrides(struct sysdb_ctx *sysdb);
+
 errno_t sysdb_apply_default_override(struct sss_domain_info *domain,
                                      struct sysdb_attrs *override_attrs,
                                      struct ldb_dn *obj_dn);
@@ -487,7 +494,8 @@ errno_t sysdb_search_group_override_by_gid(TALLOC_CTX *mem_ctx,
 
 errno_t sysdb_add_overrides_to_object(struct sss_domain_info *domain,
                                       struct ldb_message *obj,
-                                      struct ldb_message *override_obj);
+                                      struct ldb_message *override_obj,
+                                      const char **req_attrs);
 
 errno_t sysdb_add_group_member_overrides(struct sss_domain_info *domain,
                                          struct ldb_message *obj);
@@ -533,6 +541,15 @@ uint64_t sss_view_ldb_msg_find_attr_as_uint64(struct sss_domain_info *dom,
 int sysdb_init(TALLOC_CTX *mem_ctx,
                struct sss_domain_info *domains,
                bool allow_upgrade);
+
+/* Same as sysdb_init, but additionally allows to change
+ * file ownership of the sysdb databases. */
+int sysdb_init_ext(TALLOC_CTX *mem_ctx,
+                   struct sss_domain_info *domains,
+                   bool allow_upgrade,
+                   bool chown_dbfile,
+                   uid_t uid, gid_t gid);
+
 /* used to initialize only one domain database.
  * Do NOT use if sysdb_init has already been called */
 int sysdb_domain_init(TALLOC_CTX *mem_ctx,
@@ -1018,7 +1035,13 @@ errno_t sysdb_search_object_by_sid(TALLOC_CTX *mem_ctx,
                                    struct sss_domain_info *domain,
                                    const char *sid_str,
                                    const char **attrs,
-                                   struct ldb_result **msg);
+                                   struct ldb_result **res);
+
+errno_t sysdb_search_object_by_uuid(TALLOC_CTX *mem_ctx,
+                                    struct sss_domain_info *domain,
+                                    const char *uuid_str,
+                                    const char **attrs,
+                                    struct ldb_result **res);
 
 /* === Functions related to GPOs === */
 
@@ -1082,4 +1105,10 @@ errno_t sysdb_gpo_get_gpo_result_setting(TALLOC_CTX *mem_ctx,
                                          const char *policy_setting_key,
                                          const char **policy_setting_value);
 
+errno_t sysdb_get_sids_of_members(TALLOC_CTX *mem_ctx,
+                                  struct sss_domain_info *dom,
+                                  const char *group_name,
+                                  const char ***_sids,
+                                  const char ***_dns,
+                                  size_t *_n);
 #endif /* __SYS_DB_H__ */

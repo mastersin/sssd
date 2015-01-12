@@ -338,6 +338,20 @@
                 </varlistentry>
 
                 <varlistentry>
+                    <term>ldap_user_uuid (string)</term>
+                    <listitem>
+                        <para>
+                            The LDAP attribute that contains the UUID/GUID of
+                            an LDAP user object.
+                        </para>
+                        <para>
+                            Default: not set in the general case, objectGUID for
+                            AD and ipaUniqueID for IPA
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>ldap_user_objectsid (string)</term>
                     <listitem>
                         <para>
@@ -346,7 +360,7 @@
                             necessary for ActiveDirectory servers.
                         </para>
                         <para>
-                            Default: ipaNTSecurityIdentifier for IPA, objectSID
+                            Default: objectSid for ActiveDirectory, not set
                             for other servers.
                         </para>
                     </listitem>
@@ -846,6 +860,20 @@
                 </varlistentry>
 
                 <varlistentry>
+                    <term>ldap_group_uuid (string)</term>
+                    <listitem>
+                        <para>
+                            The LDAP attribute that contains the UUID/GUID of
+                            an LDAP group object.
+                        </para>
+                        <para>
+                            Default: not set in the general case, objectGUID for
+                            AD and ipaUniqueID for IPA
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>ldap_group_objectsid (string)</term>
                     <listitem>
                         <para>
@@ -854,7 +882,7 @@
                             necessary for ActiveDirectory servers.
                         </para>
                         <para>
-                            Default: ipaNTSecurityIdentifier for IPA, objectSID
+                            Default: objectSid for ActiveDirectory, not set
                             for other servers.
                         </para>
                     </listitem>
@@ -994,7 +1022,7 @@
                           Active Directory Server 2008 and later.
                         </para>
                         <para>
-                            Default: True
+                            Default: True for AD and IPA otherwise False.
                         </para>
                     </listitem>
                 </varlistentry>
@@ -1449,7 +1477,7 @@
                     <listitem>
                         <para>
                             Specifies acceptable cipher suites.  Typically this
-                            is a colon sperated list.  See 
+                            is a colon sperated list.  See
                             <citerefentry><refentrytitle>ldap.conf</refentrytitle>
                             <manvolnum>5</manvolnum></citerefentry> for format.
                         </para>
@@ -1922,6 +1950,9 @@ ldap_access_filter = (employeeType=admin)
                             attribute 'pwdAccountLockedTime' is present and has
                             value of '000001010000Z'. Please see the option
                             ldap_pwdlockout_dn.
+
+                            Please note that 'access_provider = ldap' must
+                            be set for this feature to work.
                         </para>
                         <para>
                             <emphasis>expire</emphasis>: use
@@ -2451,7 +2482,18 @@ ldap_access_filter = (employeeType=admin)
                     <term>ldap_group_search_base (string)</term>
                     <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="include/ldap_search_bases.xml" />
                 </varlistentry>
-
+            </variablelist>
+            <variablelist>
+                <note>
+                    <para>
+                        If the option <quote>ldap_use_tokengroups</quote> is
+                        enabled. The searches against Active Directory will
+                        not be restricted and return all groups memberships,
+                        even with no gid mapping. It is recommended to disable
+                        this feature, if group names are not being displayed
+                        correctly.
+                    </para>
+                </note>
                 <varlistentry condition="with_sudo">
                     <term>ldap_sudo_search_base (string)</term>
                     <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="include/ldap_search_bases.xml" />
@@ -2484,6 +2526,27 @@ ldap_access_filter = (employeeType=admin)
     [domain/LDAP]
     id_provider = ldap
     auth_provider = ldap
+    ldap_uri = ldap://ldap.mydomain.org
+    ldap_search_base = dc=mydomain,dc=org
+    ldap_tls_reqcert = demand
+    cache_credentials = true
+</programlisting>
+        </para>
+    </refsect1>
+    <refsect1 id='ldap_access_filter_example'>
+        <title>LDAP ACCESS FILTER EXAMPLE</title>
+        <para>
+            The following example assumes that SSSD is correctly
+            configured and to use the ldap_access_order=lockout.
+        </para>
+        <para>
+<programlisting>
+    [domain/LDAP]
+    id_provider = ldap
+    auth_provider = ldap
+    access_provider = ldap
+    ldap_access_order = lockout
+    ldap_pwdlockout_dn = cn=ppolicy,ou=policies,dc=mydomain,dc=org
     ldap_uri = ldap://ldap.mydomain.org
     ldap_search_base = dc=mydomain,dc=org
     ldap_tls_reqcert = demand

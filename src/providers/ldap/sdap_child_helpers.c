@@ -108,7 +108,8 @@ static errno_t sdap_fork_child(struct tevent_context *ev,
     if (pid == 0) { /* child */
         err = exec_child(child,
                          pipefd_to_child, pipefd_from_child,
-                         LDAP_CHILD, ldap_child_debug_fd);
+                         LDAP_CHILD, ldap_child_debug_fd,
+                         NULL);
         DEBUG(SSSDBG_CRIT_FAILURE, "Could not exec LDAP child: [%d][%s].\n",
                                     err, strerror(err));
         return err;
@@ -152,7 +153,7 @@ static errno_t create_tgt_req_send_buffer(TALLOC_CTX *mem_ctx,
         return ENOMEM;
     }
 
-    buf->size = 4 * sizeof(uint32_t);
+    buf->size = 6 * sizeof(uint32_t);
     if (realm_str) {
         buf->size += strlen(realm_str);
     }
@@ -200,6 +201,12 @@ static errno_t create_tgt_req_send_buffer(TALLOC_CTX *mem_ctx,
 
     /* lifetime */
     SAFEALIGN_SET_UINT32(&buf->data[rp], lifetime, &rp);
+
+    /* UID and GID to drop privileges to, if needed. The ldap_child process runs as
+     * setuid if the back end runs unprivileged as it needs to access the keytab
+     */
+    SAFEALIGN_SET_UINT32(&buf->data[rp], geteuid(), &rp);
+    SAFEALIGN_SET_UINT32(&buf->data[rp], getegid(), &rp);
 
     *io_buf = buf;
     return EOK;
@@ -460,25 +467,5 @@ static errno_t set_tgt_child_timeout(struct tevent_req *req,
 /* Setup child logging */
 int sdap_setup_child(void)
 {
-    int ret;
-    FILE *debug_filep;
-
-    if (debug_to_file != 0 && ldap_child_debug_fd == -1) {
-        ret = open_debug_file_ex(LDAP_CHILD_LOG_FILE, &debug_filep, false);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_FATAL_FAILURE, "Error setting up logging (%d) [%s]\n",
-                        ret, strerror(ret));
-            return ret;
-        }
-
-        ldap_child_debug_fd = fileno(debug_filep);
-        if (ldap_child_debug_fd == -1) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "fileno failed [%d][%s]\n", errno, strerror(errno));
-            ret = errno;
-            return ret;
-        }
-    }
-
-    return EOK;
+    return child_debug_init(LDAP_CHILD_LOG_FILE, &ldap_child_debug_fd);
 }

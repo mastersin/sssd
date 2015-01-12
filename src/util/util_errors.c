@@ -31,6 +31,7 @@ struct err_string error_to_str[] = {
     { "Invalid credential type" },  /* ERR_INVALID_CRED_TYPE */
     { "No credentials available" }, /* ERR_NO_CREDS */
     { "Credentials are expired" }, /* ERR_CREDS_EXPIRED */
+    { "Credentials are expired, old ccache was removed" }, /* ERR_CREDS_EXPIRED_CCACHE */
     { "Failure setting user credentials"}, /* ERR_CREDS_INVALID */
     { "No cached credentials available" }, /* ERR_NO_CACHED_CREDS */
     { "Cached credentials are expired" }, /* ERR_CACHED_CREDS_EXPIRED */
@@ -62,6 +63,8 @@ struct err_string error_to_str[] = {
     { "Bus method not supported" }, /* ERR_SBUS_NOSUP */
     { "Cannot connect to system bus" }, /* ERR_NO_SYSBUS */
     { "LDAP search returned a referral" }, /* ERR_REFERRAL */
+    { "Error setting SELinux user context" }, /* ERR_SELINUX_CONTEXT */
+    { "Username format not allowed by re_expression" }, /* ERR_REGEX_NOMATCH */
 };
 
 

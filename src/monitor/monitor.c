@@ -119,6 +119,8 @@ struct mt_svc {
     int ping_time;
     int kill_time;
 
+    struct tevent_timer *kill_timer;
+
     bool svc_started;
 
     int restarts;
@@ -170,6 +172,10 @@ struct mt_ctx {
     struct sss_sigchild_ctx *sigchld_ctx;
     bool is_daemon;
     pid_t parent_pid;
+
+    /* For running unprivileged services */
+    uid_t uid;
+    gid_t gid;
 };
 
 static int start_service(struct mt_svc *mt_svc);
@@ -511,7 +517,11 @@ static int monitor_dbus_init(struct mt_ctx *ctx)
         return ret;
     }
 
-    ret = sbus_new_server(ctx, ctx->ev, monitor_address,
+    /* If a service is running as unprivileged user, we need to make sure this
+     * user can access the monitor sbus server. root is still king, so we don't
+     * lose any access.
+     */
+    ret = sbus_new_server(ctx, ctx->ev, monitor_address, ctx->uid, ctx->gid,
                           false, &ctx->sbus_srv, monitor_service_init, ctx);
 
     talloc_free(monitor_address);
@@ -580,6 +590,7 @@ static void set_tasks_checker(struct mt_svc *svc)
     svc->ping_ev = te;
 }
 
+static void monitor_restart_service(struct mt_svc *svc);
 static void mt_svc_sigkill(struct tevent_context *ev,
                            struct tevent_timer *te,
                            struct timeval t, void *ptr);
@@ -587,7 +598,6 @@ static int monitor_kill_service (struct mt_svc *svc)
 {
     int ret;
     struct timeval tv;
-    struct tevent_timer *te;
 
     ret = kill(svc->pid, SIGTERM);
     if (ret == -1) {
@@ -596,29 +606,30 @@ static int monitor_kill_service (struct mt_svc *svc)
               "Sending signal to child (%s:%d) failed: [%d]: %s! "
                "Ignore and pretend child is dead.\n",
                svc->name, svc->pid, ret, strerror(ret));
-        goto done;
+        /* The only thing we can try here is to launch a new process
+         * and hope that it works.
+         */
+        monitor_restart_service(svc);
+        return EOK;
     }
 
     /* Set up a timer to send SIGKILL if this process
      * doesn't exit within sixty seconds
      */
     tv = tevent_timeval_current_ofs(svc->kill_time, 0);
-    te = tevent_add_timer(svc->mt_ctx->ev, svc, tv, mt_svc_sigkill, svc);
-    if (te == NULL) {
+    svc->kill_timer = tevent_add_timer(svc->mt_ctx->ev,
+                                       svc,
+                                       tv,
+                                       mt_svc_sigkill,
+                                       svc);
+    if (svc->kill_timer == NULL) {
         /* Nothing much we can do */
-        ret = ENOMEM;
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Failed to allocate timed event: mt_svc_sigkill.\n");
-        goto done;
+        /* We'll just have to hope that the SIGTERM succeeds */
     }
 
-    ret = EOK;
-
-done:
-    if (ret != EOK) {
-        talloc_free(svc);
-    }
-    return ret;
+    return EOK;
 }
 
 static void mt_svc_sigkill(struct tevent_context *ev,
@@ -637,12 +648,35 @@ static void mt_svc_sigkill(struct tevent_context *ev,
 
     ret = kill(svc->pid, SIGKILL);
     if (ret != EOK) {
+        ret = errno;
         DEBUG(SSSDBG_FATAL_FAILURE,
               "Sending signal to child (%s:%d) failed! "
               "Ignore and pretend child is dead.\n",
               svc->name, svc->pid);
-        talloc_free(svc);
+
+        if (ret == ESRCH) {
+            /* The process doesn't exist
+             * This most likely means we hit a race where
+             * the SIGTERM concluded just after the timer
+             * fired but before we called kill() here.
+             * We'll just do nothing, since the
+             * mt_svc_exit_handler() should be doing the
+             * necessary work.
+             */
+            return;
+        }
+
+        /* Something went really wrong.
+         * The only thing we can try here is to launch a new process
+         * and hope that it works.
+         */
+        monitor_restart_service(svc);
     }
+
+    /* The process should terminate immediately and then be
+     * restarted by the mt_svc_exit_handler()
+     */
+    return;
 }
 
 static void reload_reply(DBusPendingCall *pending, void *data)
@@ -910,6 +944,29 @@ static char *check_services(char **services)
     return NULL;
 }
 
+static int get_service_user(struct mt_ctx *ctx)
+{
+    errno_t ret;
+    char *user_str;
+
+    ret = confdb_get_string(ctx->cdb, ctx, CONFDB_MONITOR_CONF_ENTRY,
+                            CONFDB_MONITOR_USER_RUNAS,
+                            SSSD_USER, &user_str);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE, "Failed to get the user to run as\n");
+        return ret;
+    }
+
+    ret = sss_user_by_name_or_uid(user_str, &ctx->uid, &ctx->gid);
+    talloc_free(user_str);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE, "Failed to set allowed UIDs.\n");
+        return ret;
+    }
+
+    return EOK;
+}
+
 static int get_monitor_config(struct mt_ctx *ctx)
 {
     int ret;
@@ -953,6 +1010,12 @@ static int get_monitor_config(struct mt_ctx *ctx)
     ctx->num_services = 0;
     for (i = 0; ctx->services[i] != NULL; i++) {
         ctx->num_services++;
+    }
+
+    ret = get_service_user(ctx);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to get the unprivileged user\n");
+        return ret;
     }
 
     ret = confdb_get_domains(ctx->cdb, &ctx->domains);
@@ -1020,6 +1083,22 @@ static errno_t get_ping_config(struct mt_ctx *ctx, const char *path,
     return EOK;
 }
 
+/* This is a temporary function that returns false if the service
+ * being started was only tested when running as root.
+ */
+static bool svc_supported_as_nonroot(const char *svc_name)
+{
+    if ((strcmp(svc_name, "nss") == 0)
+        || (strcmp(svc_name, "pam") == 0)
+        || (strcmp(svc_name, "autofs") == 0)
+        || (strcmp(svc_name, "pac") == 0)
+        || (strcmp(svc_name, "sudo") == 0)
+        || (strcmp(svc_name, "ssh") == 0)) {
+        return true;
+    }
+    return false;
+}
+
 static int get_service_config(struct mt_ctx *ctx, const char *name,
                               struct mt_svc **svc_cfg)
 {
@@ -1027,6 +1106,8 @@ static int get_service_config(struct mt_ctx *ctx, const char *name,
     char *path;
     struct mt_svc *svc;
     time_t now = time(NULL);
+    uid_t uid = 0;
+    gid_t gid = 0;
 
     *svc_cfg = NULL;
 
@@ -1066,10 +1147,23 @@ static int get_service_config(struct mt_ctx *ctx, const char *name,
         return ret;
     }
 
+    if (svc_supported_as_nonroot(svc->name)) {
+        uid = ctx->uid;
+        gid = ctx->gid;
+    }
+
     if (!svc->command) {
         svc->command = talloc_asprintf(
             svc, "%s/sssd_%s", SSSD_LIBEXEC_PATH, svc->name
         );
+        if (!svc->command) {
+            talloc_free(svc);
+            return ENOMEM;
+        }
+
+        svc->command = talloc_asprintf_append(svc->command,
+                " --uid %"SPRIuid" --gid %"SPRIgid,
+                uid, gid);
         if (!svc->command) {
             talloc_free(svc);
             return ENOMEM;
@@ -1241,6 +1335,14 @@ static int get_provider_config(struct mt_ctx *ctx, const char *name,
         svc->command = talloc_asprintf(
             svc, "%s/sssd_be --domain %s", SSSD_LIBEXEC_PATH, svc->name
         );
+        if (!svc->command) {
+            talloc_free(svc);
+            return ENOMEM;
+        }
+
+        svc->command = talloc_asprintf_append(svc->command,
+                " --uid %"SPRIuid" --gid %"SPRIgid,
+                ctx->uid, ctx->gid);
         if (!svc->command) {
             talloc_free(svc);
             return ENOMEM;
@@ -1572,9 +1674,17 @@ static int monitor_ctx_destructor(void *mem)
     return 0;
 }
 
-static errno_t load_configuration(TALLOC_CTX *mem_ctx,
-                                  const char *config_file,
-                                  struct mt_ctx **monitor)
+/*
+ * This function should not be static otherwise gcc does some special kind of
+ * optimisations which should not happen according to code: chown (unlink)
+ * failed (return -1) but errno was zero.
+ * As a result of this  * warning is printed ‘monitor’ may be used
+ * uninitialized in this function. Instead of checking errno for 0
+ * it's better to disable optimisation(in-lining) of this function.
+ */
+errno_t load_configuration(TALLOC_CTX *mem_ctx,
+                           const char *config_file,
+                           struct mt_ctx **monitor)
 {
     errno_t ret;
     struct mt_ctx *ctx;
@@ -1609,7 +1719,14 @@ static errno_t load_configuration(TALLOC_CTX *mem_ctx,
          * misconfiguration gets in the way
          */
         talloc_zfree(ctx->cdb);
-        unlink(cdb_file);
+        ret = unlink(cdb_file);
+        if (ret != EOK && errno != ENOENT) {
+            ret = errno;
+            DEBUG(SSSDBG_MINOR_FAILURE,
+                  "Purging existing confdb failed: %d [%s].\n",
+                  ret, sss_strerror(ret));
+            goto done;
+        }
 
         ret = confdb_init(ctx, &ctx->cdb, cdb_file);
         if (ret != EOK) {
@@ -1628,7 +1745,6 @@ static errno_t load_configuration(TALLOC_CTX *mem_ctx,
         DEBUG(SSSDBG_FATAL_FAILURE, "Fatal error initializing confdb\n");
         goto done;
     }
-    talloc_zfree(cdb_file);
 
     ret = confdb_init_db(config_file, ctx->cdb);
     if (ret != EOK) {
@@ -1644,11 +1760,23 @@ static errno_t load_configuration(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
+    /* Allow configuration database to be accessible
+     * when SSSD runs as nonroot */
+    ret = chown(cdb_file, ctx->uid, ctx->gid);
+    if (ret != 0) {
+        ret = errno;
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "chown failed for [%s]: [%d][%s].\n",
+              cdb_file, ret, sss_strerror(ret));
+        goto done;
+    }
+
     *monitor = ctx;
 
     ret = EOK;
 
 done:
+    talloc_free(cdb_file);
     if (ret != EOK) {
         talloc_free(ctx);
     }
@@ -2233,7 +2361,8 @@ static int monitor_process_init(struct mt_ctx *ctx,
     if (!tmp_ctx) {
         return ENOMEM;
     }
-    ret = sysdb_init(tmp_ctx, ctx->domains, true);
+    ret = sysdb_init_ext(tmp_ctx, ctx->domains, true,
+                         true, ctx->uid, ctx->gid);
     if (ret != EOK) {
         SYSDB_VERSION_ERROR_DAEMON(ret);
         return ret;
@@ -2331,6 +2460,9 @@ static int monitor_service_init(struct sbus_connection *conn, void *data)
     }
     mini->ctx = ctx;
     mini->conn = conn;
+
+    /* Allow access from the SSSD user */
+    sbus_allow_uid(conn, &ctx->uid);
 
     /* 10 seconds should be plenty */
     tv = tevent_timeval_current_ofs(10, 0);
@@ -2599,11 +2731,7 @@ static void mt_svc_restart(struct tevent_context *ev,
 static void mt_svc_exit_handler(int pid, int wait_status, void *pvt)
 {
     struct mt_svc *svc = talloc_get_type(pvt, struct mt_svc);
-    struct mt_ctx *mt_ctx = svc->mt_ctx;
-    time_t now = time(NULL);
-    struct tevent_timer *te;
-    struct timeval tv;
-    int restart_delay;
+
 
     if (WIFEXITED(wait_status)) {
         DEBUG(SSSDBG_OP_FAILURE,
@@ -2625,6 +2753,28 @@ static void mt_svc_exit_handler(int pid, int wait_status, void *pvt)
         return;
     }
 
+    /* Clear the kill_timer so we don't try to SIGKILL it after it's
+     * already gone.
+     */
+    talloc_zfree(svc->kill_timer);
+
+    /* Check the number of restart tries and relaunch the service */
+    monitor_restart_service(svc);
+
+    return;
+}
+
+static void monitor_restart_service(struct mt_svc *svc)
+{
+    struct mt_ctx *mt_ctx = svc->mt_ctx;
+    int restart_delay;
+    time_t now = time(NULL);
+    struct tevent_timer *te;
+    struct timeval tv;
+
+    /* Handle the actual checks for how many times to restart this
+     * service before giving up.
+     */
     if ((now - svc->last_restart) > MONITOR_RESTART_CNT_INTERVAL_RESET) {
         svc->restarts = 0;
     }
@@ -2633,9 +2783,19 @@ static void mt_svc_exit_handler(int pid, int wait_status, void *pvt)
     if (svc->restarts > MONITOR_MAX_SVC_RESTARTS) {
         DEBUG(SSSDBG_FATAL_FAILURE,
               "Process [%s], definitely stopped!\n", svc->name);
+
+        sss_log(SSS_LOG_ERR,
+                "Exiting the SSSD. Could not restart critical service [%s].",
+                svc->name);
+
         talloc_free(svc);
 
-        /* exit with error */
+        /* exit the SSSD with an error, shutting down all
+         * services and domains.
+         * We do this because if one of the responders is down
+         * and can't come back up, this is the only way to
+         * guarantee admin intervention.
+         */
         monitor_quit(mt_ctx, 1);
         return;
     }
@@ -2855,7 +3015,8 @@ int main(int argc, const char *argv[])
     ret = close(STDIN_FILENO);
     if (ret != EOK) return 6;
 
-    ret = server_setup(MONITOR_NAME, flags, monitor->conf_path, &main_ctx);
+    ret = server_setup(MONITOR_NAME, flags, 0, 0,
+                       monitor->conf_path, &main_ctx);
     if (ret != EOK) return 2;
 
     monitor->is_daemon = !opt_interactive;

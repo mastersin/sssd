@@ -51,6 +51,7 @@ struct dp_option ipa_basic_opts[] = {
     { "ipa_enable_dns_sites", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "ipa_server_mode", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "ipa_views_search_base", DP_OPT_STRING, NULL_STRING, NULL_STRING },
+    { "krb5_confd_path", DP_OPT_STRING, { KRB5_MAPPING_DIR }, NULL_STRING },
     DP_OPTION_TERMINATOR
 };
 
@@ -178,6 +179,7 @@ struct sdap_attr_map ipa_user_map[] = {
     { "ldap_user_principal", "krbPrincipalName", SYSDB_UPN, NULL },
     { "ldap_user_fullname", "cn", SYSDB_FULLNAME, NULL },
     { "ldap_user_member_of", "memberOf", SYSDB_MEMBEROF, NULL },
+    { "ldap_user_uuid", "ipaUniqueID", SYSDB_UUID, NULL },
     { "ldap_user_objectsid", "ipaNTSecurityIdentifier", SYSDB_SID_STR, NULL },
     { "ldap_user_primary_group", NULL, SYSDB_PRIMARY_GROUP, NULL },
     { "ldap_user_modify_timestamp", "modifyTimestamp", SYSDB_ORIG_MODSTAMP, NULL },
@@ -201,16 +203,18 @@ struct sdap_attr_map ipa_user_map[] = {
     { "ldap_user_nds_login_expiration_time", "loginExpirationTime", SYSDB_NDS_LOGIN_EXPIRATION_TIME, NULL },
     { "ldap_user_nds_login_allowed_time_map", "loginAllowedTimeMap", SYSDB_NDS_LOGIN_ALLOWED_TIME_MAP, NULL },
     { "ldap_user_ssh_public_key", "ipaSshPubKey", SYSDB_SSH_PUBKEY, NULL },
+    { "ldap_user_auth_type", "ipaUserAuthType", SYSDB_AUTH_TYPE, NULL },
     SDAP_ATTR_MAP_TERMINATOR
 };
 
 struct sdap_attr_map ipa_group_map[] = {
-    { "ldap_group_object_class", "groupOfNames", SYSDB_GROUP_CLASS, NULL },
+    { "ldap_group_object_class", "ipaUserGroup", SYSDB_GROUP_CLASS, NULL },
     { "ldap_group_object_class_alt", "posixGroup", SYSDB_GROUP_CLASS, NULL },
     { "ldap_group_name", "cn", SYSDB_NAME, NULL },
     { "ldap_group_pwd", "userPassword", SYSDB_PWD, NULL },
     { "ldap_group_gid_number", "gidNumber", SYSDB_GIDNUM, NULL },
     { "ldap_group_member", "member", SYSDB_MEMBER, NULL },
+    { "ldap_group_uuid", "ipaUniqueID", SYSDB_UUID, NULL },
     { "ldap_group_objectsid", "ipaNTSecurityIdentifier", SYSDB_SID_STR, NULL },
     { "ldap_group_modify_timestamp", "modifyTimestamp", SYSDB_ORIG_MODSTAMP, NULL },
     { "ldap_group_entry_usn", NULL, SYSDB_USN, NULL },
@@ -283,6 +287,7 @@ struct sdap_attr_map ipa_override_map[] = {
     { "ldap_user_shell", "loginShell", SYSDB_SHELL, NULL },
     { "ldap_group_name", "cn", SYSDB_NAME, NULL },
     { "ldap_group_gid_number", "gidNumber", SYSDB_GIDNUM, NULL },
+    { "ldap_user_ssh_public_key", "ipaSshPubKey", SYSDB_SSH_PUBKEY, NULL },
     SDAP_ATTR_MAP_TERMINATOR
 };
 

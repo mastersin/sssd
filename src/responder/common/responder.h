@@ -38,6 +38,10 @@
 
 extern hash_table_t *dp_requests;
 
+/* we want default permissions on created files to be very strict,
+ * so set our umask to 0177 */
+#define DFL_RSP_UMASK 0177
+
 /* if there is a provider other than the special local */
 #define NEED_CHECK_PROVIDER(provider) \
     (provider != NULL && strcmp(provider, "local") != 0)
@@ -159,7 +163,9 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
                      struct confdb_ctx *cdb,
                      struct sss_cmd_table sss_cmds[],
                      const char *sss_pipe_name,
+                     int pipe_fd,
                      const char *sss_priv_pipe_name,
+                     int priv_pipe_fd,
                      const char *confdb_service_path,
                      const char *svc_name,
                      uint16_t svc_version,
@@ -175,6 +181,8 @@ responder_get_domain(struct resp_ctx *rctx, const char *domain);
 
 errno_t responder_get_domain_by_id(struct resp_ctx *rctx, const char *id,
                                    struct sss_domain_info **_ret_dom);
+
+int create_pipe_fd(const char *sock_name, int *_fd, mode_t umaskval);
 
 /* responder_cmd.c */
 int sss_cmd_empty_packet(struct sss_packet *packet);
@@ -308,7 +316,7 @@ errno_t schedule_get_domains_task(TALLOC_CTX *mem_ctx,
                                   struct tevent_context *ev,
                                   struct resp_ctx *rctx);
 
-errno_t csv_string_to_uid_array(TALLOC_CTX *mem_ctx, const char *cvs_string,
+errno_t csv_string_to_uid_array(TALLOC_CTX *mem_ctx, const char *csv_string,
                                 bool allow_sss_loop,
                                 size_t *_uid_count, uid_t **_uids);
 
@@ -321,4 +329,6 @@ sss_parse_inp_send(TALLOC_CTX *mem_ctx, struct resp_ctx *rctx,
 errno_t sss_parse_inp_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
                            char **_name, char **_domname);
 
+const char **parse_attr_list_ex(TALLOC_CTX *mem_ctx, const char *conf_str,
+                                const char **defaults);
 #endif /* __SSS_RESPONDER_H__ */
