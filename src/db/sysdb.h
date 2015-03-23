@@ -210,6 +210,7 @@
 
 #define SYSDB_GRSRC_ATTRS {SYSDB_NAME, SYSDB_GIDNUM, \
                            SYSDB_MEMBERUID, \
+                           SYSDB_MEMBER, \
                            SYSDB_GHOST, \
                            SYSDB_DEFAULT_ATTRS, \
                            SYSDB_SID_STR, \
@@ -796,6 +797,7 @@ int sysdb_add_incomplete_group(struct sss_domain_info *domain,
                                gid_t gid,
                                const char *original_dn,
                                const char *sid_str,
+                               const char *uuid,
                                bool posix,
                                time_t now);
 

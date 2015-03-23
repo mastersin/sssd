@@ -759,7 +759,7 @@ static errno_t s2n_response_to_attrs(TALLOC_CTX *mem_ctx,
             attrs->a.user.pw_uid = uid;
             attrs->a.user.pw_gid = gid;
 
-            if (is_v1) {
+            if (is_v1 && type == RESP_USER_GROUPLIST) {
                 ret = add_v1_user_data(ber, attrs);
                 if (ret != EOK) {
                     DEBUG(SSSDBG_OP_FAILURE, "add_v1_user_data failed.\n");
@@ -798,7 +798,7 @@ static errno_t s2n_response_to_attrs(TALLOC_CTX *mem_ctx,
 
             attrs->a.group.gr_gid = gid;
 
-            if (is_v1) {
+            if (is_v1 && type == RESP_GROUP_MEMBERS) {
                 ret = add_v1_group_data(ber, attrs);
                 if (ret != EOK) {
                     DEBUG(SSSDBG_OP_FAILURE, "add_v1_group_data failed.\n");
@@ -877,36 +877,42 @@ done:
     return ret;
 }
 
-struct ipa_s2n_get_groups_state {
+struct ipa_s2n_get_fqlist_state {
     struct tevent_context *ev;
     struct ipa_id_ctx *ipa_ctx;
     struct sss_domain_info *dom;
     struct sdap_handle *sh;
     struct req_input req_input;
-    char **group_list;
-    size_t group_idx;
+    char **fqname_list;
+    size_t fqname_idx;
     int exop_timeout;
+    int entry_type;
+    enum request_types request_type;
     struct resp_attrs *attrs;
     struct sss_domain_info *obj_domain;
+    struct sysdb_attrs *override_attrs;
 };
 
-static errno_t ipa_s2n_get_groups_step(struct tevent_req *req);
-static void ipa_s2n_get_groups_get_override_done(struct tevent_req *subreq);
-static void ipa_s2n_get_groups_next(struct tevent_req *subreq);
+static errno_t ipa_s2n_get_fqlist_step(struct tevent_req *req);
+static void ipa_s2n_get_fqlist_get_override_done(struct tevent_req *subreq);
+static void ipa_s2n_get_fqlist_next(struct tevent_req *subreq);
+static errno_t ipa_s2n_get_fqlist_save_step(struct tevent_req *req);
 
-static struct tevent_req *ipa_s2n_get_groups_send(TALLOC_CTX *mem_ctx,
-                                                  struct tevent_context *ev,
-                                                  struct ipa_id_ctx *ipa_ctx,
-                                                  struct sss_domain_info *dom,
-                                                  struct sdap_handle *sh,
-                                                  int exop_timeout,
-                                                  char **group_list)
+static struct tevent_req *ipa_s2n_get_fqlist_send(TALLOC_CTX *mem_ctx,
+                                                struct tevent_context *ev,
+                                                struct ipa_id_ctx *ipa_ctx,
+                                                struct sss_domain_info *dom,
+                                                struct sdap_handle *sh,
+                                                int exop_timeout,
+                                                int entry_type,
+                                                enum request_types request_type,
+                                                char **fqname_list)
 {
     int ret;
-    struct ipa_s2n_get_groups_state *state;
+    struct ipa_s2n_get_fqlist_state *state;
     struct tevent_req *req;
 
-    req = tevent_req_create(mem_ctx, &state, struct ipa_s2n_get_groups_state);
+    req = tevent_req_create(mem_ctx, &state, struct ipa_s2n_get_fqlist_state);
     if (req == NULL) {
         return NULL;
     }
@@ -915,16 +921,19 @@ static struct tevent_req *ipa_s2n_get_groups_send(TALLOC_CTX *mem_ctx,
     state->ipa_ctx = ipa_ctx;
     state->dom = dom;
     state->sh = sh;
-    state->group_list = group_list;
-    state->group_idx = 0;
+    state->fqname_list = fqname_list;
+    state->fqname_idx = 0;
     state->req_input.type = REQ_INP_NAME;
     state->req_input.inp.name = NULL;
     state->exop_timeout = exop_timeout;
+    state->entry_type = entry_type;
+    state->request_type = request_type;
     state->attrs = NULL;
+    state->override_attrs = NULL;
 
-    ret = ipa_s2n_get_groups_step(req);
+    ret = ipa_s2n_get_fqlist_step(req);
     if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "ipa_s2n_get_groups_step failed.\n");
+        DEBUG(SSSDBG_OP_FAILURE, "ipa_s2n_get_fqlist_step failed.\n");
         goto done;
     }
 
@@ -937,25 +946,25 @@ done:
     return req;
 }
 
-static errno_t ipa_s2n_get_groups_step(struct tevent_req *req)
+static errno_t ipa_s2n_get_fqlist_step(struct tevent_req *req)
 {
     int ret;
-    struct ipa_s2n_get_groups_state *state = tevent_req_data(req,
-                                               struct ipa_s2n_get_groups_state);
+    struct ipa_s2n_get_fqlist_state *state = tevent_req_data(req,
+                                               struct ipa_s2n_get_fqlist_state);
     struct berval *bv_req;
     struct tevent_req *subreq;
     struct sss_domain_info *parent_domain;
-    char *group_name = NULL;
+    char *short_name = NULL;
     char *domain_name = NULL;
 
     parent_domain = get_domains_head(state->dom);
 
     ret = sss_parse_name(state, parent_domain->names,
-                         state->group_list[state->group_idx],
-                         &domain_name, &group_name);
+                         state->fqname_list[state->fqname_idx],
+                         &domain_name, &short_name);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to parse name '%s' [%d]: %s\n",
-                                    state->group_list[state->group_idx],
+                                    state->fqname_list[state->fqname_idx],
                                     ret, sss_strerror(ret));
         return ret;
     }
@@ -971,10 +980,10 @@ static errno_t ipa_s2n_get_groups_step(struct tevent_req *req)
         state->obj_domain = parent_domain;
     }
 
-    state->req_input.inp.name = group_name;
+    state->req_input.inp.name = short_name;
 
-    ret = s2n_encode_request(state, state->obj_domain->name, BE_REQ_GROUP,
-                             REQ_FULL_WITH_MEMBERS,
+    ret = s2n_encode_request(state, state->obj_domain->name, state->entry_type,
+                             state->request_type,
                              &state->req_input, &bv_req);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "s2n_encode_request failed.\n");
@@ -987,18 +996,18 @@ static errno_t ipa_s2n_get_groups_step(struct tevent_req *req)
         DEBUG(SSSDBG_OP_FAILURE, "ipa_s2n_exop_send failed.\n");
         return ENOMEM;
     }
-    tevent_req_set_callback(subreq, ipa_s2n_get_groups_next, req);
+    tevent_req_set_callback(subreq, ipa_s2n_get_fqlist_next, req);
 
     return EOK;
 }
 
-static void ipa_s2n_get_groups_next(struct tevent_req *subreq)
+static void ipa_s2n_get_fqlist_next(struct tevent_req *subreq)
 {
     int ret;
     struct tevent_req *req = tevent_req_callback_data(subreq,
                                                       struct tevent_req);
-    struct ipa_s2n_get_groups_state *state = tevent_req_data(req,
-                                               struct ipa_s2n_get_groups_state);
+    struct ipa_s2n_get_fqlist_state *state = tevent_req_data(req,
+                                               struct ipa_s2n_get_fqlist_state);
     char *retoid = NULL;
     struct berval *retdata = NULL;
     const char *sid_str;
@@ -1016,6 +1025,18 @@ static void ipa_s2n_get_groups_next(struct tevent_req *subreq)
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "s2n_response_to_attrs failed.\n");
         goto fail;
+    }
+
+    if (strcmp(state->ipa_ctx->view_name, SYSDB_DEFAULT_VIEW_NAME) == 0) {
+        ret = ipa_s2n_get_fqlist_save_step(req);
+        if (ret == EOK) {
+            tevent_req_done(req);
+        } else if (ret != EAGAIN) {
+            DEBUG(SSSDBG_OP_FAILURE, "ipa_s2n_get_fqlist_save_step failed.\n");
+            goto fail;
+        }
+
+        return;
     }
 
     ret = sysdb_attrs_get_string(state->attrs->sysdb_attrs, SYSDB_SID_STR,
@@ -1043,7 +1064,7 @@ static void ipa_s2n_get_groups_next(struct tevent_req *subreq)
         ret = ENOMEM;
         goto fail;
     }
-    tevent_req_set_callback(subreq, ipa_s2n_get_groups_get_override_done, req);
+    tevent_req_set_callback(subreq, ipa_s2n_get_fqlist_get_override_done, req);
 
     return;
 
@@ -1052,38 +1073,26 @@ fail:
     return;
 }
 
-static void ipa_s2n_get_groups_get_override_done(struct tevent_req *subreq)
+static void ipa_s2n_get_fqlist_get_override_done(struct tevent_req *subreq)
 {
     int ret;
     struct tevent_req *req = tevent_req_callback_data(subreq,
                                                       struct tevent_req);
-    struct ipa_s2n_get_groups_state *state = tevent_req_data(req,
-                                               struct ipa_s2n_get_groups_state);
-    struct sysdb_attrs *override_attrs = NULL;
+    struct ipa_s2n_get_fqlist_state *state = tevent_req_data(req,
+                                               struct ipa_s2n_get_fqlist_state);
 
-    ret = ipa_get_ad_override_recv(subreq, NULL, state, &override_attrs);
+    ret = ipa_get_ad_override_recv(subreq, NULL, state, &state->override_attrs);
     talloc_zfree(subreq);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "IPA override lookup failed: %d\n", ret);
         goto fail;
     }
 
-    ret = ipa_s2n_save_objects(state->dom, &state->req_input, state->attrs,
-                               NULL, state->ipa_ctx->view_name, override_attrs);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "ipa_s2n_save_objects failed.\n");
-        goto fail;
-    }
-
-    state->group_idx++;
-    if (state->group_list[state->group_idx] == NULL) {
+    ret = ipa_s2n_get_fqlist_save_step(req);
+    if (ret == EOK) {
         tevent_req_done(req);
-        return;
-    }
-
-    ret = ipa_s2n_get_groups_step(req);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "ipa_s2n_get_groups_step failed.\n");
+    } else if (ret != EAGAIN) {
+        DEBUG(SSSDBG_OP_FAILURE, "ipa_s2n_get_fqlist_save_step failed.\n");
         goto fail;
     }
 
@@ -1094,7 +1103,35 @@ fail:
     return;
 }
 
-static int ipa_s2n_get_groups_recv(struct tevent_req *req)
+static errno_t ipa_s2n_get_fqlist_save_step(struct tevent_req *req)
+{
+    int ret;
+    struct ipa_s2n_get_fqlist_state *state = tevent_req_data(req,
+                                               struct ipa_s2n_get_fqlist_state);
+
+    ret = ipa_s2n_save_objects(state->dom, &state->req_input, state->attrs,
+                               NULL, state->ipa_ctx->view_name,
+                               state->override_attrs);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "ipa_s2n_save_objects failed.\n");
+        return ret;
+    }
+
+    state->fqname_idx++;
+    if (state->fqname_list[state->fqname_idx] == NULL) {
+        return EOK;
+    }
+
+    ret = ipa_s2n_get_fqlist_step(req);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "ipa_s2n_get_fqlist_step failed.\n");
+        return ret;
+    }
+
+    return EAGAIN;
+}
+
+static int ipa_s2n_get_fqlist_recv(struct tevent_req *req)
 {
     TEVENT_REQ_RETURN_ON_ERROR(req);
 
@@ -1191,7 +1228,8 @@ fail:
 
 static errno_t process_members(struct sss_domain_info *domain,
                                struct sysdb_attrs *group_attrs,
-                               char **members)
+                               char **members,
+                               TALLOC_CTX *mem_ctx, char ***_missing_members)
 {
     int ret;
     size_t c;
@@ -1200,9 +1238,12 @@ static errno_t process_members(struct sss_domain_info *domain,
     const char *dn_str;
     struct sss_domain_info *obj_domain;
     struct sss_domain_info *parent_domain;
+    char **missing_members = NULL;
+    size_t miss_count = 0;
 
     if (members == NULL) {
         DEBUG(SSSDBG_TRACE_INTERNAL, "No members\n");
+        *_missing_members = NULL;
         return EOK;
     }
 
@@ -1210,6 +1251,17 @@ static errno_t process_members(struct sss_domain_info *domain,
     if (tmp_ctx == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
         return ENOMEM;
+    }
+
+    if (_missing_members != NULL && mem_ctx != NULL) {
+        /* count members */
+        for (c = 0; members[c] != NULL; c++);
+        missing_members = talloc_zero_array(tmp_ctx, char *, c + 1);
+        if (missing_members == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "talloc_array_zero failed.\n");
+            ret = ENOMEM;
+            goto done;
+        }
     }
 
     parent_domain = get_domains_head(domain);
@@ -1225,31 +1277,67 @@ static errno_t process_members(struct sss_domain_info *domain,
         ret = sysdb_search_user_by_name(tmp_ctx, obj_domain, members[c], NULL,
                                         &msg);
         if (ret == EOK) {
-            dn_str = ldb_dn_get_linearized(msg->dn);
-            if (dn_str == NULL) {
-                DEBUG(SSSDBG_OP_FAILURE, "ldb_dn_get_linearized failed.\n");
-                goto done;
-            }
+            if (group_attrs != NULL) {
+                dn_str = ldb_dn_get_linearized(msg->dn);
+                if (dn_str == NULL) {
+                    DEBUG(SSSDBG_OP_FAILURE, "ldb_dn_get_linearized failed.\n");
+                    goto done;
+                }
 
-            DEBUG(SSSDBG_TRACE_ALL, "Adding member [%s][%s]\n",
-                                    members[c], dn_str);
+                DEBUG(SSSDBG_TRACE_ALL, "Adding member [%s][%s]\n",
+                                        members[c], dn_str);
 
-            ret = sysdb_attrs_add_string(group_attrs, SYSDB_MEMBER, dn_str);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_OP_FAILURE, "sysdb_attrs_add_string failed.\n");
-                goto done;
+                ret = sysdb_attrs_add_string(group_attrs, SYSDB_MEMBER, dn_str);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                          "sysdb_attrs_add_string failed.\n");
+                    goto done;
+                }
             }
         } else if (ret == ENOENT) {
-            DEBUG(SSSDBG_TRACE_ALL, "Adding ghost member [%s]\n", members[c]);
+            if (group_attrs != NULL) {
+                DEBUG(SSSDBG_TRACE_ALL, "Adding ghost member [%s]\n",
+                                        members[c]);
 
-            ret = sysdb_attrs_add_string(group_attrs, SYSDB_GHOST, members[c]);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_OP_FAILURE, "sysdb_attrs_add_string failed.\n");
-                goto done;
+                /* There were cases where the server returned the same user
+                 * multiple times */
+                ret = sysdb_attrs_add_string_safe(group_attrs, SYSDB_GHOST,
+                                                  members[c]);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                          "sysdb_attrs_add_string failed.\n");
+                    goto done;
+                }
+            }
+
+            if (missing_members != NULL) {
+                missing_members[miss_count] = talloc_strdup(missing_members,
+                                                            members[c]);
+                if (missing_members[miss_count] == NULL) {
+                    DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
+                    ret = ENOMEM;
+                    goto done;
+                }
+                miss_count++;
             }
         } else {
             DEBUG(SSSDBG_OP_FAILURE, "sysdb_search_user_by_name failed.\n");
             goto done;
+        }
+    }
+
+    if (_missing_members != NULL)  {
+        if (miss_count == 0) {
+            *_missing_members = NULL;
+        } else {
+            if (mem_ctx != NULL) {
+                *_missing_members = talloc_steal(mem_ctx, missing_members);
+            } else {
+                DEBUG(SSSDBG_CRIT_FAILURE,
+                      "Missing memory context for missing members list.\n");
+                ret = EINVAL;
+                goto done;
+            }
         }
     }
 
@@ -1346,7 +1434,7 @@ done:
     return ret;
 }
 
-static void ipa_s2n_get_groups_done(struct tevent_req  *subreq);
+static void ipa_s2n_get_fqlist_done(struct tevent_req  *subreq);
 static void ipa_s2n_get_user_get_override_done(struct tevent_req *subreq);
 static void ipa_s2n_get_user_done(struct tevent_req *subreq)
 {
@@ -1359,7 +1447,7 @@ static void ipa_s2n_get_user_done(struct tevent_req *subreq)
     struct berval *retdata = NULL;
     struct resp_attrs *attrs = NULL;
     struct berval *bv_req = NULL;
-    char **missing_groups = NULL;
+    char **missing_list = NULL;
     struct ldb_dn **group_dn_list = NULL;
     const char *sid_str;
     struct be_acct_req *ar;
@@ -1398,32 +1486,61 @@ static void ipa_s2n_get_user_done(struct tevent_req *subreq)
         if (attrs->response_type == RESP_USER_GROUPLIST) {
             ret = get_group_dn_list(state, state->dom,
                                     attrs->ngroups, attrs->groups,
-                                    &group_dn_list, &missing_groups);
+                                    &group_dn_list, &missing_list);
             if (ret != EOK) {
                 DEBUG(SSSDBG_OP_FAILURE, "get_group_dn_list failed.\n");
                 goto done;
             }
 
-            if (missing_groups != NULL) {
-                subreq = ipa_s2n_get_groups_send(state, state->ev,
+            if (missing_list != NULL) {
+                subreq = ipa_s2n_get_fqlist_send(state, state->ev,
                                                  state->ipa_ctx, state->dom,
                                                  state->sh, state->exop_timeout,
-                                                 missing_groups);
+                                                 BE_REQ_GROUP,
+                                                 REQ_FULL_WITH_MEMBERS,
+                                                 missing_list);
                 if (subreq == NULL) {
                     DEBUG(SSSDBG_OP_FAILURE,
-                          "ipa_s2n_get_groups_send failed.\n");
+                          "ipa_s2n_get_fqlist_send failed.\n");
                     ret = ENOMEM;
                     goto done;
                 }
-                tevent_req_set_callback(subreq, ipa_s2n_get_groups_done,
+                tevent_req_set_callback(subreq, ipa_s2n_get_fqlist_done,
                                         req);
 
                 return;
             }
+            break;
+        } else if (attrs->response_type == RESP_GROUP_MEMBERS) {
+            ret = process_members(state->dom, NULL, attrs->a.group.gr_mem,
+                                  state, &missing_list);
+            if (ret != EOK) {
+                DEBUG(SSSDBG_OP_FAILURE, "process_members failed.\n");
+                goto done;
+            }
+
+            if (missing_list != NULL) {
+                subreq = ipa_s2n_get_fqlist_send(state, state->ev,
+                                                 state->ipa_ctx, state->dom,
+                                                 state->sh, state->exop_timeout,
+                                                 BE_REQ_USER,
+                                                 REQ_FULL_WITH_MEMBERS,
+                                                 missing_list);
+                if (subreq == NULL) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                          "ipa_s2n_get_fqlist_send failed.\n");
+                    ret = ENOMEM;
+                    goto done;
+                }
+                tevent_req_set_callback(subreq, ipa_s2n_get_fqlist_done,
+                                        req);
+
+                return;
+            }
+            break;
         }
 
-        if (state->req_input->type == REQ_INP_SECID
-                || attrs->response_type == RESP_GROUP_MEMBERS) {
+        if (state->req_input->type == REQ_INP_SECID) {
             /* We already know the SID, we do not have to read it. */
             break;
         }
@@ -1484,7 +1601,9 @@ static void ipa_s2n_get_user_done(struct tevent_req *subreq)
         ret = ENOENT;
     }
 
-    if (ret == ENOENT) {
+    if (ret == ENOENT
+            || strcmp(state->ipa_ctx->view_name,
+                      SYSDB_DEFAULT_VIEW_NAME) == 0) {
         ret = ipa_s2n_save_objects(state->dom, state->req_input, state->attrs,
                                    state->simple_attrs, NULL, NULL);
         if (ret != EOK) {
@@ -1631,6 +1750,8 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
     char **del_groups_dns;
     bool in_transaction = false;
     int tret;
+    struct sysdb_attrs *gid_override_attrs = NULL;
+    char ** exop_grouplist;
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
@@ -1694,6 +1815,17 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
             upn = NULL;
         } else {
             DEBUG(SSSDBG_OP_FAILURE, "sysdb_attrs_get_string failed.\n");
+            goto done;
+        }
+    }
+
+    if (strcmp(dom->name, attrs->domain_name) != 0) {
+        dom = find_domain_by_name(get_domains_head(dom),
+                                  attrs->domain_name, true);
+        if (dom == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                    "Cannot find domain: [%s]\n", attrs->domain_name);
+            ret = EINVAL;
             goto done;
         }
     }
@@ -1794,6 +1926,20 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
                 }
             }
 
+            if (attrs->response_type == RESP_USER_GROUPLIST) {
+                /* Since RESP_USER_GROUPLIST contains all group memberships it
+                 * is effectively an initgroups request hence
+                 * SYSDB_INITGR_EXPIRE will be set.*/
+                ret = sysdb_attrs_add_time_t(attrs->sysdb_attrs,
+                                             SYSDB_INITGR_EXPIRE,
+                                             time(NULL) + timeout);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                          "sysdb_attrs_add_time_t failed.\n");
+                    goto done;
+                }
+            }
+
             gid = 0;
             if (dom->mpg == false) {
                 gid = attrs->a.user.pw_gid;
@@ -1808,7 +1954,16 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
                 if (ret == EOK || ret == ENOENT) {
                     if ((orig_gid != 0 && orig_gid != attrs->a.user.pw_gid)
                             || attrs->a.user.pw_uid != attrs->a.user.pw_gid) {
-                        ret = sysdb_attrs_add_uint32(attrs->sysdb_attrs,
+
+                        gid_override_attrs = sysdb_new_attrs(tmp_ctx);
+                        if (gid_override_attrs == NULL) {
+                            DEBUG(SSSDBG_OP_FAILURE,
+                                  "sysdb_new_attrs failed.\n");
+                            ret = ENOMEM;
+                            goto done;
+                        }
+
+                        ret = sysdb_attrs_add_uint32(gid_override_attrs,
                                                      SYSDB_GIDNUM,
                                                      attrs->a.user.pw_gid);
                         if (ret != EOK) {
@@ -1842,6 +1997,15 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
                 goto done;
             }
 
+            if (gid_override_attrs != NULL) {
+                ret = sysdb_set_user_attr(dom, name, gid_override_attrs,
+                                          SYSDB_MOD_REP);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE, "sysdb_set_user_attr failed.\n");
+                    goto done;
+                }
+            }
+
             if (attrs->response_type == RESP_USER_GROUPLIST) {
                 ret = get_sysdb_grouplist(tmp_ctx, dom->sysdb, dom, name,
                                           &sysdb_grouplist);
@@ -1850,8 +2014,19 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
                     goto done;
                 }
 
-                ret = diff_string_lists(tmp_ctx, attrs->groups, sysdb_grouplist,
-                                        &add_groups, &del_groups, NULL);
+                /* names returned by extdom exop will be all lower case, since
+                 * we handle domain names case sensitve in the cache we have
+                 * to make sure we use the right case. */
+                ret = fix_domain_in_name_list(tmp_ctx, dom, attrs->groups,
+                                              &exop_grouplist);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE, "fix_domain_name failed.\n");
+                    goto done;
+                }
+
+                ret = diff_string_lists(tmp_ctx, exop_grouplist,
+                                        sysdb_grouplist, &add_groups,
+                                        &del_groups, NULL);
                 if (ret != EOK) {
                     DEBUG(SSSDBG_OP_FAILURE, "diff_string_lists failed.\n");
                     goto done;
@@ -1893,24 +2068,13 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
         case RESP_GROUP_MEMBERS:
             type = SYSDB_MEMBER_GROUP;
 
-            if (0 != strcmp(dom->name, attrs->domain_name)) {
-                dom = find_domain_by_name(get_domains_head(dom),
-                                          attrs->domain_name, true);
-                if (dom == NULL) {
-                    DEBUG(SSSDBG_OP_FAILURE,
-                          "Cannot find domain: [%s]\n", attrs->domain_name);
-                    ret = EINVAL;
-                    goto done;
-                }
-            }
-
             if (name == NULL) {
                 name = attrs->a.group.gr_name;
             }
 
             if (IS_SUBDOMAIN(dom)) {
                 /* we always use the fully qualified name for subdomain users */
-                name = sss_tc_fqname(tmp_ctx, dom->names, dom, name);
+                name = sss_get_domain_name(tmp_ctx, name, dom);
                 if (!name) {
                     DEBUG(SSSDBG_OP_FAILURE, "failed to format user name,\n");
                     ret = ENOMEM;
@@ -1952,7 +2116,7 @@ static errno_t ipa_s2n_save_objects(struct sss_domain_info *dom,
             }
 
             ret = process_members(dom, attrs->sysdb_attrs,
-                                  attrs->a.group.gr_mem);
+                                  attrs->a.group.gr_mem, NULL, NULL);
             if (ret != EOK) {
                 DEBUG(SSSDBG_OP_FAILURE, "process_members failed.\n");
                 goto done;
@@ -2006,7 +2170,7 @@ done:
     return ret;
 }
 
-static void ipa_s2n_get_groups_done(struct tevent_req  *subreq)
+static void ipa_s2n_get_fqlist_done(struct tevent_req  *subreq)
 {
     int ret;
     struct tevent_req *req = tevent_req_callback_data(subreq,
@@ -2016,10 +2180,10 @@ static void ipa_s2n_get_groups_done(struct tevent_req  *subreq)
     const char *sid_str;
     struct be_acct_req *ar;
 
-    ret = ipa_s2n_get_groups_recv(subreq);
+    ret = ipa_s2n_get_fqlist_recv(subreq);
     talloc_zfree(subreq);
     if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "s2n get_groups request failed.\n");
+        DEBUG(SSSDBG_OP_FAILURE, "s2n get_fqlist request failed.\n");
         tevent_req_error(req, ret);
         return;
     }
@@ -2046,7 +2210,9 @@ static void ipa_s2n_get_groups_done(struct tevent_req  *subreq)
         goto fail;
     }
 
-    if (state->override_attrs == NULL) {
+    if (state->override_attrs == NULL
+            && strcmp(state->ipa_ctx->view_name,
+                      SYSDB_DEFAULT_VIEW_NAME) != 0) {
         subreq = ipa_get_ad_override_send(state, state->ev,
                            state->ipa_ctx->sdap_id_ctx,
                            state->ipa_ctx->ipa_options,

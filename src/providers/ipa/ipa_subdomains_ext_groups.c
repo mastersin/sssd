@@ -452,7 +452,8 @@ struct tevent_req *ipa_get_ad_memberships_send(TALLOC_CTX *mem_ctx,
     state->domain = domain;
     state->dp_error = -1;
 
-    if ((ar->entry_type & BE_REQ_TYPE_MASK) != BE_REQ_INITGROUPS
+    if (((ar->entry_type & BE_REQ_TYPE_MASK) != BE_REQ_INITGROUPS
+            && (ar->entry_type & BE_REQ_TYPE_MASK) != BE_REQ_USER)
             || ar->filter_type != BE_FILTER_NAME) {
         DEBUG(SSSDBG_OP_FAILURE, "Unsupported request type.\n");
         ret = EINVAL;
@@ -846,9 +847,9 @@ static void ipa_add_ad_memberships_get_next(struct tevent_req *req)
         }
 
         if (missing_groups) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "There are unresolved external group " \
-                                        "memberships even after all groups have " \
-                                        "been looked up on the LDAP server.");
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "There are unresolved external group memberships even after "
+                  "all groups have been looked up on the LDAP server.\n");
         }
         tevent_req_done(req);
         return;

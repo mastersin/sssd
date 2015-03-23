@@ -908,6 +908,10 @@ static int nss_cmd_getpwnam_search(struct nss_dom_ctx *dctx)
         if (dctx->res->count > 1) {
             DEBUG(SSSDBG_FATAL_FAILURE,
                   "getpwnam call returned more than one result !?!\n");
+            sss_log(SSS_LOG_ERR,
+                    "More users have the same name [%s@%s] in SSSD cache. "
+                    "SSSD will not work correctly.\n",
+                    name, dom->name);
             return ENOENT;
         }
 
@@ -1580,6 +1584,9 @@ static int nss_cmd_getpwuid_search(struct nss_dom_ctx *dctx)
         if (dctx->res->count > 1) {
             DEBUG(SSSDBG_FATAL_FAILURE,
                   "getpwuid call returned more than one result !?!\n");
+            sss_log(SSS_LOG_ERR,
+                    "More users have the same UID [%"PRIu32"] in directory "
+                    "server. SSSD will not work correctly.\n", cmdctx->id);
             ret = ENOENT;
             goto done;
         }
@@ -2858,8 +2865,8 @@ static int fill_grent(struct sss_packet *packet,
                                             fullname.len - pwfield.len);
             if (ret != EOK && ret != ENOMEM) {
                 DEBUG(SSSDBG_OP_FAILURE,
-                      "Failed to store group %s(%s) in mmap cache!",
-                       name.str, domain);
+                      "Failed to store group %s(%s) in mmap cache!\n",
+                      name.str, domain);
             }
         }
 
@@ -3003,6 +3010,10 @@ static int nss_cmd_getgrnam_search(struct nss_dom_ctx *dctx)
         if (dctx->res->count > 1) {
             DEBUG(SSSDBG_FATAL_FAILURE,
                   "getgrnam call returned more than one result !?!\n");
+            sss_log(SSS_LOG_ERR,
+                    "More groups have the same name [%s@%s] in SSSD cache. "
+                    "SSSD will not work correctly.\n",
+                    name, dom->name);
             return ENOENT;
         }
 
@@ -3138,6 +3149,9 @@ static int nss_cmd_getgrgid_search(struct nss_dom_ctx *dctx)
         if (dctx->res->count > 1) {
             DEBUG(SSSDBG_FATAL_FAILURE,
                   "getgrgid call returned more than one result !?!\n");
+            sss_log(SSS_LOG_ERR,
+                    "More groups have the same GID [%"PRIu32"] in directory "
+                    "server. SSSD will not work correctly.\n", cmdctx->id);
             ret = ENOENT;
             goto done;
         }
@@ -4160,6 +4174,8 @@ static errno_t nss_cmd_getsidby_search(struct nss_dom_ctx *dctx)
                                    SYSDB_AD_ACCOUNT_EXPIRES,
                                    SYSDB_AD_USER_ACCOUNT_CONTROL,
                                    SYSDB_SSH_PUBKEY,
+                                   SYSDB_ORIG_DN,
+                                   SYSDB_ORIG_MEMBEROF,
                                    SYSDB_DEFAULT_ATTRS, NULL};
     const char **attrs;
     bool user_found = false;
@@ -4501,8 +4517,16 @@ static errno_t nss_cmd_getbysid_search(struct nss_dom_ctx *dctx)
                 DEBUG(SSSDBG_MINOR_FAILURE,
                       "Cannot set negative cache for %s\n", cmdctx->secid);
             }
+
+            return ENOENT;
         }
-        return ENOENT;
+
+        dctx->res = talloc_zero(cmdctx, struct ldb_result);
+        if (dctx->res == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
+            return ENOMEM;
+        }
+        /* Fall through and call the backend */
     } else if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Failed to make request to our cache!\n");
         return EIO;
@@ -4605,6 +4629,61 @@ static errno_t fill_sid(struct sss_packet *packet,
     return EOK;
 }
 
+static errno_t process_attr_list(TALLOC_CTX *mem_ctx, struct ldb_message *msg,
+                                 const char **attr_list,
+                                 struct sized_string **_keys,
+                                 struct sized_string **_vals,
+                                 size_t *array_size, size_t *sum, size_t *found)
+{
+    size_t c;
+    size_t d;
+    struct sized_string *keys;
+    struct sized_string *vals;
+    struct ldb_val *val;
+    struct ldb_message_element *el;
+
+    keys = *_keys;
+    vals = *_vals;
+
+    for (c = 0; attr_list[c] != NULL; c++) {
+        el = ldb_msg_find_element(msg, attr_list[c]);
+        if (el != NULL &&  el->num_values > 0) {
+            if (el->num_values > 1) {
+                *array_size += el->num_values;
+                keys = talloc_realloc(mem_ctx, keys, struct sized_string,
+                                      *array_size);
+                vals = talloc_realloc(mem_ctx, vals, struct sized_string,
+                                      *array_size);
+                if (keys == NULL || vals == NULL) {
+                    DEBUG(SSSDBG_OP_FAILURE, "talloc_array failed.\n");
+                    return ENOMEM;
+                }
+            }
+            for (d = 0; d < el->num_values; d++) {
+                to_sized_string(&keys[*found], attr_list[c]);
+                *sum += keys[*found].len;
+                val = &(el->values[d]);
+                if (val == NULL || val->data == NULL
+                        || val->data[val->length] != '\0') {
+                    DEBUG(SSSDBG_CRIT_FAILURE,
+                          "Unexpected attribute value found for [%s].\n",
+                          attr_list[c]);
+                    return EINVAL;
+                }
+                to_sized_string(&vals[*found], (const char *)val->data);
+                *sum += vals[*found].len;
+
+                (*found)++;
+            }
+        }
+    }
+
+    *_keys = keys;
+    *_vals = vals;
+
+    return EOK;
+}
+
 static errno_t fill_orig(struct sss_packet *packet,
                          struct resp_ctx *rctx,
                          enum sss_id_type id_type,
@@ -4612,13 +4691,13 @@ static errno_t fill_orig(struct sss_packet *packet,
 {
     int ret;
     TALLOC_CTX *tmp_ctx;
-    const char *tmp_str;
     uint8_t *body;
     size_t blen;
     size_t pctr = 0;
     size_t c;
     size_t sum;
     size_t found;
+    size_t array_size;
     size_t extra_attrs_count = 0;
     const char **extra_attrs_list = NULL;
     const char *orig_attr_list[] = {SYSDB_SID_STR,
@@ -4633,6 +4712,8 @@ static errno_t fill_orig(struct sss_packet *packet,
                                     SYSDB_AD_ACCOUNT_EXPIRES,
                                     SYSDB_AD_USER_ACCOUNT_CONTROL,
                                     SYSDB_SSH_PUBKEY,
+                                    SYSDB_ORIG_DN,
+                                    SYSDB_ORIG_MEMBEROF,
                                     NULL};
     struct sized_string *keys;
     struct sized_string *vals;
@@ -4652,10 +4733,9 @@ static errno_t fill_orig(struct sss_packet *packet,
                 extra_attrs_count++);
     }
 
-    keys = talloc_array(tmp_ctx, struct sized_string,
-                        sizeof(orig_attr_list) + extra_attrs_count);
-    vals = talloc_array(tmp_ctx, struct sized_string,
-                        sizeof(orig_attr_list) + extra_attrs_count);
+    array_size = sizeof(orig_attr_list) + extra_attrs_count;
+    keys = talloc_array(tmp_ctx, struct sized_string, array_size);
+    vals = talloc_array(tmp_ctx, struct sized_string, array_size);
     if (keys == NULL || vals == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "talloc_array failed.\n");
         ret = ENOMEM;
@@ -4664,27 +4744,20 @@ static errno_t fill_orig(struct sss_packet *packet,
 
     sum = 0;
     found = 0;
-    for (c = 0; orig_attr_list[c] != NULL; c++) {
-        tmp_str = ldb_msg_find_attr_as_string(msg, orig_attr_list[c], NULL);
-        if (tmp_str != NULL) {
-            to_sized_string(&keys[found], orig_attr_list[c]);
-            sum += keys[found].len;
-            to_sized_string(&vals[found], tmp_str);
-            sum += vals[found].len;
 
-            found++;
-        }
+    ret = process_attr_list(tmp_ctx, msg, orig_attr_list, &keys, &vals,
+                            &array_size, &sum, &found);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "process_attr_list failed.\n");
+        goto done;
     }
 
-    for (c = 0; c < extra_attrs_count; c++) {
-        tmp_str = ldb_msg_find_attr_as_string(msg, extra_attrs_list[c], NULL);
-        if (tmp_str != NULL) {
-            to_sized_string(&keys[found], extra_attrs_list[c]);
-            sum += keys[found].len;
-            to_sized_string(&vals[found], tmp_str);
-            sum += vals[found].len;
-
-            found++;
+    if (extra_attrs_count != 0) {
+        ret = process_attr_list(tmp_ctx, msg, extra_attrs_list, &keys, &vals,
+                                &array_size, &sum, &found);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "process_attr_list failed.\n");
+            goto done;
         }
     }
 
@@ -4808,18 +4881,20 @@ static errno_t fill_id(struct sss_packet *packet,
     uint8_t *body;
     size_t blen;
     size_t pctr = 0;
-    uint64_t id;
+    uint64_t tmp_id;
+    uint32_t id;
 
     if (id_type == SSS_ID_TYPE_GID) {
-        id = ldb_msg_find_attr_as_uint64(msg, SYSDB_GIDNUM, 0);
+        tmp_id = ldb_msg_find_attr_as_uint64(msg, SYSDB_GIDNUM, 0);
     } else {
-        id = ldb_msg_find_attr_as_uint64(msg, SYSDB_UIDNUM, 0);
+        tmp_id = ldb_msg_find_attr_as_uint64(msg, SYSDB_UIDNUM, 0);
     }
 
-    if (id == 0 || id >= UINT32_MAX) {
+    if (tmp_id == 0 || tmp_id >= UINT32_MAX) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Invalid POSIX ID.\n");
         return EINVAL;
     }
+    id = (uint32_t) tmp_id;
 
     ret = sss_packet_grow(packet, 4 * sizeof(uint32_t));
     if (ret != EOK) {

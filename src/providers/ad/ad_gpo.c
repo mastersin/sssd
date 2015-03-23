@@ -187,6 +187,7 @@ int ad_gpo_process_cse_recv(struct tevent_req *req);
 #define GPO_CROND "crond"
 #define GPO_SUDO "sudo"
 #define GPO_SUDO_I "sudo-i"
+#define GPO_SYSTEMD_USER "systemd-user"
 
 struct gpo_map_option_entry {
     enum gpo_map_type gpo_map_type;
@@ -203,7 +204,8 @@ const char *gpo_map_remote_interactive_defaults[] = {GPO_SSHD, NULL};
 const char *gpo_map_network_defaults[] = {GPO_FTP, GPO_SAMBA, NULL};
 const char *gpo_map_batch_defaults[] = {GPO_CROND, NULL};
 const char *gpo_map_service_defaults[] = {NULL};
-const char *gpo_map_permit_defaults[] = {GPO_SUDO, GPO_SUDO_I, NULL};
+const char *gpo_map_permit_defaults[] = {GPO_SUDO, GPO_SUDO_I,
+                                         GPO_SYSTEMD_USER,  NULL};
 const char *gpo_map_deny_defaults[] = {NULL};
 
 struct gpo_map_option_entry gpo_map_option_entries[] = {
@@ -1489,8 +1491,6 @@ ad_gpo_access_send(TALLOC_CTX *mem_ctx,
     struct tevent_req *req;
     struct tevent_req *subreq;
     struct ad_gpo_access_state *state;
-    char *server_uri;
-    LDAPURLDesc *lud;
     errno_t ret;
     int hret;
     hash_key_t key;
@@ -1580,33 +1580,6 @@ ad_gpo_access_send(TALLOC_CTX *mem_ctx,
         goto immediately;
     }
 
-    /* extract server_hostname from server_uri */
-    server_uri = state->conn->service->uri;
-    ret = ldap_url_parse(server_uri, &lud);
-    if (ret != LDAP_SUCCESS) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "Failed to parse ldap URI (%s)!\n", server_uri);
-        ret = EINVAL;
-        goto immediately;
-    }
-
-    if (lud->lud_host == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "The LDAP URI (%s) did not contain a host name\n", server_uri);
-        ldap_free_urldesc(lud);
-        ret = EINVAL;
-        goto immediately;
-    }
-
-    state->server_hostname = talloc_strdup(state, lud->lud_host);
-    ldap_free_urldesc(lud);
-    if (!state->server_hostname) {
-        ret = ENOMEM;
-        goto immediately;
-    }
-    DEBUG(SSSDBG_TRACE_ALL, "server_hostname from uri: %s\n",
-          state->server_hostname);
-
     subreq = sdap_id_op_connect_send(state->sdap_op, state, &ret);
     if (subreq == NULL) {
         DEBUG(SSSDBG_OP_FAILURE,
@@ -1666,6 +1639,8 @@ ad_gpo_connect_done(struct tevent_req *subreq)
     char *domain_dn;
     int dp_error;
     errno_t ret;
+    char *server_uri;
+    LDAPURLDesc *lud;
 
     const char *attrs[] = {AD_AT_DN, AD_AT_UAC, NULL};
 
@@ -1701,6 +1676,33 @@ ad_gpo_connect_done(struct tevent_req *subreq)
             }
         }
     }
+
+    /* extract server_hostname from server_uri */
+    server_uri = state->conn->service->uri;
+    ret = ldap_url_parse(server_uri, &lud);
+    if (ret != LDAP_SUCCESS) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to parse ldap URI (%s)!\n", server_uri);
+        ret = EINVAL;
+        goto done;
+    }
+
+    if (lud->lud_host == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "The LDAP URI (%s) did not contain a host name\n", server_uri);
+        ldap_free_urldesc(lud);
+        ret = EINVAL;
+        goto done;
+    }
+
+    state->server_hostname = talloc_strdup(state, lud->lud_host);
+    ldap_free_urldesc(lud);
+    if (!state->server_hostname) {
+        ret = ENOMEM;
+        goto done;
+    }
+    DEBUG(SSSDBG_TRACE_ALL, "server_hostname from uri: %s\n",
+          state->server_hostname);
 
     sam_account_name = sss_krb5_get_primary(state, "%S$", state->ad_hostname);
     if (sam_account_name == NULL) {
@@ -3961,9 +3963,10 @@ gpo_fork_child(struct tevent_req *req)
     pid = fork();
 
     if (pid == 0) { /* child */
-        err = exec_child(state,
-                         pipefd_to_child, pipefd_from_child,
-                         GPO_CHILD, gpo_child_debug_fd, NULL);
+        err = exec_child_ex(state,
+                            pipefd_to_child, pipefd_from_child,
+                            GPO_CHILD, gpo_child_debug_fd, NULL,
+                            STDIN_FILENO, AD_GPO_CHILD_OUT_FILENO);
         DEBUG(SSSDBG_CRIT_FAILURE, "Could not exec gpo_child: [%d][%s].\n",
               err, strerror(err));
         return err;

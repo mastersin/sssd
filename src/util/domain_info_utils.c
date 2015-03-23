@@ -433,8 +433,9 @@ sss_write_domain_mappings(struct sss_domain_info *domain)
     fd = mkstemp(tmp_file);
     umask(old_mode);
     if (fd < 0) {
-        DEBUG(SSSDBG_OP_FAILURE, "creating the temp file [%s] for domain-realm "
-                                  "mappings failed.", tmp_file);
+        DEBUG(SSSDBG_OP_FAILURE,
+              "creating the temp file [%s] for domain-realm mappings failed\n",
+              tmp_file);
         ret = EIO;
         talloc_zfree(tmp_ctx);
         goto done;
@@ -567,8 +568,8 @@ done:
         if (err < 0) {
             err = errno;
             DEBUG(SSSDBG_MINOR_FAILURE,
-                  "Could not remove file [%s]: [%d]: %s",
-                   tmp_file, err, strerror(err));
+                  "Could not remove file [%s]: [%d]: %s\n",
+                  tmp_file, err, strerror(err));
         }
     }
     talloc_free(tmp_ctx);
@@ -682,8 +683,9 @@ static errno_t sss_write_krb5_localauth_snippet(const char *path)
     fd = mkstemp(tmp_file);
     umask(old_mode);
     if (fd < 0) {
-        DEBUG(SSSDBG_OP_FAILURE, "creating the temp file [%s] for domain-realm "
-                                  "mappings failed.", tmp_file);
+        DEBUG(SSSDBG_OP_FAILURE,
+              "creating the temp file [%s] for domain-realm mappings failed\n",
+              tmp_file);
         ret = EIO;
         talloc_zfree(tmp_ctx);
         goto done;
@@ -730,8 +732,8 @@ done:
         if (err == -1) {
             err = errno;
             DEBUG(SSSDBG_MINOR_FAILURE,
-                  "Could not remove file [%s]: [%d]: %s",
-                   tmp_file, err, sss_strerror(err));
+                  "Could not remove file [%s]: [%d]: %s\n",
+                  tmp_file, err, sss_strerror(err));
         }
     }
 
@@ -774,6 +776,78 @@ done:
               "of krb5.conf. Created mappings may not be loaded.\n");
         /* Ignore */
     }
+
+    return ret;
+}
+
+errno_t fix_domain_in_name_list(TALLOC_CTX *mem_ctx,
+                                struct sss_domain_info *dom,
+                                char **in, char ***_out)
+{
+    int ret;
+    size_t c;
+    TALLOC_CTX *tmp_ctx;
+    char **out;
+    struct sss_domain_info *head;
+    struct sss_domain_info *out_domain;
+    char *in_name;
+    char *in_domain;
+
+    head = get_domains_head(dom);
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_new failed.\n");
+        return ENOMEM;
+    }
+
+    /* count elements */
+    for (c = 0; in[c] != NULL; c++);
+
+    out = talloc_zero_array(tmp_ctx, char *, c + 1);
+    if (out == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_array failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    for (c = 0; in[c] != NULL; c++) {
+        ret = sss_parse_name(tmp_ctx, head->names, in[c], &in_domain,
+                              &in_name);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sss_parse_name failed for [%s].\n",
+                                      in[c]);
+            goto done;
+        }
+
+        if (in_domain == NULL) {
+            out[c] = talloc_strdup(out, in_name);
+        } else {
+            out_domain = find_domain_by_name(head, in_domain, true);
+            if (out_domain == NULL) {
+                DEBUG(SSSDBG_CRIT_FAILURE,
+                      "Cannot find domain with name [%s].\n", in_domain);
+                ret = EINVAL;
+                goto done;
+            }
+
+            out[c] = sss_tc_fqname(out, head->names, out_domain, in_name);
+        }
+
+        if (out[c] == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "%s failed.\n",
+                  in_domain == NULL ? "talloc_strdup" : "sss_tc_fqname");
+            ret = ENOMEM;
+            goto done;
+        }
+    }
+
+    *_out = talloc_steal(mem_ctx, out);
+
+    ret = EOK;
+
+done:
+    talloc_free(tmp_ctx);
 
     return ret;
 }

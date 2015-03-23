@@ -915,7 +915,7 @@ done:
     }
 
     if (krb5_kt_close(kr->ctx, keytab) != 0) {
-        DEBUG(SSSDBG_MINOR_FAILURE, "krb5_kt_close failed");
+        DEBUG(SSSDBG_MINOR_FAILURE, "krb5_kt_close failed\n");
     }
     if (validation_princ != NULL) {
         krb5_free_principal(kr->ctx, validation_princ);
@@ -1076,6 +1076,7 @@ static errno_t map_krb5_error(krb5_error_code kerr)
     case KRB5_LIBOS_CANTREADPWD:
         return ERR_NO_CREDS;
 
+    case KRB5_KDCREP_SKEW:
     case KRB5KRB_AP_ERR_SKEW:
     case KRB5_KDC_UNREACH:
     case KRB5_REALM_CANT_RESOLVE:
@@ -2309,6 +2310,14 @@ static krb5_error_code privileged_krb5_setup(struct krb5_req *kr,
                 DEBUG(SSSDBG_OP_FAILURE, "Cannot set up FAST\n");
                 return kerr;
             }
+        }
+    }
+
+    if (kr->send_pac) {
+        ret = sss_pac_check_and_open();
+        if (ret != EOK) {
+            DEBUG(SSSDBG_MINOR_FAILURE, "Cannot open the PAC responder socket\n");
+            /* Not fatal */
         }
     }
 

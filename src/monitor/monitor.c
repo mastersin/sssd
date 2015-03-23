@@ -646,6 +646,9 @@ static void mt_svc_sigkill(struct tevent_context *ev,
             "[%s][%d] is not responding to SIGTERM. Sending SIGKILL.\n",
             svc->name, svc->pid);
 
+    /* timer was succesfully executed and it will be released by tevent */
+    svc->kill_timer = NULL;
+
     ret = kill(svc->pid, SIGKILL);
     if (ret != EOK) {
         ret = errno;
@@ -995,9 +998,9 @@ static int get_monitor_config(struct mt_ctx *ctx)
 
     ret = add_implicit_services(ctx->cdb, ctx, &ctx->services);
     if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "Failed to add implicit configured " \
-                                  "services. Some functionality might " \
-                                  "be missing");
+        DEBUG(SSSDBG_OP_FAILURE, "Failed to add implicit configured "
+                                 "services. Some functionality might "
+                                 "be missing\n");
     }
 
     badsrv = check_services(ctx->services);

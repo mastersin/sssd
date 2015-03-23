@@ -116,6 +116,7 @@ ipa_ad_ctx_new(struct be_ctx *be_ctx,
     const char *gc_service_name;
     struct ad_srv_plugin_ctx *srv_ctx;
     char *ad_domain;
+    const char *ad_site_override;
     struct sdap_domain *sdom;
     errno_t ret;
     const char *extra_attrs;
@@ -201,12 +202,15 @@ ipa_ad_ctx_new(struct be_ctx *be_ctx,
     ad_id_ctx->sdap_id_ctx->opts = ad_options->id;
     ad_options->id_ctx = ad_id_ctx;
 
+    ad_site_override = dp_opt_get_string(ad_options->basic, AD_SITE);
+
     /* use AD plugin */
     srv_ctx = ad_srv_plugin_ctx_init(be_ctx, be_ctx->be_res,
                                      default_host_dbs,
                                      ad_id_ctx->ad_options->id,
                                      id_ctx->server_mode->hostname,
-                                     ad_domain);
+                                     ad_domain,
+                                     ad_site_override);
     if (srv_ctx == NULL) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Out of memory?\n");
         return ENOMEM;
@@ -1654,17 +1658,17 @@ int ipa_subdom_init(struct be_ctx *be_ctx,
                                          NULL);
     if (ret != EOK) {
         DEBUG(SSSDBG_MINOR_FAILURE,
-              "Failed to add subdom reset timeouts callback");
+              "Failed to add subdom reset timeouts callback\n");
     }
 
     ret = be_add_online_cb(ctx, be_ctx, ipa_subdom_online_cb, ctx, NULL);
     if (ret != EOK) {
-        DEBUG(SSSDBG_MINOR_FAILURE, "Failed to add subdom online callback");
+        DEBUG(SSSDBG_MINOR_FAILURE, "Failed to add subdom online callback\n");
     }
 
     ret = be_add_offline_cb(ctx, be_ctx, ipa_subdom_offline_cb, ctx, NULL);
     if (ret != EOK) {
-        DEBUG(SSSDBG_MINOR_FAILURE, "Failed to add subdom offline callback");
+        DEBUG(SSSDBG_MINOR_FAILURE, "Failed to add subdom offline callback\n");
     }
 
     ret = ipa_subdom_reinit(ctx);

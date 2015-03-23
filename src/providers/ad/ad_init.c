@@ -159,6 +159,7 @@ sssm_ad_id_init(struct be_ctx *bectx,
     struct ad_id_ctx *ad_ctx;
     const char *hostname;
     const char *ad_domain;
+    const char *ad_site_override;
     struct ad_srv_plugin_ctx *srv_ctx;
 
     if (!ad_options) {
@@ -234,9 +235,12 @@ sssm_ad_id_init(struct be_ctx *bectx,
     if (dp_opt_get_bool(ad_options->basic, AD_ENABLE_DNS_SITES)) {
         /* use AD plugin */
         ad_domain = dp_opt_get_string(ad_options->basic, AD_DOMAIN);
+        ad_site_override = dp_opt_get_string(ad_options->basic, AD_SITE);
+
         srv_ctx = ad_srv_plugin_ctx_init(bectx, bectx->be_res,
                                          default_host_dbs, ad_options->id,
-                                         hostname, ad_domain);
+                                         hostname, ad_domain,
+                                         ad_site_override);
         if (srv_ctx == NULL) {
             DEBUG(SSSDBG_FATAL_FAILURE, "Out of memory?\n");
             ret = ENOMEM;
@@ -453,16 +457,16 @@ sssm_ad_access_init(struct be_ctx *bectx,
     ret = sss_hash_create(access_ctx, 10, &access_ctx->gpo_map_options_table);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE,
-              "Could not create gpo_map_options hash table: [%s]",
-               strerror(ret));
+              "Could not create gpo_map_options hash table: [%s]\n",
+              strerror(ret));
         goto fail;
     }
 
     ret = ad_gpo_parse_map_options(access_ctx);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE,
-              "Could not parse gpo_map_options (invalid config): [%s]",
-               strerror(ret));
+              "Could not parse gpo_map_options (invalid config): [%s]\n",
+              strerror(ret));
         goto fail;
     }
 

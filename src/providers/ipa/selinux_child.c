@@ -135,6 +135,22 @@ static errno_t prepare_response(TALLOC_CTX *mem_ctx,
     return EOK;
 }
 
+static int sc_set_seuser(const char *login_name, const char *seuser_name,
+                         const char *mls)
+{
+    int ret;
+    mode_t old_mask;
+
+    /* This is a workaround for
+     * https://bugzilla.redhat.com/show_bug.cgi?id=1186422 to make sure
+     * the directories are created with the expected permissions
+     */
+    old_mask = umask(0);
+    ret = set_seuser(login_name, seuser_name, mls);
+    umask(old_mask);
+    return ret;
+}
+
 int main(int argc, const char *argv[])
 {
     int opt;
@@ -197,7 +213,33 @@ int main(int argc, const char *argv[])
 
     DEBUG(SSSDBG_TRACE_FUNC, "selinux_child started.\n");
     DEBUG(SSSDBG_TRACE_INTERNAL,
-          "Running as [%"SPRIuid"][%"SPRIgid"].\n", geteuid(), getegid());
+          "Running with effective IDs: [%"SPRIuid"][%"SPRIgid"].\n",
+          geteuid(), getegid());
+
+    /* libsemanage calls access(2) which works with real IDs, not effective.
+     * We need to switch also the real ID to 0.
+     */
+    if (getuid() != 0) {
+        ret = setuid(0);
+        if (ret == -1) {
+            ret = errno;
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "setuid failed: %d, selinux_child might not work!\n", ret);
+        }
+    }
+
+    if (getgid() != 0) {
+        ret = setgid(0);
+        if (ret == -1) {
+            ret = errno;
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "setgid failed: %d, selinux_child might not work!\n", ret);
+        }
+    }
+
+    DEBUG(SSSDBG_TRACE_INTERNAL,
+          "Running with real IDs [%"SPRIuid"][%"SPRIgid"].\n",
+          getuid(), getgid());
 
     main_ctx = talloc_new(NULL);
     if (main_ctx == NULL) {
@@ -240,7 +282,7 @@ int main(int argc, const char *argv[])
 
     DEBUG(SSSDBG_TRACE_FUNC, "performing selinux operations\n");
 
-    ret = set_seuser(ibuf->username, ibuf->seuser, ibuf->mls_range);
+    ret = sc_set_seuser(ibuf->username, ibuf->seuser, ibuf->mls_range);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Cannot set SELinux login context.\n");
         goto fail;

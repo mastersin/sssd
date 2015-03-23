@@ -33,6 +33,7 @@
 #include "util/util.h"
 #include "util/child_common.h"
 #include "providers/dp_backend.h"
+#include "providers/ad/ad_gpo.h"
 #include "sss_cli.h"
 
 #define SMB_BUFFER_SIZE 65536
@@ -206,6 +207,7 @@ static errno_t prepare_gpo_cache(TALLOC_CTX *mem_ctx,
     char *first = NULL;
     char *last = NULL;
     char *smb_path_with_suffix = NULL;
+    errno_t ret;
 
     smb_path_with_suffix = talloc_strdup(mem_ctx, input_smb_path_with_suffix);
     if (smb_path_with_suffix == NULL) {
@@ -241,9 +243,13 @@ static errno_t prepare_gpo_cache(TALLOC_CTX *mem_ctx,
             DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
             return ENOMEM;
         }
+        DEBUG(SSSDBG_TRACE_FUNC, "Storing GPOs in %s\n", current_dir);
 
         if ((mkdir(current_dir, 0644)) < 0 && errno != EEXIST) {
-            return EINVAL;
+            ret = errno;
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "mkdir(%s) failed: %d\n", current_dir, ret);
+            return ret;
         }
 
         ptr = last;
@@ -601,6 +607,7 @@ perform_smb_operations(int cached_gpt_version,
         goto done;
     }
 
+    smbc_setOptionDebugToStderr(smbc_ctx, 1);
     smbc_setFunctionAuthData(smbc_ctx, sssd_krb_get_auth_data_fn);
     smbc_setOptionUseKerberos(smbc_ctx, 1);
 
@@ -777,7 +784,7 @@ main(int argc, const char *argv[])
 
     errno = 0;
 
-    written = sss_atomic_write_s(STDOUT_FILENO, resp->buf, resp->size);
+    written = sss_atomic_write_s(AD_GPO_CHILD_OUT_FILENO, resp->buf, resp->size);
     if (written == -1) {
         ret = errno;
         DEBUG(SSSDBG_CRIT_FAILURE, "write failed [%d][%s].\n", ret,
@@ -792,13 +799,13 @@ main(int argc, const char *argv[])
     }
 
     DEBUG(SSSDBG_TRACE_FUNC, "gpo_child completed successfully\n");
-    close(STDOUT_FILENO);
+    close(AD_GPO_CHILD_OUT_FILENO);
     talloc_free(main_ctx);
     return EXIT_SUCCESS;
 
 fail:
     DEBUG(SSSDBG_CRIT_FAILURE, "gpo_child failed!\n");
-    close(STDOUT_FILENO);
+    close(AD_GPO_CHILD_OUT_FILENO);
     talloc_free(main_ctx);
     return EXIT_FAILURE;
 }

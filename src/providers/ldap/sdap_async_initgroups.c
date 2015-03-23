@@ -41,6 +41,7 @@ static errno_t sdap_add_incomplete_groups(struct sysdb_ctx *sysdb,
     int i, mi, ai;
     const char *groupname;
     const char *original_dn;
+    const char *uuid = NULL;
     char **missing;
     gid_t gid;
     int ret;
@@ -191,15 +192,24 @@ static errno_t sdap_add_incomplete_groups(struct sysdb_ctx *sysdb,
                                              &original_dn);
                 if (ret) {
                     DEBUG(SSSDBG_FUNC_DATA,
-                          "The group has no name original DN\n");
+                          "The group has no original DN\n");
                     original_dn = NULL;
+                }
+
+                ret = sysdb_attrs_get_string(ldap_groups[ai],
+                                             SYSDB_UUID,
+                                             &uuid);
+                if (ret) {
+                    DEBUG(SSSDBG_FUNC_DATA,
+                          "The group has no UUID\n");
+                    uuid = NULL;
                 }
 
                 DEBUG(SSSDBG_TRACE_INTERNAL,
                       "Adding fake group %s to sysdb\n", groupname);
                 ret = sysdb_add_incomplete_group(domain, groupname, gid,
-                                                 original_dn, sid_str, posix,
-                                                 now);
+                                                 original_dn, sid_str,
+                                                 uuid, posix, now);
                 if (ret != EOK) {
                     goto done;
                 }
@@ -1782,7 +1792,7 @@ static void sdap_initgr_rfc2307bis_done(struct tevent_req *subreq)
     ret = save_rfc2307bis_groups(state);
     if (ret != EOK) {
         DEBUG(SSSDBG_MINOR_FAILURE,
-              "Could not save groups memberships [%d]", ret);
+              "Could not save groups memberships [%d]\n", ret);
         goto fail;
     }
 
@@ -1790,7 +1800,7 @@ static void sdap_initgr_rfc2307bis_done(struct tevent_req *subreq)
     ret = save_rfc2307bis_group_memberships(state);
     if (ret != EOK) {
         DEBUG(SSSDBG_MINOR_FAILURE,
-              "Could not save group memberships [%d]", ret);
+              "Could not save group memberships [%d]\n", ret);
         goto fail;
     }
 
@@ -1798,7 +1808,7 @@ static void sdap_initgr_rfc2307bis_done(struct tevent_req *subreq)
     ret = save_rfc2307bis_user_memberships(state);
     if (ret != EOK) {
         DEBUG(SSSDBG_MINOR_FAILURE,
-              "Could not save user memberships [%d]", ret);
+              "Could not save user memberships [%d]\n", ret);
         goto fail;
     }
 

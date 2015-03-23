@@ -20,10 +20,9 @@ m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 AC_DISABLE_STATIC
 AC_PROG_INSTALL
 AC_PROG_LIBTOOL
-AC_PROG_MKDIR_P
 m4_ifdef([AC_PROG_MKDIR_P],
          [AC_PROG_MKDIR_P],
-         [MKDIR_P="mkdir -p"])
+         [AC_SUBST([MKDIR_P], "mkdir -p")])
 LT_LIB_DLLOAD
 AC_CONFIG_MACRO_DIR([m4])
 AM_GNU_GETTEXT([external])
@@ -173,6 +172,7 @@ m4_include([src/external/sasl.m4])
 m4_include([src/external/configlib.m4])
 m4_include([src/external/libnfsidmap.m4])
 m4_include([src/external/cwrap.m4])
+m4_include([src/external/libresolv.m4])
 
 if test x$build_config_lib = xyes; then
     m4_include([src/external/libaugeas.m4])
@@ -248,7 +248,6 @@ AM_CONDITIONAL([HAVE_MANPAGES], [test "x$HAVE_MANPAGES" != "x"])
 AM_CONDITIONAL([HAVE_PO4A], [test "x$PO4A" != "xno"])
 
 if test x$HAVE_PYTHON_BINDINGS != x; then
-    PYTHON=python2
     AM_PATH_PYTHON([2.4])
     AM_CHECK_PYTHON_HEADERS([],
                             AC_MSG_ERROR([Could not find python headers]))

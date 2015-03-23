@@ -589,6 +589,9 @@ errno_t get_dom_names(TALLOC_CTX *mem_ctx,
                       char ***_dom_names,
                       int *_dom_names_count);
 
+errno_t fix_domain_in_name_list(TALLOC_CTX *mem_ctx,
+                                struct sss_domain_info *dom,
+                                char **in, char ***_out);
 /* from util_lock.c */
 errno_t sss_br_lock_file(int fd, size_t start, size_t len,
                          int num_tries, useconds_t wait);
@@ -625,6 +628,10 @@ errno_t switch_creds(TALLOC_CTX *mem_ctx,
 errno_t restore_creds(struct sss_creds *saved_creds);
 
 /* from sss_semanage.c */
+/* Please note that libsemange relies on files and directories created with
+ * certain permissions. Therefore the caller should make sure the umask is
+ * not too restricted (especially when called from the daemon code).
+ */
 int set_seuser(const char *login_name, const char *seuser_name,
                const char *mlsrange);
 int del_seuser(const char *login_name);

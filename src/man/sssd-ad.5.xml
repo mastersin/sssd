@@ -228,6 +228,20 @@ FOREST:EXAMPLE.COM:(memberOf=cn=admins,ou=groups,dc=example,dc=com)
                 </varlistentry>
 
                 <varlistentry>
+                    <term>ad_site (string)</term>
+                    <listitem>
+                        <para>
+                          Specify AD site to which client should try to connect.
+                          If this option is not provided, the AD site will be
+                          auto-discovered.
+                        </para>
+                        <para>
+                            Default: Not set
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>ad_enable_gc (boolean)</term>
                     <listitem>
                         <para>
@@ -579,6 +593,11 @@ FOREST:EXAMPLE.COM:(memberOf=cn=admins,ou=groups,dc=example,dc=com)
                                         sudo-i
                                     </para>
                                 </listitem>
+                                <listitem>
+                                    <para>
+                                        systemd-user
+                                    </para>
+                                </listitem>
                             </itemizedlist>
                         </para>
                     </listitem>
@@ -718,6 +737,9 @@ FOREST:EXAMPLE.COM:(memberOf=cn=admins,ou=groups,dc=example,dc=com)
                             Optional. Applicable only when dyndns_update
                             is true. Choose the interface whose IP address
                             should be used for dynamic DNS updates.
+                        </para>
+                        <para>
+                            NOTE: This option currently supports only one interface.
                         </para>
                         <para>
                             Default: Use the IP address of the AD LDAP connection
