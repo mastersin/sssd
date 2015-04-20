@@ -147,9 +147,13 @@ static void ipa_s2n_exop_done(struct sdap_op *op,
           sss_ldap_err2string(result), result, errmsg);
 
     if (result != LDAP_SUCCESS) {
-        DEBUG(SSSDBG_OP_FAILURE, "ldap_extended_operation failed, " \
-                                 "server logs might contain more details.\n");
-        ret = ERR_NETWORK_IO;
+        if (result == LDAP_NO_SUCH_OBJECT) {
+            ret = ENOENT;
+        } else {
+            DEBUG(SSSDBG_OP_FAILURE, "ldap_extended_operation failed, server " \
+                                     "logs might contain more details.\n");
+            ret = ERR_NETWORK_IO;
+        }
         goto done;
     }
 
@@ -159,6 +163,11 @@ static void ipa_s2n_exop_done(struct sdap_op *op,
         DEBUG(SSSDBG_OP_FAILURE, "ldap_parse_extendend_result failed (%d)\n",
                                  ret);
         ret = ERR_NETWORK_IO;
+        goto done;
+    }
+    if (retdata == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Missing exop result data.\n");
+        ret = EINVAL;
         goto done;
     }
 
@@ -1027,7 +1036,8 @@ static void ipa_s2n_get_fqlist_next(struct tevent_req *subreq)
         goto fail;
     }
 
-    if (strcmp(state->ipa_ctx->view_name, SYSDB_DEFAULT_VIEW_NAME) == 0) {
+    if (state->ipa_ctx->view_name == NULL ||
+            strcmp(state->ipa_ctx->view_name, SYSDB_DEFAULT_VIEW_NAME) == 0) {
         ret = ipa_s2n_get_fqlist_save_step(req);
         if (ret == EOK) {
             tevent_req_done(req);
@@ -1243,7 +1253,9 @@ static errno_t process_members(struct sss_domain_info *domain,
 
     if (members == NULL) {
         DEBUG(SSSDBG_TRACE_INTERNAL, "No members\n");
-        *_missing_members = NULL;
+        if (_missing_members != NULL) {
+            *_missing_members = NULL;
+        }
         return EOK;
     }
 
@@ -1281,6 +1293,7 @@ static errno_t process_members(struct sss_domain_info *domain,
                 dn_str = ldb_dn_get_linearized(msg->dn);
                 if (dn_str == NULL) {
                     DEBUG(SSSDBG_OP_FAILURE, "ldb_dn_get_linearized failed.\n");
+                    ret = EINVAL;
                     goto done;
                 }
 
@@ -1602,6 +1615,7 @@ static void ipa_s2n_get_user_done(struct tevent_req *subreq)
     }
 
     if (ret == ENOENT
+            || state->ipa_ctx->view_name == NULL
             || strcmp(state->ipa_ctx->view_name,
                       SYSDB_DEFAULT_VIEW_NAME) == 0) {
         ret = ipa_s2n_save_objects(state->dom, state->req_input, state->attrs,
@@ -2211,6 +2225,7 @@ static void ipa_s2n_get_fqlist_done(struct tevent_req  *subreq)
     }
 
     if (state->override_attrs == NULL
+            && state->ipa_ctx->view_name != NULL
             && strcmp(state->ipa_ctx->view_name,
                       SYSDB_DEFAULT_VIEW_NAME) != 0) {
         subreq = ipa_get_ad_override_send(state, state->ev,

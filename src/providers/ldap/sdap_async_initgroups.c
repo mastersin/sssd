@@ -29,12 +29,12 @@
 #include "providers/ldap/sdap_users.h"
 
 /* ==Save-fake-group-list=====================================*/
-static errno_t sdap_add_incomplete_groups(struct sysdb_ctx *sysdb,
-                                          struct sss_domain_info *domain,
-                                          struct sdap_options *opts,
-                                          char **groupnames,
-                                          struct sysdb_attrs **ldap_groups,
-                                          int ldap_groups_count)
+errno_t sdap_add_incomplete_groups(struct sysdb_ctx *sysdb,
+                                   struct sss_domain_info *domain,
+                                   struct sdap_options *opts,
+                                   char **groupnames,
+                                   struct sysdb_attrs **ldap_groups,
+                                   int ldap_groups_count)
 {
     TALLOC_CTX *tmp_ctx;
     struct ldb_message *msg;
@@ -51,6 +51,7 @@ static errno_t sdap_add_incomplete_groups(struct sysdb_ctx *sysdb,
     time_t now;
     char *sid_str = NULL;
     bool use_id_mapping;
+    bool need_filter;
     char *tmp_name;
 
     /* There are no groups in LDAP but we should add user to groups ?? */
@@ -196,13 +197,29 @@ static errno_t sdap_add_incomplete_groups(struct sysdb_ctx *sysdb,
                     original_dn = NULL;
                 }
 
+                ret = sysdb_handle_original_uuid(
+                                   opts->group_map[SDAP_AT_GROUP_UUID].def_name,
+                                   ldap_groups[ai],
+                                   opts->group_map[SDAP_AT_GROUP_UUID].sys_name,
+                                   ldap_groups[ai], "uniqueIDstr");
                 ret = sysdb_attrs_get_string(ldap_groups[ai],
-                                             SYSDB_UUID,
+                                             "uniqueIDstr",
                                              &uuid);
                 if (ret) {
                     DEBUG(SSSDBG_FUNC_DATA,
                           "The group has no UUID\n");
                     uuid = NULL;
+                }
+
+                ret = sdap_check_ad_group_type(domain, opts, ldap_groups[ai],
+                                               groupname, &need_filter);
+                if (ret != EOK) {
+                    goto done;
+                }
+
+                if (need_filter) {
+                    posix = false;
+                    gid = 0;
                 }
 
                 DEBUG(SSSDBG_TRACE_INTERNAL,
@@ -3152,7 +3169,7 @@ static void sdap_get_initgr_done(struct tevent_req *subreq)
 
     subreq = groups_get_send(req, state->ev, state->id_ctx,
                              state->id_ctx->opts->sdom, state->conn,
-                             gid, BE_FILTER_IDNUM, BE_ATTR_ALL, NULL);
+                             gid, BE_FILTER_IDNUM, BE_ATTR_ALL, false, false);
     if (!subreq) {
         ret = ENOMEM;
         goto fail;

@@ -528,6 +528,7 @@ struct groups_get_state {
     int dp_error;
     int sdap_ret;
     bool noexist_delete;
+    bool no_members;
 };
 
 static int groups_get_retry(struct tevent_req *req);
@@ -544,7 +545,8 @@ struct tevent_req *groups_get_send(TALLOC_CTX *memctx,
                                    const char *name,
                                    int filter_type,
                                    int attrs_type,
-                                   bool noexist_delete)
+                                   bool noexist_delete,
+                                   bool no_members)
 {
     struct tevent_req *req;
     struct groups_get_state *state;
@@ -567,6 +569,7 @@ struct tevent_req *groups_get_send(TALLOC_CTX *memctx,
     state->conn = conn;
     state->dp_error = DP_ERR_FATAL;
     state->noexist_delete = noexist_delete;
+    state->no_members = no_members;
 
     state->op = sdap_id_op_create(state, state->conn->conn_cache);
     if (!state->op) {
@@ -713,7 +716,8 @@ struct tevent_req *groups_get_send(TALLOC_CTX *memctx,
 
     /* TODO: handle attrs_type */
     ret = build_attrs_from_map(state, ctx->opts->group_map, SDAP_OPTS_GROUP,
-                               state->domain->ignore_group_members ?
+                               (state->domain->ignore_group_members
+                                    || state->no_members) ?
                                    (const char **)member_filter : NULL,
                                &state->attrs, NULL);
 
@@ -845,7 +849,7 @@ static void groups_get_search(struct tevent_req *req)
                                   state->attrs, state->filter,
                                   dp_opt_get_int(state->ctx->opts->basic,
                                                  SDAP_SEARCH_TIMEOUT),
-                                  false);
+                                  false, state->no_members);
     if (!subreq) {
         tevent_req_error(req, ENOMEM);
         return;
@@ -1310,7 +1314,6 @@ void sdap_account_info_handler(struct be_req *breq)
 
 /* A generic LDAP account info handler */
 struct sdap_handle_acct_req_state {
-    struct be_req *breq;
     struct be_acct_req *ar;
     const char *err;
     int dp_error;
@@ -1321,7 +1324,7 @@ static void sdap_handle_acct_req_done(struct tevent_req *subreq);
 
 struct tevent_req *
 sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
-                          struct be_req *breq,
+                          struct be_ctx *be_ctx,
                           struct be_acct_req *ar,
                           struct sdap_id_ctx *id_ctx,
                           struct sdap_domain *sdom,
@@ -1330,11 +1333,9 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
 {
     struct tevent_req *req;
     struct tevent_req *subreq;
-    struct be_ctx *be_ctx;
     struct sdap_handle_acct_req_state *state;
     errno_t ret;
 
-    be_ctx = be_req_get_be_ctx(breq);
 
     req = tevent_req_create(mem_ctx, &state,
                             struct sdap_handle_acct_req_state);
@@ -1342,7 +1343,6 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
         ret = ENOMEM;
         goto done;
     }
-    state->breq = breq;
     state->ar = ar;
 
     if (ar == NULL) {
@@ -1362,7 +1362,7 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        subreq = users_get_send(breq, be_ctx->ev, id_ctx,
+        subreq = users_get_send(state, be_ctx->ev, id_ctx,
                                 sdom, conn,
                                 ar->filter_value,
                                 ar->filter_type,
@@ -1382,12 +1382,12 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        subreq = groups_get_send(breq, be_ctx->ev, id_ctx,
+        subreq = groups_get_send(state, be_ctx->ev, id_ctx,
                                  sdom, conn,
                                  ar->filter_value,
                                  ar->filter_type,
                                  ar->attr_type,
-                                 noexist_delete);
+                                 noexist_delete, false);
         break;
 
     case BE_REQ_INITGROUPS: /* init groups for user */
@@ -1402,7 +1402,7 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        subreq = groups_by_user_send(breq, be_ctx->ev, id_ctx,
+        subreq = groups_by_user_send(state, be_ctx->ev, id_ctx,
                                      sdom, conn,
                                      ar->filter_value,
                                      ar->extra_value,
@@ -1416,7 +1416,7 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        subreq = ldap_netgroup_get_send(breq, be_ctx->ev, id_ctx,
+        subreq = ldap_netgroup_get_send(state, be_ctx->ev, id_ctx,
                                         sdom, conn,
                                         ar->filter_value,
                                         noexist_delete);
@@ -1439,7 +1439,7 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        subreq = services_get_send(breq, be_ctx->ev, id_ctx,
+        subreq = services_get_send(state, be_ctx->ev, id_ctx,
                                    sdom, conn,
                                    ar->filter_value,
                                    ar->extra_value,
@@ -1454,7 +1454,7 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        subreq = get_user_and_group_send(breq, be_ctx->ev, id_ctx,
+        subreq = get_user_and_group_send(state, be_ctx->ev, id_ctx,
                                          sdom, conn,
                                          ar->filter_value,
                                          ar->filter_type,
@@ -1469,7 +1469,7 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        subreq = get_user_and_group_send(breq, be_ctx->ev, id_ctx,
+        subreq = get_user_and_group_send(state, be_ctx->ev, id_ctx,
                                          sdom, conn,
                                          ar->filter_value,
                                          ar->filter_type,
@@ -1485,7 +1485,7 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
-        subreq = get_user_and_group_send(breq, be_ctx->ev, id_ctx,
+        subreq = get_user_and_group_send(state, be_ctx->ev, id_ctx,
                                          sdom, conn,
                                          ar->filter_value,
                                          ar->filter_type,
@@ -1617,7 +1617,7 @@ void sdap_handle_account_info(struct be_req *breq, struct sdap_id_ctx *ctx,
                                  EINVAL, "Invalid private data");
     }
 
-    req = sdap_handle_acct_req_send(breq, breq, ar, ctx,
+    req = sdap_handle_acct_req_send(breq, ctx->be, ar, ctx,
                                     ctx->opts->sdom, conn, true);
     if (req == NULL) {
         return sdap_handler_done(breq, DP_ERR_FATAL, ENOMEM, "Out of memory");
@@ -1722,7 +1722,7 @@ static struct tevent_req *get_user_and_group_send(TALLOC_CTX *memctx,
     subreq = groups_get_send(req, state->ev, state->id_ctx,
                              state->sdom, state->conn,
                              state->filter_val, state->filter_type,
-                             state->attrs_type, state->noexist_delete);
+                             state->attrs_type, state->noexist_delete, false);
     if (subreq == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "users_get_send failed.\n");
         ret = ENOMEM;
