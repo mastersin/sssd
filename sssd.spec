@@ -375,6 +375,8 @@ find %buildroot -name "*.la" -exec rm -f {} \;
 # Suppress developer-only documentation
 rm -Rf %buildroot%_docdir/%name
 
+mkdir -p %buildroot%pubconfpath/krb5.include.d
+
 %check
 export CK_TIMEOUT_MULTIPLIER=10
 %make check VERBOSE=yes
@@ -432,6 +434,7 @@ unset CK_TIMEOUT_MULTIPLIER
 %ghost %attr(0644,root,root) %verify(not md5 size mtime) %mcpath/group
 %dir %pipepath
 %dir %pubconfpath
+%dir %pubconfpath/krb5.include.d
 %dir %gpocachepath
 %attr(700,root,root) %dir %pipepath/private
 %attr(750,root,root) %dir %_var/log/%name
