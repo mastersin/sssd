@@ -176,7 +176,7 @@ if HAVE_CHECK
         safe-format-tests
 
 # disable tests
-#        find_uid-tests \
+#        find_uid-tests
 
 if BUILD_SSH
     non_interactive_check_based_tests += sysdb_ssh-tests
@@ -236,7 +236,7 @@ if HAVE_CMOCKA
         $(NULL)
 
 # disable tests
-#        test-find-uid \
+#        test-find-uid
 
 if HAVE_LIBRESOLV
 non_interactive_cmocka_based_tests += test_resolv_fake
