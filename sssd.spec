@@ -419,6 +419,11 @@ unset CK_TIMEOUT_MULTIPLIER
 %_sbindir/useradd -r -n -g %sssd_user -d %sssdstatedir -s /dev/null -c "User for sssd" %sssd_user 2> /dev/null ||:
 
 %post
+# Sinse 0.13.0 we are run sssd as non-root user. Migrate files owner.
+chown %sssd_user:%sssd_user %dbpath/cache* %dbpath/ccache* %dbpath/config.ldb
+chown %sssd_user:%sssd_user %mcpath/*
+chown %sssd_user:%sssd_user %pubconfpath/kdcinfo* %pubconfpath/kpasswdinfo*
+chown %sssd_user:%sssd_user  %_var/log/%name/sssd_*
 %post_service %name
 
 %preun
@@ -592,7 +597,6 @@ unset CK_TIMEOUT_MULTIPLIER
 %files dbus
 %doc COPYING
 %_libexecdir/%name/sssd_ifp
-# %_libdir/%name/libsss_config.so
 %_man5dir/sssd-ifp.5*
 # InfoPipe DBus plumbing
 %_sysconfdir/dbus-1/system.d/org.freedesktop.sssd.infopipe.conf
