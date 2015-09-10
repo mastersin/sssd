@@ -38,6 +38,7 @@
  * @{
  */
 
+#define CONFDB_DEFAULT_CFG_FILE_VER 2
 #define CONFDB_FILE "config.ldb"
 #define CONFDB_DEFAULT_CONFIG_FILE SSSD_CONF_DIR"/sssd.conf"
 #define SSSD_MIN_ID 1
@@ -115,6 +116,8 @@
 #define CONFDB_PAM_TRUSTED_USERS "pam_trusted_users"
 #define CONFDB_PAM_PUBLIC_DOMAINS "pam_public_domains"
 #define CONFDB_PAM_ACCOUNT_EXPIRED_MESSAGE "pam_account_expired_message"
+#define CONFDB_PAM_CERT_AUTH "pam_cert_auth"
+#define CONFDB_PAM_CERT_DB_PATH "pam_cert_db_path"
 
 /* SUDO */
 #define CONFDB_SUDO_CONF_ENTRY "config/sudo"
@@ -122,6 +125,8 @@
 #define CONFDB_DEFAULT_SUDO_CACHE_TIMEOUT 180
 #define CONFDB_SUDO_TIMED "sudo_timed"
 #define CONFDB_DEFAULT_SUDO_TIMED false
+#define CONFDB_SUDO_INVERSE_ORDER "sudo_inverse_order"
+#define CONFDB_DEFAULT_SUDO_INVERSE_ORDER false
 
 /* autofs */
 #define CONFDB_AUTOFS_CONF_ENTRY "config/autofs"
@@ -133,6 +138,8 @@
 #define CONFDB_DEFAULT_SSH_HASH_KNOWN_HOSTS true
 #define CONFDB_SSH_KNOWN_HOSTS_TIMEOUT "ssh_known_hosts_timeout"
 #define CONFDB_DEFAULT_SSH_KNOWN_HOSTS_TIMEOUT 180
+#define CONFDB_SSH_CA_DB "ca_db"
+#define CONFDB_DEFAULT_SSH_CA_DB SYSCONFDIR"/pki/nssdb"
 
 /* PAC */
 #define CONFDB_PAC_CONF_ENTRY "config/pac"
@@ -140,6 +147,7 @@
 /* InfoPipe */
 #define CONFDB_IFP_CONF_ENTRY "config/ifp"
 #define CONFDB_IFP_USER_ATTR_LIST "user_attributes"
+#define CONFDB_IFP_WILDCARD_LIMIT "wildcard_limit"
 
 /* Domains */
 #define CONFDB_DOMAIN_PATH_TMPL "config/domain/%s"
@@ -265,7 +273,7 @@ struct sss_domain_info {
     struct timeval subdomains_last_checked;
 
     bool has_views;
-    char *view_name;
+    const char *view_name;
 
     struct sss_domain_info *prev;
     struct sss_domain_info *next;

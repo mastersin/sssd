@@ -47,7 +47,6 @@ struct sdap_dyndns_update_state {
     struct dp_option *opts;
 
     const char *hostname;
-    const char *dns_zone;
     const char *realm;
     const char *servername;
     int ttl;
@@ -59,9 +58,8 @@ struct sdap_dyndns_update_state {
     bool update_ptr;
     bool check_diff;
     enum be_nsupdate_auth auth_type;
-    bool use_server_with_nsupdate;
+    bool fallback_mode;
     char *update_msg;
-    size_t pass_num;
 };
 
 static void sdap_dyndns_update_addrs_done(struct tevent_req *subreq);
@@ -82,7 +80,6 @@ sdap_dyndns_update_send(TALLOC_CTX *mem_ctx,
                         enum be_nsupdate_auth auth_type,
                         const char *ifname,
                         const char *hostname,
-                        const char *dns_zone,
                         const char *realm,
                         const char *servername,
                         const int ttl,
@@ -92,6 +89,7 @@ sdap_dyndns_update_send(TALLOC_CTX *mem_ctx,
     struct tevent_req *req;
     struct tevent_req *subreq;
     struct sdap_dyndns_update_state *state;
+    const char *conf_servername;
 
     req = tevent_req_create(mem_ctx, &state, struct sdap_dyndns_update_state);
     if (req == NULL) {
@@ -100,16 +98,20 @@ sdap_dyndns_update_send(TALLOC_CTX *mem_ctx,
     state->check_diff = check_diff;
     state->update_ptr = dp_opt_get_bool(opts, DP_OPT_DYNDNS_UPDATE_PTR);
     state->hostname = hostname;
-    state->dns_zone = dns_zone;
     state->realm = realm;
     state->servername = servername;
-    state->use_server_with_nsupdate = false;
+    state->fallback_mode = false;
     state->ttl = ttl;
     state->be_res = be_ctx->be_res;
     state->ev = ev;
     state->opts = opts;
     state->auth_type = auth_type;
-    state->pass_num = 0;
+
+    /* fallback servername is overriden by user option */
+    conf_servername = dp_opt_get_string(opts, DP_OPT_DYNDNS_SERVER);
+    if (conf_servername != NULL) {
+        state->servername = conf_servername;
+    }
 
     if (ifname) {
        /* Unless one family is restricted, just replace all
@@ -310,21 +312,16 @@ sdap_dyndns_update_step(struct tevent_req *req)
     struct sdap_dyndns_update_state *state;
     const char *servername;
     struct tevent_req *subreq;
-    const char *dns_zone = NULL;
 
     state = tevent_req_data(req, struct sdap_dyndns_update_state);
 
     servername = NULL;
-    if (state->use_server_with_nsupdate == true &&
+    if (state->fallback_mode == true &&
         state->servername) {
         servername = state->servername;
     }
 
-    if (state->pass_num > 0) {
-        dns_zone = state->dns_zone;
-    }
-
-    ret = be_nsupdate_create_fwd_msg(state, state->realm, dns_zone,
+    ret = be_nsupdate_create_fwd_msg(state, state->realm,
                                      servername, state->hostname,
                                      state->ttl, state->remove_af,
                                      state->addresses,
@@ -333,7 +330,6 @@ sdap_dyndns_update_step(struct tevent_req *req)
         DEBUG(SSSDBG_OP_FAILURE, "Can't get addresses for DNS update\n");
         return ret;
     }
-    state->pass_num++;
 
     /* Fork a child process to perform the DNS update */
     subreq = be_nsupdate_send(state, state->ev, state->auth_type,
@@ -363,9 +359,9 @@ sdap_dyndns_update_done(struct tevent_req *subreq)
     talloc_zfree(subreq);
     if (ret != EOK) {
         /* If the update didn't succeed, we can retry using the server name */
-        if (state->use_server_with_nsupdate == false && state->servername &&
+        if (state->fallback_mode == false && state->servername &&
             WIFEXITED(child_status) && WEXITSTATUS(child_status) != 0) {
-            state->use_server_with_nsupdate = true;
+            state->fallback_mode = true;
             DEBUG(SSSDBG_MINOR_FAILURE,
                    "nsupdate failed, retrying with server name\n");
             ret = sdap_dyndns_update_step(req);
@@ -404,7 +400,7 @@ sdap_dyndns_update_ptr_step(struct tevent_req *req)
     state = tevent_req_data(req, struct sdap_dyndns_update_state);
 
     servername = NULL;
-    if (state->use_server_with_nsupdate == true &&
+    if (state->fallback_mode == true &&
         state->servername) {
         servername = state->servername;
     }
@@ -447,9 +443,9 @@ sdap_dyndns_update_ptr_done(struct tevent_req *subreq)
     talloc_zfree(subreq);
     if (ret != EOK) {
         /* If the update didn't succeed, we can retry using the server name */
-        if (state->use_server_with_nsupdate == false && state->servername &&
+        if (state->fallback_mode == false && state->servername &&
             WIFEXITED(child_status) && WEXITSTATUS(child_status) != 0) {
-            state->use_server_with_nsupdate = true;
+            state->fallback_mode = true;
             DEBUG(SSSDBG_MINOR_FAILURE,
                    "nsupdate failed, retrying with server name\n");
             ret = sdap_dyndns_update_ptr_step(req);
@@ -482,6 +478,65 @@ static void sdap_dyndns_get_addrs_done(struct tevent_req *subreq);
 static errno_t sdap_dyndns_add_ldap_conn(struct sdap_dyndns_get_addrs_state *state,
                                          struct sdap_handle *sh);
 
+static errno_t get_ifaces_addrs(TALLOC_CTX *mem_ctx,
+                                const char *iface,
+                                struct sss_iface_addr **_result)
+{
+    struct sss_iface_addr *result_addrs = NULL;
+    struct sss_iface_addr *intf_addrs;
+    TALLOC_CTX *tmp_ctx;
+    char **list_of_intfs;
+    int num_of_intfs;
+    errno_t ret;
+    int i;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = split_on_separator(tmp_ctx, iface, ',', true, true, &list_of_intfs,
+                             &num_of_intfs);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE,
+              "Parsing names of interfaces failed - %d:[%s].\n",
+              ret, sss_strerror(ret));
+        goto done;
+    }
+
+    for (i = 0; i < num_of_intfs; i++) {
+        ret = sss_iface_addr_list_get(tmp_ctx, list_of_intfs[i], &intf_addrs);
+        if (ret == EOK) {
+            if (result_addrs != NULL) {
+                /* If there is already an existing list, head of this existing
+                 * list will be considered as parent talloc context for the
+                 * new list.
+                 */
+                talloc_steal(result_addrs, intf_addrs);
+            }
+            sss_iface_addr_concatenate(&result_addrs, intf_addrs);
+        } else if (ret == ENOENT) {
+            /* non-critical failure */
+            DEBUG(SSSDBG_TRACE_FUNC,
+                  "Cannot get interface %s or there are no addresses "
+                  "bind to it.\n", list_of_intfs[i]);
+        } else {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "Cannot get list of addresses from interface %s - %d:[%s]\n",
+                  list_of_intfs[i], ret, sss_strerror(ret));
+            goto done;
+        }
+    }
+
+    ret = EOK;
+    *_result = talloc_steal(mem_ctx, result_addrs);
+
+done:
+    talloc_free(tmp_ctx);
+    return ret;
+}
+
 static struct tevent_req *
 sdap_dyndns_get_addrs_send(TALLOC_CTX *mem_ctx,
                            struct tevent_context *ev,
@@ -500,10 +555,11 @@ sdap_dyndns_get_addrs_send(TALLOC_CTX *mem_ctx,
     }
 
     if (iface) {
-        ret = sss_iface_addr_list_get(state, iface, &state->addresses);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_OP_FAILURE,
-                  "Cannot get list of addresses from interface %s\n", iface);
+        ret = get_ifaces_addrs(state, iface, &state->addresses);
+        if (ret != EOK || state->addresses == NULL) {
+            DEBUG(SSSDBG_MINOR_FAILURE,
+                  "get_ifaces_addrs() failed: %d:[%s]\n",
+                  ret, sss_strerror(ret));
         }
         /* We're done. Just fake an async request completion */
         goto done;
@@ -584,7 +640,6 @@ sdap_dyndns_add_ldap_conn(struct sdap_dyndns_get_addrs_state *state,
 {
     int ret;
     int fd;
-    struct sss_iface_addr *address;
     struct sockaddr_storage ss;
     socklen_t ss_len = sizeof(ss);
 
@@ -606,18 +661,19 @@ sdap_dyndns_add_ldap_conn(struct sdap_dyndns_get_addrs_state *state,
         return ret;
     }
 
-    switch(ss.ss_family) {
-    case AF_INET:
-    case AF_INET6:
-        address = sss_iface_addr_add(state, &state->addresses, &ss);
-        if (address == NULL) {
-            return ENOMEM;
-        }
-        break;
-    default:
+    if (ss.ss_family != AF_INET && ss.ss_family != AF_INET6) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Connection to LDAP is neither IPv4 nor IPv6\n");
         return EIO;
+    }
+
+    ret = sss_get_dualstack_addresses(state, (struct sockaddr *) &ss,
+                                      &state->addresses);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE,
+              "sss_get_dualstack_addresses failed: %d:[%s]\n",
+              ret, sss_strerror(ret));
+        return ret;
     }
 
     return EOK;
