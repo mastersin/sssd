@@ -2,7 +2,7 @@
 
 Name: sssd
 Version: 1.13.1
-Release: alt0.1
+Release: alt0.0.M70C.1
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -71,7 +71,7 @@ BuildRequires: diffstat
 BuildRequires: findutils
 BuildRequires: samba-devel
 BuildRequires: libsmbclient-devel
-BuildRequires: systemd-devel libsystemd-devel
+BuildRequires: libsystemd-daemon-devel libsystemd-journal-devel libsystemd-login-devel libsystemd-id128-devel systemd-devel 
 BuildRequires: selinux-policy-targeted
 BuildRequires: cifs-utils-devel
 BuildRequires: libsasl2-devel
@@ -631,6 +631,9 @@ chown %sssd_user:%sssd_user  %_var/log/%name/sssd_*
 %_altdir/libwbclient-sss-devel
 
 %changelog
+* Fri Oct 23 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1.13.1-alt0.0.M70C.1
+- backport to c7
+
 * Thu Sep 10 2015 Alexey Shabalin <shaba@altlinux.ru> 1.13.1-alt0.1
 - upstram snapshot
 
