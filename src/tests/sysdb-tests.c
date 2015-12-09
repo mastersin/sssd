@@ -34,7 +34,7 @@
 #include "db/sysdb_autofs.h"
 #include "tests/common.h"
 
-#define TESTS_PATH "tests_sysdb"
+#define TESTS_PATH "tp_" BASE_FILE_STEM
 #define TEST_CONF_FILE "tests_conf.ldb"
 
 #define TEST_ATTR_NAME "test_attr_name"
@@ -5232,7 +5232,7 @@ START_TEST(test_sysdb_search_user_by_cert)
     fail_unless(ret == EOK, "sysdb_add_user failed with [%d][%s].",
                 ret, strerror(ret));
 
-    ret = sysdb_search_user_by_cert(test_ctx, test_ctx->domain, "ABC", &res);
+    ret = sysdb_search_user_by_cert(test_ctx, test_ctx->domain, "ABA=", &res);
     fail_unless(ret == ENOENT,
                 "Unexpected return code from sysdb_search_user_by_cert for "
                 "missing object, expected [%d], got [%d].", ENOENT, ret);

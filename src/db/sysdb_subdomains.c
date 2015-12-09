@@ -111,6 +111,8 @@ struct sss_domain_info *new_subdomain(TALLOC_CTX *mem_ctx,
     dom->enumerate = enumerate;
     dom->fqnames = true;
     dom->mpg = mpg;
+    dom->state = DOM_ACTIVE;
+
     /* If the parent domain filters out group members, the subdomain should
      * as well if configured */
     inherit_option = string_in_list(CONFDB_DOMAIN_IGNORE_GROUP_MEMBERS,
@@ -189,12 +191,13 @@ static void link_forest_roots(struct sss_domain_info *domain)
 {
     struct sss_domain_info *d;
     struct sss_domain_info *dd;
+    uint32_t gnd_flags = SSS_GND_ALL_DOMAINS;
 
-    for (d = domain; d; d = get_next_domain(d, true)) {
+    for (d = domain; d; d = get_next_domain(d, gnd_flags)) {
         d->forest_root = NULL;
     }
 
-    for (d = domain; d; d = get_next_domain(d, true)) {
+    for (d = domain; d; d = get_next_domain(d, gnd_flags)) {
         if (d->forest_root != NULL) {
             continue;
         }
@@ -203,7 +206,7 @@ static void link_forest_roots(struct sss_domain_info *domain)
             d->forest_root = d;
             DEBUG(SSSDBG_TRACE_INTERNAL, "[%s] is a forest root\n", d->name);
 
-            for (dd = domain; dd; dd = get_next_domain(dd, true)) {
+            for (dd = domain; dd; dd = get_next_domain(dd, gnd_flags)) {
                 if (dd->forest_root != NULL) {
                     continue;
                 }
@@ -268,7 +271,7 @@ errno_t sysdb_update_subdomains(struct sss_domain_info *domain)
     /* disable all domains,
      * let the search result refresh any that are still valid */
     for (dom = domain->subdomains; dom; dom = get_next_domain(dom, false)) {
-        dom->disabled = true;
+        sss_domain_set_state(dom, DOM_DISABLED);
     }
 
     if (res->count == 0) {
@@ -309,10 +312,11 @@ errno_t sysdb_update_subdomains(struct sss_domain_info *domain)
                                              SYSDB_SUBDOMAIN_TRUST_DIRECTION,
                                              0);
 
-        /* explicitly use dom->next as we need to check 'disabled' domains */
-        for (dom = domain->subdomains; dom; dom = dom->next) {
+        for (dom = domain->subdomains; dom;
+                dom = get_next_domain(dom, SSS_GND_INCLUDE_DISABLED)) {
             if (strcasecmp(dom->name, name) == 0) {
-                dom->disabled = false;
+                sss_domain_set_state(dom, DOM_ACTIVE);
+
                 /* in theory these may change, but it should never happen */
                 if (strcasecmp(dom->realm, realm) != 0) {
                     DEBUG(SSSDBG_TRACE_INTERNAL,

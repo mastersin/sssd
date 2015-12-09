@@ -189,6 +189,7 @@ struct be_host_req {
 
 bool be_is_offline(struct be_ctx *ctx);
 void be_mark_offline(struct be_ctx *ctx);
+void be_mark_dom_offline(struct sss_domain_info *dom, struct be_ctx *ctx);
 
 int be_add_reconnect_cb(TALLOC_CTX *mem_ctx,
                         struct be_ctx *ctx,
@@ -282,6 +283,7 @@ int be_fo_run_callbacks_at_next_request(struct be_ctx *ctx,
                                         const char *service_name);
 
 void reset_fo(struct be_ctx *be_ctx);
+void be_fo_reset_svc(struct be_ctx *be_ctx, const char *svc_name);
 
 errno_t be_res_init(struct be_ctx *ctx);
 

@@ -559,13 +559,19 @@ void to_sized_string(struct sized_string *out, const char *in);
 /* from domain_info.c */
 struct sss_domain_info *get_domains_head(struct sss_domain_info *domain);
 
+#define SSS_GND_DESCEND 0x01
+#define SSS_GND_INCLUDE_DISABLED 0x02
+#define SSS_GND_ALL_DOMAINS (SSS_GND_DESCEND | SSS_GND_INCLUDE_DISABLED)
 struct sss_domain_info *get_next_domain(struct sss_domain_info *domain,
-                                        bool descend);
+                                        uint32_t gnd_flags);
 struct sss_domain_info *find_domain_by_name(struct sss_domain_info *domain,
                                             const char *name,
                                             bool match_any);
 struct sss_domain_info *find_domain_by_sid(struct sss_domain_info *domain,
                                            const char *sid);
+enum sss_domain_state sss_domain_get_state(struct sss_domain_info *dom);
+void sss_domain_set_state(struct sss_domain_info *dom,
+                          enum sss_domain_state state);
 
 struct sss_domain_info*
 sss_get_domain_by_sid_ldap_fallback(struct sss_domain_info *domain,

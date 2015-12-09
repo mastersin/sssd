@@ -43,11 +43,6 @@ enum pam_verbosity {
 
 #define DEFAULT_PAM_VERBOSITY PAM_VERBOSITY_IMPORTANT
 
-/* TODO: Should we make this configurable? */
-#ifndef SSS_P11_CHILD_TIMEOUT
-#define SSS_P11_CHILD_TIMEOUT 10
-#endif
-
 static errno_t
 pam_null_last_online_auth_with_curr_token(struct sss_domain_info *domain,
                                           const char *username);
@@ -962,11 +957,13 @@ static errno_t pam_forwarder_parse_data(struct cli_ctx *cctx, struct pam_data *p
     } else {
         /* Only SSS_PAM_PREAUTH request may have a missing name, e.g. if the
          * name is determined with the help of a certificate */
-        if (pd->cmd == SSS_PAM_PREAUTH) {
+        if (pd->cmd == SSS_PAM_PREAUTH
+                && may_do_cert_auth(talloc_get_type(cctx->rctx->pvt_ctx,
+                                                    struct pam_ctx), pd)) {
             ret = EOK;
         } else {
             DEBUG(SSSDBG_CRIT_FAILURE, "Missing logon name in PAM request.\n");
-            ret = EINVAL;
+            ret = ERR_NO_CREDS;
             goto done;
         }
     }
@@ -1027,6 +1024,39 @@ static bool is_domain_public(char *name,
     return false;
 }
 
+static errno_t check_cert(TALLOC_CTX *mctx,
+                          struct tevent_context *ev,
+                          struct pam_ctx *pctx,
+                          struct pam_auth_req *preq,
+                          struct pam_data *pd)
+{
+    int p11_child_timeout;
+    const int P11_CHILD_TIMEOUT_DEFAULT = 10;
+    errno_t ret;
+    struct tevent_req *req;
+
+    ret = confdb_get_int(pctx->rctx->cdb, CONFDB_PAM_CONF_ENTRY,
+                         CONFDB_PAM_P11_CHILD_TIMEOUT,
+                         P11_CHILD_TIMEOUT_DEFAULT,
+                         &p11_child_timeout);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to read p11_child_timeout from confdb: [%d]: %s\n",
+              ret, sss_strerror(ret));
+        return ret;
+    }
+
+    req = pam_check_cert_send(mctx, ev, pctx->p11_child_debug_fd,
+                              pctx->nss_db, p11_child_timeout, pd);
+    if (req == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "pam_check_cert_send failed.\n");
+        return ENOMEM;
+    }
+
+    tevent_req_set_callback(req, pam_forwarder_cert_cb, preq);
+    return EAGAIN;
+}
+
 static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
 {
     struct sss_domain_info *dom;
@@ -1076,7 +1106,6 @@ static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
         }
         goto done;
     } else if (ret != EOK) {
-        ret = EINVAL;
         goto done;
     }
 
@@ -1099,7 +1128,7 @@ static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
         } else {
             for (dom = preq->cctx->rctx->domains;
                  dom;
-                 dom = get_next_domain(dom, false)) {
+                 dom = get_next_domain(dom, 0)) {
                 if (dom->fqnames) continue;
 
                 ncret = sss_ncache_check_user(pctx->ncache, pctx->neg_timeout,
@@ -1125,17 +1154,10 @@ static int pam_forwarder(struct cli_ctx *cctx, int pam_cmd)
         }
     }
 
-    if (may_do_cert_auth(pctx, pd)) {
-        req = pam_check_cert_send(cctx, cctx->ev, pctx->p11_child_debug_fd,
-                                  pctx->nss_db, SSS_P11_CHILD_TIMEOUT, pd);
-        if (req == NULL) {
-            DEBUG(SSSDBG_OP_FAILURE, "pam_check_cert_send failed.\n");
-            ret = ENOMEM;
-        } else {
-            tevent_req_set_callback(req, pam_forwarder_cert_cb, preq);
-            ret = EAGAIN;
-        }
 
+    if (may_do_cert_auth(pctx, pd)) {
+        ret = check_cert(cctx, cctx->ev, pctx, preq, pd);
+        /* Finish here */
         goto done;
     }
 
@@ -1342,16 +1364,8 @@ static void pam_forwarder_cb(struct tevent_req *req)
     }
 
     if (may_do_cert_auth(pctx, pd)) {
-        req = pam_check_cert_send(cctx, cctx->ev, pctx->p11_child_debug_fd,
-                                  pctx->nss_db, SSS_P11_CHILD_TIMEOUT, pd);
-        if (req == NULL) {
-            DEBUG(SSSDBG_OP_FAILURE, "pam_check_cert_send failed.\n");
-            ret = ENOMEM;
-        } else {
-            tevent_req_set_callback(req, pam_forwarder_cert_cb, preq);
-            ret = EAGAIN;
-        }
-
+        ret = check_cert(cctx, cctx->ev, pctx, preq, pd);
+        /* Finish here */
         goto done;
     }
 
@@ -1384,7 +1398,7 @@ static int pam_check_user_search(struct pam_auth_req *preq)
         * qualified names instead */
         while (dom && !preq->pd->domain && !preq->pd->name_is_upn
                && dom->fqnames) {
-            dom = get_next_domain(dom, false);
+            dom = get_next_domain(dom, 0);
         }
 
         if (!dom) break;
@@ -1480,7 +1494,7 @@ static int pam_check_user_search(struct pam_auth_req *preq)
 
             /* if a multidomain search, try with next */
             if (!preq->pd->domain) {
-                dom = get_next_domain(dom, false);
+                dom = get_next_domain(dom, 0);
                 continue;
             }
 
@@ -1594,6 +1608,11 @@ static int pam_check_user_done(struct pam_auth_req *preq, int ret)
 
     case ENOENT:
         preq->pd->pam_status = PAM_USER_UNKNOWN;
+        pam_reply(preq);
+        break;
+
+    case ERR_NO_CREDS:
+        preq->pd->pam_status = PAM_CRED_INSUFFICIENT;
         pam_reply(preq);
         break;
 
@@ -1909,7 +1928,7 @@ struct sss_cmd_table *get_pam_cmds(void)
     return sss_cmds;
 }
 
-static errno_t
+errno_t
 pam_set_last_online_auth_with_curr_token(struct sss_domain_info *domain,
                                          const char *username,
                                          uint64_t value)

@@ -89,6 +89,7 @@ option_strings = {
     'pam_trusted_users' : _('List of trusted uids or user\'s name'),
     'pam_public_domains' : _('List of domains accessible even for untrusted users.'),
     'pam_account_expired_message' : _('Message printed when user account is expired.'),
+    'p11_child_timeout' : _('How many seconds will pam_sss wait for p11_child to finish'),
 
     # [sudo]
     'sudo_timed' : _('Whether to evaluate the time-based attributes in sudo rules'),
@@ -1404,10 +1405,10 @@ class SSSDConfig(SSSDChangeConf):
         try:
             if int(self.get('sssd', 'config_file_version')) != self.API_VERSION:
                 raise ParsingError("Wrong config_file_version")
-        except:
-            # Either the 'sssd' section or the 'config_file_version' was not
-            # present in the config file
-            raise ParsingError("File contains no config_file_version")
+        except TypeError:
+            # This happens when config_file_version is missing. We
+            # can assume it is the default version and continue.
+            pass
 
     def new_config(self):
         """

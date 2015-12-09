@@ -68,8 +68,8 @@ static errno_t ifp_groups_decompose_path(struct sss_domain_info *domains,
     }
 
     gid = strtouint32(parts[1], NULL, 10);
-    if (errno != 0) {
-        ret = errno;
+    ret = errno;
+    if (ret != EOK) {
         goto done;
     }
 
@@ -315,7 +315,7 @@ static void ifp_groups_list_by_name_done(struct tevent_req *req)
         return;
     }
 
-    list_ctx->dom = get_next_domain(list_ctx->dom, true);
+    list_ctx->dom = get_next_domain(list_ctx->dom, SSS_GND_DESCEND);
     if (list_ctx->dom == NULL) {
         return ifp_groups_list_by_name_reply(list_ctx);
     }

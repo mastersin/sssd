@@ -40,14 +40,15 @@
 #define REALMNAME   DOMNAME
 #define HOST_NAME   "ad."REALMNAME
 
+#define TESTS_PATH "tp_" BASE_FILE_STEM
 #define TEST_AUTHID       "host/"HOST_NAME
 #define KEYTAB_TEST_PRINC TEST_AUTHID"@"REALMNAME
-#define KEYTAB_PATH       TEST_DIR"/keytab_test.keytab"
+#define KEYTAB_PATH       TESTS_PATH"/keytab_test.keytab"
 
 #define ONEWAY_DOMNAME     "ONEWAY"
 #define ONEWAY_HOST_NAME   "ad."ONEWAY_DOMNAME
 
-#define ONEWAY_KEYTAB_PATH       TEST_DIR"/oneway_test.keytab"
+#define ONEWAY_KEYTAB_PATH       TESTS_PATH"/oneway_test.keytab"
 #define ONEWAY_AUTHID            "host/"ONEWAY_HOST_NAME
 #define ONEWAY_TEST_PRINC        ONEWAY_AUTHID"@"ONEWAY_DOMNAME
 
@@ -86,6 +87,8 @@ static int test_ad_common_setup(void **state)
 {
     struct ad_common_test_ctx *test_ctx;
 
+    test_dom_suite_setup(TESTS_PATH);
+
     assert_true(leak_check_setup());
     check_leaks_push(global_talloc_context);
 
@@ -111,6 +114,7 @@ static int test_ad_common_setup(void **state)
 
 static int test_ad_common_teardown(void **state)
 {
+    int ret;
     struct ad_common_test_ctx *test_ctx = talloc_get_type(*state,
                                                   struct ad_common_test_ctx);
     assert_non_null(test_ctx);
@@ -119,6 +123,9 @@ static int test_ad_common_teardown(void **state)
     talloc_free(test_ctx);
     assert_true(check_leaks_pop(global_talloc_context) == true);
     assert_true(leak_check_teardown());
+
+    ret = rmdir(TESTS_PATH);
+    assert_return_code(ret, errno);
 
     return 0;
 }
@@ -241,6 +248,8 @@ static void test_ad_create_2way_trust_options(void **state)
     assert_string_equal(s, TEST_AUTHID);
 
     talloc_free(test_ctx->ad_ctx->ad_options);
+
+    unlink(KEYTAB_PATH);
 }
 
 static int
@@ -255,6 +264,8 @@ test_ldap_conn_setup(void **state)
 
     ret = test_ad_common_setup((void **) &test_ctx);
     assert_int_equal(ret, EOK);
+
+    mock_keytab_with_contents(test_ctx, KEYTAB_PATH, KEYTAB_TEST_PRINC);
 
     ad_ctx = test_ctx->ad_ctx;
 
@@ -305,6 +316,8 @@ test_ldap_conn_teardown(void **state)
                                                   struct ad_common_test_ctx);
     assert_non_null(test_ctx);
 
+    unlink(KEYTAB_PATH);
+
     talloc_free(test_ctx->subdom_ad_ctx);
     talloc_free(test_ctx->ad_ctx->ad_options);
     talloc_free(test_ctx->ad_ctx->gc_ctx);
@@ -337,7 +350,7 @@ __wrap_sdap_set_sasl_options(struct sdap_options *id_opts,
     return EOK;
 }
 
-void test_ldap_conn_list(void **state)
+void test_ad_get_dom_ldap_conn(void **state)
 {
     struct sdap_id_conn_ctx *conn;
 
@@ -352,7 +365,7 @@ void test_ldap_conn_list(void **state)
     assert_true(conn == test_ctx->subdom_ad_ctx->ldap_ctx);
 }
 
-void test_conn_list(void **state)
+void test_gc_conn_list(void **state)
 {
     struct sdap_id_conn_ctx **conn_list;
 
@@ -379,7 +392,8 @@ void test_conn_list(void **state)
     assert_true(conn_list[0] == test_ctx->ad_ctx->gc_ctx);
     assert_true(conn_list[0]->ignore_mark_offline);
     assert_true(conn_list[1] == test_ctx->subdom_ad_ctx->ldap_ctx);
-    assert_false(conn_list[1]->ignore_mark_offline);
+    /* Subdomain error should not set the backend offline! */
+    assert_true(conn_list[1]->ignore_mark_offline);
     talloc_free(conn_list);
 
     dp_opt_set_bool(test_ctx->ad_ctx->ad_options->basic, AD_ENABLE_GC, false);
@@ -398,6 +412,68 @@ void test_conn_list(void **state)
     assert_non_null(conn_list);
 
     assert_true(conn_list[0] == test_ctx->subdom_ad_ctx->ldap_ctx);
+    assert_true(conn_list[0]->ignore_mark_offline);
+    assert_null(conn_list[1]);
+    talloc_free(conn_list);
+}
+
+void test_ldap_conn_list(void **state)
+{
+    struct sdap_id_conn_ctx **conn_list;
+
+    struct ad_common_test_ctx *test_ctx = talloc_get_type(*state,
+                                                     struct ad_common_test_ctx);
+    assert_non_null(test_ctx);
+
+    conn_list = ad_ldap_conn_list(test_ctx,
+                                  test_ctx->ad_ctx,
+                                  test_ctx->dom);
+    assert_non_null(conn_list);
+
+    assert_true(conn_list[0] == test_ctx->ad_ctx->ldap_ctx);
+    assert_false(conn_list[0]->ignore_mark_offline);
+    assert_null(conn_list[1]);
+    talloc_free(conn_list);
+
+    conn_list = ad_ldap_conn_list(test_ctx,
+                                  test_ctx->ad_ctx,
+                                  test_ctx->subdom);
+    assert_non_null(conn_list);
+
+    assert_true(conn_list[0] == test_ctx->subdom_ad_ctx->ldap_ctx);
+    assert_true(conn_list[0]->ignore_mark_offline);
+    assert_null(conn_list[1]);
+    talloc_free(conn_list);
+}
+
+void test_user_conn_list(void **state)
+{
+    struct sdap_id_conn_ctx **conn_list;
+
+    struct ad_common_test_ctx *test_ctx = talloc_get_type(*state,
+                                                     struct ad_common_test_ctx);
+    assert_non_null(test_ctx);
+
+    conn_list = ad_user_conn_list(test_ctx,
+                                  test_ctx->ad_ctx,
+                                  test_ctx->dom);
+    assert_non_null(conn_list);
+
+    assert_true(conn_list[0] == test_ctx->ad_ctx->ldap_ctx);
+    assert_false(conn_list[0]->ignore_mark_offline);
+    assert_null(conn_list[1]);
+    talloc_free(conn_list);
+
+    conn_list = ad_user_conn_list(test_ctx,
+                                  test_ctx->ad_ctx,
+                                  test_ctx->subdom);
+    assert_non_null(conn_list);
+
+    assert_true(conn_list[0] == test_ctx->ad_ctx->gc_ctx);
+    assert_true(conn_list[0]->ignore_mark_offline);
+    assert_true(conn_list[1] == test_ctx->subdom_ad_ctx->ldap_ctx);
+    /* Subdomain error should not set the backend offline! */
+    assert_true(conn_list[1]->ignore_mark_offline);
     talloc_free(conn_list);
 }
 
@@ -419,10 +495,16 @@ int main(int argc, const char *argv[])
         cmocka_unit_test_setup_teardown(test_ad_create_2way_trust_options,
                                         test_ad_common_setup,
                                         test_ad_common_teardown),
+        cmocka_unit_test_setup_teardown(test_ad_get_dom_ldap_conn,
+                                        test_ldap_conn_setup,
+                                        test_ldap_conn_teardown),
+        cmocka_unit_test_setup_teardown(test_gc_conn_list,
+                                        test_ldap_conn_setup,
+                                        test_ldap_conn_teardown),
         cmocka_unit_test_setup_teardown(test_ldap_conn_list,
                                         test_ldap_conn_setup,
                                         test_ldap_conn_teardown),
-        cmocka_unit_test_setup_teardown(test_conn_list,
+        cmocka_unit_test_setup_teardown(test_user_conn_list,
                                         test_ldap_conn_setup,
                                         test_ldap_conn_teardown),
     };
