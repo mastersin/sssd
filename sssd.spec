@@ -2,7 +2,7 @@
 
 Name: sssd
 Version: 1.13.1
-Release: alt0.0.M70C.1
+Release: alt0.0.M70C.2
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -16,7 +16,7 @@ Patch: %name-%version-%release.patch
 
 # Determine the location of the LDB modules directory
 %define ldb_modulesdir %(pkg-config --variable=modulesdir ldb)
-%define ldb_version 1.1.21
+%define ldb_version 1.1.24
 
 %define _localstatedir /var
 %define _libexecdir /usr/libexec
@@ -631,6 +631,9 @@ chown %sssd_user:%sssd_user  %_var/log/%name/sssd_*
 %_altdir/libwbclient-sss-devel
 
 %changelog
+* Thu Dec 17 2015 Anton V. Boyarshinov <boyarsh@altlinux.org> 1.13.1-alt0.0.M70C.2
+- rebuild with samba 4.1
+
 * Fri Oct 23 2015 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1.13.1-alt0.0.M70C.1
 - backport to c7
 
