@@ -613,6 +613,7 @@ chown %sssd_user:%sssd_user  %_var/log/%name/sssd_*
 
 %files -n python-module-sssdconfig
 %dir %python_sitelibdir_noarch/SSSDConfig
+%python_sitelibdir_noarch/SSSDConfig*.egg-info
 %python_sitelibdir_noarch/SSSDConfig/*.py
 
 %files -n libsss_idmap
