@@ -1,8 +1,8 @@
 %define libwbc_alternatives_version 0.12.0
 
 Name: sssd
-Version: 1.14.1
-Release: alt2
+Version: 1.14.2
+Release: alt1
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -471,7 +471,7 @@ unset CK_TIMEOUT_MULTIPLIER
 chown %sssd_user:%sssd_user %dbpath/cache* %dbpath/ccache* %dbpath/config.ldb
 chown %sssd_user:%sssd_user %mcpath/*
 chown %sssd_user:%sssd_user %pubconfpath/kdcinfo* %pubconfpath/kpasswdinfo*
-chown %sssd_user:%sssd_user  %_var/log/%name/sssd_*
+chown %sssd_user:%sssd_user  %_logdir/%name/sssd_*
 %post_service %name
 %post_service sssd-secrets
 
@@ -534,7 +534,7 @@ chown %sssd_user:%sssd_user  %_var/log/%name/sssd_*
 %attr(750,%sssd_user,root) %dir %pipepath/private
 %attr(755,%sssd_user,%sssd_user) %dir %gpocachepath
 %attr(755,%sssd_user,%sssd_user) %dir %pubconfpath
-%attr(770,root,%sssd_user) %dir %_var/log/%name
+%attr(770,root,%sssd_user) %dir %_logdir/%name
 %attr(750,root,%sssd_user) %dir %_sysconfdir/sssd
 %attr(750,root,%sssd_user) %dir %_sysconfdir/sssd/conf.d
 %attr(0640,root,%sssd_user) %config(noreplace) %_sysconfdir/sssd/sssd.conf
@@ -703,6 +703,9 @@ chown %sssd_user:%sssd_user  %_var/log/%name/sssd_*
 %files nfs-idmap
 /%_lib/libnfsidmap/sss.so
 %changelog
+* Mon Nov 07 2016 Alexey Shabalin <shaba@altlinux.ru> 1.14.2-alt1
+- 1.14.2
+
 * Tue Sep 13 2016 Evgeny Sinelnikov <sin@altlinux.ru> 1.14.1-alt2
 - Rebuild with libldb-1.1.27
 
