@@ -1,4 +1,4 @@
-%define libwbc_alternatives_version 0.12.0
+%define libwbc_alternatives_version 0.13.0
 
 Name: sssd
 Version: 1.14.2
@@ -555,6 +555,7 @@ chown %sssd_user:%sssd_user  %_logdir/%name/sssd_*
 %_man5dir/sssd.conf.5*
 %_man5dir/sssd-simple.5*
 %_man5dir/sssd-sudo.5*
+%_man5dir/sssd-secrets.5*
 %_man5dir/sss_rpcidmapd.5*
 %_man8dir/sssd.8*
 %_man8dir/sss_cache.8*
