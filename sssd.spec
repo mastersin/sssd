@@ -537,7 +537,7 @@ unset CK_TIMEOUT_MULTIPLIER
 %attr(770,root,%sssd_user) %dir %_logdir/%name
 %attr(750,root,%sssd_user) %dir %_sysconfdir/sssd
 %attr(750,root,%sssd_user) %dir %_sysconfdir/sssd/conf.d
-%attr(0600,%sssd_user,%sssd_user) %config(noreplace) %_sysconfdir/sssd/sssd.conf
+%attr(0600,root,root) %config(noreplace) %_sysconfdir/sssd/sssd.conf
 %dir %_sysconfdir/systemd/system/sssd.service.d
 %config(noreplace) %_sysconfdir/systemd/system/sssd.service.d/journal.conf
 %config(noreplace) %_sysconfdir/logrotate.d/sssd
