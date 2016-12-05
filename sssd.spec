@@ -2,7 +2,7 @@
 
 Name: sssd
 Version: 1.14.2
-Release: alt1
+Release: alt2
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -472,6 +472,7 @@ unset CK_TIMEOUT_MULTIPLIER
 #chown %sssd_user:%sssd_user %mcpath/*
 #chown %sssd_user:%sssd_user %pubconfpath/kdcinfo* %pubconfpath/kpasswdinfo*
 #chown %sssd_user:%sssd_user  %_logdir/%name/sssd_*
+chown root:root %_sysconfdir/sssd/sssd.conf
 %post_service %name
 %post_service sssd-secrets
 
@@ -704,6 +705,10 @@ unset CK_TIMEOUT_MULTIPLIER
 %files nfs-idmap
 /%_lib/libnfsidmap/sss.so
 %changelog
+* Mon Dec 05 2016 Evgeny Sinelnikov <sin@altlinux.ru> 1.14.2-alt2
+- Set sssd.conf owner to root:root
+  due it hardcoded in sss_ini_config_access_check()
+
 * Mon Nov 07 2016 Alexey Shabalin <shaba@altlinux.ru> 1.14.2-alt1
 - 1.14.2
 
