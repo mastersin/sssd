@@ -1,4 +1,4 @@
 tar: upstream:.
-diff: upstream:. altlinux:.
+diff: upstream:. altlinux:. name=@name@-@version@-alt.patch
 copy: *.init
 copy: *.pam
