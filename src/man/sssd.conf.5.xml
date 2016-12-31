@@ -2016,8 +2016,7 @@ pam_account_locked_message = Account locked, please contact help desk.
                             <quote>none</quote> disallows fetching selinux settings explicitly.
                         </para>
                         <para>
-                            Default: <quote>id_provider</quote> is used if it
-                            is set and can handle selinux loading requests.
+                            Default: none
                         </para>
                     </listitem>
                 </varlistentry>

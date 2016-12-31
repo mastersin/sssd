@@ -215,6 +215,8 @@ static const char *dp_target_default_module(struct dp_target **targets,
         return "permit";
     case DPT_CHPASS:
         return dp_target_module_name(targets, DPT_AUTH);
+    case DPT_SELINUX:
+        return "none";
     case DP_TARGET_SENTINEL:
         return NULL;
     default:
