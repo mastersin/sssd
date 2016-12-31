@@ -20,6 +20,7 @@
 
 #include <talloc.h>
 #include <dlfcn.h>
+#include <selinux/selinux.h>
 
 #include "config.h"
 #include "providers/data_provider/dp.h"
@@ -152,6 +153,8 @@ static const char *dp_target_default_module(struct dp_target **targets,
         return "permit";
     case DPT_CHPASS:
         return dp_target_module_name(targets, DPT_AUTH);
+    case DPT_SELINUX:
+        return is_selinux_enabled() ? dp_target_module_name(targets, DPT_ID) : "none";
     case DP_TARGET_SENTINEL:
         return NULL;
     default:
