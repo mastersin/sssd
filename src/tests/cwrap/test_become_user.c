@@ -30,9 +30,11 @@
 void test_become_user(void **state)
 {
     struct passwd *sssd;
+    gid_t gid;
     errno_t ret;
     pid_t pid, wpid;
     int status;
+    int group_count;
 
     /* Must root as root, real or fake */
     assert_int_equal(geteuid(), 0);
@@ -58,7 +60,9 @@ void test_become_user(void **state)
         ret = become_user(sssd->pw_uid, sssd->pw_gid);
         assert_int_equal(ret, EOK);
 
-        assert_int_equal(getgroups(0, NULL), 0);
+        group_count = getgroups(1, &gid);
+        assert_int_equal(1, group_count);
+        assert_int_equal(gid, sssd->pw_gid);
         exit(0);
     }
 
