@@ -1,0 +1,3 @@
+[remote "upstream"]
+	url = https://github.com/SSSD/sssd
+	fetch = +refs/heads/*:refs/remotes/upstream/*

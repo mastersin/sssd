@@ -1,0 +1,3 @@
+#!/bin/bash
+
+sed -e 's,^sssd-,v,' -e 's,_,.,g'
