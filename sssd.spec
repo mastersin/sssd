@@ -2,7 +2,7 @@
 
 Name: sssd
 Version: 1.14.2
-Release: alt5%ubt
+Release: alt0.M70P.1
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -37,9 +37,20 @@ Requires: %name-client = %version-%release
 Requires: libsss_idmap = %version-%release
 Requires: libldb = %ldb_version
 
+%if %ubt_id <= "M70P"
+Requires: libkrb5 >= 1.13.7-alt0.M70P.1
+%else
 Requires: libkrb5 >= 1.14.4-alt2
+%endif
 
 BuildRequires(pre):rpm-build-ubt
+
+Requires(postun): %_bindir/gpasswd
+%if %ubt_id <= "M70P"
+%define _keytab_version_release 1.14.2-alt0.M70
+%else
+%define _keytab_version_release 1.14.2-alt5
+%endif
 
 ### Build Dependencies ###
 BuildRequires: /proc
@@ -76,7 +87,11 @@ BuildRequires: diffstat
 BuildRequires: findutils
 BuildRequires: samba-devel
 BuildRequires: libsmbclient-devel
-BuildRequires: systemd-devel libsystemd-devel
+%if %ubt_id <= "M70P"
+BuildRequires: libsystemd-daemon-devel libsystemd-journal-devel libsystemd-login-devel libsystemd-id128-devel systemd-devel
+%else
+BuildRequires: libsystemd-devel
+%endif
 BuildRequires: selinux-policy-targeted
 BuildRequires: cifs-utils-devel
 BuildRequires: libsasl2-devel
@@ -484,7 +499,7 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %preun_service %name
 %preun_service sssd-secrets
 
-%triggerpostun -- %name < 1.14.2-alt5
+%triggerpostun -- %name < %_keytab_version_release
 %_bindir/gpasswd -a %sssd_user _keytab
 
 %files -f sssd.lang
@@ -713,6 +728,9 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 /%_lib/libnfsidmap/sss.so
 
 %changelog
+* Fri Mar 24 2017 Evgeny Sinelnikov <sin@altlinux.ru> 1.14.2-alt0.M70P.1
+- Backport to branch p7
+
 * Tue Feb 28 2017 Evgeny Sinelnikov <sin@altlinux.ru> 1.14.2-alt5%ubt
 - Add _sssd user to _keytab group
 - Set right group privileges: use initgroups() instead of setgroups()
