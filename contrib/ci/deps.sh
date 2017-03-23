@@ -46,6 +46,7 @@ if [[ "$DISTRO_BRANCH" == -redhat-* ]]; then
         rpm-build
         uid_wrapper
         python-requests
+        curl-devel
     )
     _DEPS_LIST_SPEC=`
         sed -e 's/@PACKAGE_VERSION@/0/g' \
@@ -69,7 +70,6 @@ if [[ "$DISTRO_BRANCH" == -debian-* ]]; then
         docbook-xsl
         gettext
         krb5-config
-        libaugeas-dev
         libc-ares-dev
         libcmocka-dev
         libcollection-dev
@@ -121,6 +121,7 @@ if [[ "$DISTRO_BRANCH" == -debian-* ]]; then
         systemtap-sdt-dev
         libhttp-parser-dev
         libjansson-dev
+        libcurl4-openssl-dev
     )
     DEPS_INTGCHECK_SATISFIED=true
 fi

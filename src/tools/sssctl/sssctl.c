@@ -20,6 +20,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/wait.h>
 
 #include "util/util.h"
 #include "tools/sssctl/sssctl.h"
@@ -276,7 +277,7 @@ int main(int argc, const char **argv)
         SSS_TOOL_COMMAND("logs-fetch", "Archive SSSD log files in tarball", 0, sssctl_logs_fetch),
 #ifdef HAVE_LIBINI_CONFIG_V1_3
         SSS_TOOL_DELIMITER("Configuration files tools:"),
-        SSS_TOOL_COMMAND("config-check", "Perform static analysis of SSSD configuration", 0, sssctl_config_check),
+        SSS_TOOL_COMMAND_FLAGS("config-check", "Perform static analysis of SSSD configuration", 0, sssctl_config_check, SSS_TOOL_FLAG_SKIP_CMD_INIT),
 #endif
         SSS_TOOL_LAST
     };

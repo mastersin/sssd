@@ -221,6 +221,7 @@ static int sss_dp_get_reply(DBusPendingCall *pending,
         DEBUG(SSSDBG_FATAL_FAILURE,"The Data Provider returned an error [%s]\n",
                  dbus_message_get_error_name(reply));
         /* Falling through to default intentionally*/
+        SSS_ATTRIBUTE_FALLTHROUGH;
     default:
         /*
          * Timeout or other error occurred or something
@@ -249,6 +250,21 @@ sss_dp_internal_get_send(struct resp_ctx *rctx,
 
 static void
 sss_dp_req_done(struct tevent_req *sidereq);
+
+void sss_dp_issue_local_request(struct tevent_context *ev,
+                                struct tevent_req *cb_req)
+{
+    struct sss_dp_req_state *cb_state;
+
+    cb_state = tevent_req_data(cb_req, struct sss_dp_req_state);
+
+    cb_state->dp_err = DP_ERR_OK;
+    cb_state->dp_ret = EOK;
+    cb_state->err_msg = talloc_strdup(cb_state, "Success");
+
+    tevent_req_done(cb_req);
+    tevent_req_post(cb_req, ev);
+}
 
 errno_t
 sss_dp_issue_request(TALLOC_CTX *mem_ctx, struct resp_ctx *rctx,
@@ -284,6 +300,13 @@ sss_dp_issue_request(TALLOC_CTX *mem_ctx, struct resp_ctx *rctx,
     if (!key->str) {
         ret = ENOMEM;
         goto fail;
+    }
+
+    if (strcasecmp(dom->provider, "local") == 0) {
+        DEBUG(SSSDBG_TRACE_FUNC, "Issuing local provider request for [%s]\n",
+              key->str);
+        sss_dp_issue_local_request(rctx->ev, nreq);
+        return EOK;
     }
 
     DEBUG(SSSDBG_TRACE_FUNC, "Issuing request for [%s]\n", key->str);
@@ -430,6 +453,12 @@ sss_dp_req_recv(TALLOC_CTX *mem_ctx,
  */
 static DBusMessage *sss_dp_get_account_msg(void *pvt);
 
+static int sss_dp_account_files_params(struct sss_domain_info *dom,
+                                       enum sss_dp_acct_type type_in,
+                                       const char *opt_name_in,
+                                       enum sss_dp_acct_type *_type_out,
+                                       const char **_opt_name_out);
+
 struct sss_dp_account_info {
     struct sss_domain_info *dom;
 
@@ -470,6 +499,31 @@ sss_dp_get_account_send(TALLOC_CTX *mem_ctx,
     if (!dom) {
         ret = EINVAL;
         goto error;
+    }
+
+    if (NEED_CHECK_PROVIDER(dom->provider) == false) {
+        if (strcmp(dom->provider, "files") == 0) {
+            /* This is a special case. If the files provider is just being updated,
+             * we issue an enumeration request. We always use the same request type
+             * (user enumeration) to make sure concurrent requests are just chained
+             * in the Data Provider
+             */
+            ret = sss_dp_account_files_params(dom, type, opt_name,
+                                              &type, &opt_name);
+            if (ret == EOK) {
+                goto error;
+            } else if (ret != EAGAIN) {
+                DEBUG(SSSDBG_OP_FAILURE,
+                      "Failed to set files provider update: %d: %s\n",
+                      ret, sss_strerror(ret));
+                goto error;
+            }
+            /* EAGAIN, fall through to issuing the request */
+        } else {
+            DEBUG(SSSDBG_TRACE_INTERNAL, "Domain %s does not check DP\n", dom->name);
+            ret = EOK;
+            goto error;
+        }
     }
 
     info = talloc_zero(state, struct sss_dp_account_info);
@@ -516,9 +570,56 @@ sss_dp_get_account_send(TALLOC_CTX *mem_ctx,
     return req;
 
 error:
-    tevent_req_error(req, ret);
+    if (ret == EOK) {
+        tevent_req_done(req);
+    } else {
+        tevent_req_error(req, ret);
+    }
     tevent_req_post(req, rctx->ev);
     return req;
+}
+
+static int sss_dp_account_files_params(struct sss_domain_info *dom,
+                                       enum sss_dp_acct_type type_in,
+                                       const char *opt_name_in,
+                                       enum sss_dp_acct_type *_type_out,
+                                       const char **_opt_name_out)
+{
+#if 0
+    if (sss_domain_get_state(dom) != DOM_INCONSISTENT) {
+        return EOK;
+    }
+#endif
+
+    DEBUG(SSSDBG_TRACE_INTERNAL,
+          "Domain files is not consistent, issuing update\n");
+
+    switch(type_in) {
+    case SSS_DP_USER:
+    case SSS_DP_GROUP:
+        *_type_out = type_in;
+        *_opt_name_out = NULL;
+        return EAGAIN;
+    case SSS_DP_INITGROUPS:
+        /* There is no initgroups enumeration so let's use a dummy
+         * name to let the DP chain the requests
+         */
+        *_type_out = type_in;
+        *_opt_name_out = DP_REQ_OPT_FILES_INITGR;
+        return EAGAIN;
+    /* These are not handled by the files provider, just fall back */
+    case SSS_DP_NETGR:
+    case SSS_DP_SERVICES:
+    case SSS_DP_SECID:
+    case SSS_DP_USER_AND_GROUP:
+    case SSS_DP_CERT:
+    case SSS_DP_WILDCARD_USER:
+    case SSS_DP_WILDCARD_GROUP:
+        return EOK;
+    }
+
+    DEBUG(SSSDBG_CRIT_FAILURE, "Unhandled type %d\n", type_in);
+    return EINVAL;
 }
 
 static DBusMessage *
@@ -529,7 +630,6 @@ sss_dp_get_account_msg(void *pvt)
     struct sss_dp_account_info *info;
     uint32_t dp_flags;
     uint32_t entry_type;
-    uint32_t attrs_type = BE_ATTR_CORE;
     char *filter;
 
     info = talloc_get_type(pvt, struct sss_dp_account_info);
@@ -601,8 +701,8 @@ sss_dp_get_account_msg(void *pvt)
 
     /* create the message */
     DEBUG(SSSDBG_TRACE_FUNC,
-          "Creating request for [%s][%#x][%s][%d][%s:%s]\n",
-          info->dom->name, entry_type, be_req2str(entry_type), attrs_type,
+          "Creating request for [%s][%#x][%s][%s:%s]\n",
+          info->dom->name, entry_type, be_req2str(entry_type),
           filter, info->extra == NULL ? "-" : info->extra);
 
     if (info->extra == NULL) {
@@ -613,7 +713,6 @@ sss_dp_get_account_msg(void *pvt)
     dbret = dbus_message_append_args(msg,
                                      DBUS_TYPE_UINT32, &dp_flags,
                                      DBUS_TYPE_UINT32, &entry_type,
-                                     DBUS_TYPE_UINT32, &attrs_type,
                                      DBUS_TYPE_STRING, &filter,
                                      DBUS_TYPE_STRING, &info->dom->name,
                                      DBUS_TYPE_STRING, &info->extra,

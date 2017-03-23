@@ -83,11 +83,25 @@
         {"gid", 0, POPT_ARG_INT, &gid, 0, \
           _("The group ID to run the server as"), NULL},
 
+extern int socket_activated;
+extern int dbus_activated;
+
+#ifdef HAVE_SYSTEMD
+#define SSSD_RESPONDER_OPTS \
+        { "socket-activated", 0, POPT_ARG_NONE, &socket_activated, 0, \
+          _("Informs that the responder has been socket-activated"), NULL }, \
+        { "dbus-activated", 0, POPT_ARG_NONE, &dbus_activated, 0, \
+          _("Informs that the responder has been dbus-activated"), NULL },
+#else
+#define SSSD_RESPONDER_OPTS
+#endif
+
 #define FLAGS_NONE 0x0000
 #define FLAGS_DAEMON 0x0001
 #define FLAGS_INTERACTIVE 0x0002
 #define FLAGS_PID_FILE 0x0004
 #define FLAGS_GEN_CONF 0x0008
+#define FLAGS_NO_WATCHDOG 0x0010
 
 #define PIPE_INIT { -1, -1 }
 
@@ -377,6 +391,12 @@ errno_t sss_hash_create_ex(TALLOC_CTX *mem_ctx,
 
 /* Returns true if sudoUser value is a username or a groupname */
 bool is_user_or_group_name(const char *sudo_user_value);
+
+/* Returns true if the responder has been socket-activated */
+bool is_socket_activated(void);
+
+/* Returns true if the responder has been dbus-activated */
+bool is_dbus_activated(void);
 
 /**
  * @brief Add two list of strings

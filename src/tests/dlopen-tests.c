@@ -22,16 +22,18 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#define _GNU_SOURCE
+#include "config.h"
+
 #include <stdbool.h>
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
 #include <check.h>
+#include <dirent.h>
 #include "tests/common.h"
 
-#define LIBPFX ABS_BUILD_DIR"/.libs/"
+#define LIBPFX ABS_BUILD_DIR "/" LT_OBJDIR
 
 struct so {
     const char *name;
@@ -70,21 +72,23 @@ struct so {
 #ifdef HAVE_CIFS_IDMAP_PLUGIN
     { "cifs_idmap_sss.so", { LIBPFX"cifs_idmap_sss.so", NULL } },
 #endif
-    { "winbind_idmap_sss.so", { LIBPFX"libdlopen_test_winbind_idmap.so",
-                                LIBPFX"winbind_idmap_sss.so",
-                                NULL } },
     { "memberof.so", { LIBPFX"memberof.so", NULL } },
     { "libsss_child.so", { LIBPFX"libsss_util.so",
                            LIBPFX"libsss_child.so", NULL } },
     { "libsss_crypt.so", { LIBPFX"libsss_crypt.so", NULL } },
+    { "libsss_cert.so", { LIBPFX"libsss_cert.so", NULL } },
     { "libsss_util.so", { LIBPFX"libsss_util.so", NULL } },
     { "libsss_simple.so", { LIBPFX"libdlopen_test_providers.so",
                             LIBPFX"libsss_simple.so", NULL } },
+    { "libsss_files.so", { LIBPFX"libdlopen_test_providers.so",
+                           LIBPFX"libsss_files.so", NULL } },
 #ifdef BUILD_SAMBA
     { "libsss_ad.so", { LIBPFX"libdlopen_test_providers.so",
                         LIBPFX"libsss_ad.so", NULL } },
     { "libsss_ipa.so", { LIBPFX"libdlopen_test_providers.so",
                          LIBPFX"libsss_ipa.so", NULL } },
+    { "winbind_idmap_sss.so", { LIBPFX"libdlopen_test_winbind_idmap.so",
+                                LIBPFX"winbind_idmap_sss.so", NULL } },
 #endif /* BUILD_SAMBA */
     { "libsss_krb5.so", { LIBPFX"libdlopen_test_providers.so",
                           LIBPFX"libsss_krb5.so", NULL } },
@@ -96,8 +100,6 @@ struct so {
                                  LIBPFX"libsss_ldap_common.so", NULL } },
     { "libsss_proxy.so", { LIBPFX"libdlopen_test_providers.so",
                            LIBPFX"libsss_proxy.so", NULL } },
-    { "libdlopen_test_providers.so", { LIBPFX"libdlopen_test_providers.so",
-                                       NULL } },
 #ifdef HAVE_PYTHON2_BINDINGS
     { "_py2hbac.so", { LIBPFX"_py2hbac.so", NULL } },
     { "_py2sss.so", { LIBPFX"_py2sss.so", NULL } },
@@ -110,8 +112,19 @@ struct so {
     { "_py3sss_murmur.so", { LIBPFX"_py3sss_murmur.so", NULL } },
     { "_py3sss_nss_idmap.so", { LIBPFX"_py3sss_nss_idmap.so", NULL } },
 #endif
-#ifdef HAVE_CONFIG_LIB
-    { "libsss_config.so", { LIBPFX"libsss_config.so", NULL } },
+#ifdef BUILD_NFS_IDMAP
+    { "sss.so", { LIBPFX"sss.so", NULL } },
+#endif
+    /* for testing purposes */
+    { "libdlopen_test_providers.so", { LIBPFX"libdlopen_test_providers.so",
+                                       NULL } },
+    { "libsss_nss_idmap_tests.so", { LIBPFX"libsss_nss_idmap_tests.so",
+                                     NULL } },
+#ifdef BUILD_SAMBA
+    { "libdlopen_test_winbind_idmap.so",
+      { LIBPFX"libdlopen_test_winbind_idmap.so", NULL } },
+    { "libsss_ad_tests.so", { LIBPFX"libdlopen_test_providers.so",
+                              LIBPFX"libsss_ad_tests.so", NULL } },
 #endif
     { NULL }
 };
@@ -141,16 +154,84 @@ static bool recursive_dlopen(const char **name, int round, char **errmsg)
     return ok;
 }
 
+static int file_so_filter(const struct dirent *ent)
+{
+    char *suffix;
+
+    suffix = rindex(ent->d_name, '.');
+    if (suffix != NULL
+            && strcmp(suffix, ".so") == 0
+            && suffix[3] == '\0') {
+        return 1;
+    }
+
+    return 0;
+}
+
+static char **get_so_files(size_t *_list_size)
+{
+    int n;
+    struct dirent **namelist;
+    char **libraries;
+
+    n = scandir(LIBPFX, &namelist, file_so_filter, alphasort);
+    fail_unless(n > 0);
+
+    libraries = calloc(n + 1, sizeof(char *));
+
+    for (int i = 0; i < n; ++i) {
+        libraries[i] = strdup(namelist[i]->d_name);
+        fail_if(libraries[i] == NULL);
+
+        free(namelist[i]);
+    }
+    free(namelist);
+
+    *_list_size = (size_t)n;
+    return libraries;
+}
+
+static void remove_library_from_list(const char *library, char **list,
+                                     size_t list_size)
+{
+    for (size_t i = 0; i < list_size; ++i) {
+        if (list[i] != NULL && strcmp(library, list[i]) == 0) {
+            /* found library need to be removed from list */
+            free(list[i]);
+            list[i] = NULL;
+            return;
+        }
+    }
+
+    ck_abort_msg("Cannot find expected library: %s", library);
+}
+
 START_TEST(test_dlopen_base)
 {
     char *errmsg;
     bool ok;
     int i;
+    size_t found_libraries_size;
+    char **found_libraries = get_so_files(&found_libraries_size);
+    bool unchecked_library = false;
 
     for (i = 0; so[i].name != NULL; i++) {
         ok = recursive_dlopen(so[i].libs, 0, &errmsg);
         fail_unless(ok, "Error opening %s: [%s]", so[i].name, errmsg);
+
+        remove_library_from_list(so[i].name, found_libraries,
+                                 found_libraries_size);
     }
+
+    for (i = 0; i < found_libraries_size; ++i) {
+        if (found_libraries[i] != NULL) {
+            printf("Unchecked library found: %s\n", found_libraries[i]);
+            unchecked_library = true;
+        }
+    }
+    free(found_libraries);
+
+    fail_if(unchecked_library);
 }
 END_TEST
 

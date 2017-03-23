@@ -203,6 +203,8 @@
 
 #define SYSDB_SID_FILTER "(&(|("SYSDB_UC")("SYSDB_GC"))("SYSDB_SID_STR"=%s))"
 #define SYSDB_UUID_FILTER "(&(|("SYSDB_UC")("SYSDB_GC"))("SYSDB_UUID"=%s))"
+#define SYSDB_NAME_FILTER "(&(|("SYSDB_UC")("SYSDB_GC"))(|("SYSDB_NAME_ALIAS"=%s)("SYSDB_NAME"=%s)))"
+#define SYSDB_ID_FILTER "(|(&("SYSDB_UC")("SYSDB_UIDNUM"=%u))(&("SYSDB_GC")("SYSDB_GIDNUM"=%u)))"
 #define SYSDB_USER_CERT_FILTER "(&("SYSDB_UC")%s)"
 
 #define SYSDB_HAS_ENUMERATED "has_enumerated"
@@ -225,6 +227,7 @@
                         SYSDB_OVERRIDE_OBJECT_DN, \
                         SYSDB_DEFAULT_OVERRIDE_NAME, \
                         SYSDB_UUID, \
+                        SYSDB_ORIG_DN, \
                         NULL}
 
 #define SYSDB_GRSRC_ATTRS {SYSDB_NAME, SYSDB_GIDNUM, \
@@ -655,6 +658,7 @@ int sysdb_getpwuid(TALLOC_CTX *mem_ctx,
 
 int sysdb_getpwupn(TALLOC_CTX *mem_ctx,
                    struct sss_domain_info *domain,
+                   bool domain_scope,
                    const char *upn,
                    struct ldb_result **res);
 
@@ -829,12 +833,14 @@ int sysdb_search_user_by_sid_str(TALLOC_CTX *mem_ctx,
 
 int sysdb_search_user_by_upn_res(TALLOC_CTX *mem_ctx,
                                  struct sss_domain_info *domain,
+                                 bool domain_scope,
                                  const char *upn,
                                  const char **attrs,
                                  struct ldb_result **out_res);
 
 int sysdb_search_user_by_upn(TALLOC_CTX *mem_ctx,
                              struct sss_domain_info *domain,
+                             bool domain_scope,
                              const char *sid_str,
                              const char **attrs,
                              struct ldb_message **msg);
@@ -870,6 +876,15 @@ int sysdb_set_entry_attr(struct sysdb_ctx *sysdb,
                          struct ldb_dn *entry_dn,
                          struct sysdb_attrs *attrs,
                          int mod_op);
+
+/* User/group invalidation of cache by direct writing to persistent cache
+ * WARNING: This function can cause performance issue!!
+ * is_user = true --> user invalidation
+ * is_user = false --> group invalidation
+ */
+int sysdb_invalidate_cache_entry(struct sss_domain_info *domain,
+                                 const char *name,
+                                 bool is_user);
 
 /* Replace user attrs */
 int sysdb_set_user_attr(struct sss_domain_info *domain,
@@ -1137,8 +1152,29 @@ errno_t sysdb_remove_attrs(struct sss_domain_info *domain,
                            enum sysdb_member_type type,
                            char **remove_attrs);
 
+/**
+ * @brief Return direct parents of an object in the cache
+ *
+ * @param[in]  mem_ctx         Memory context the result should be allocated
+ *                             on
+ * @param[in]  dom             domain the object is in
+ * @param[in]  parent_dom      domain which should be searched for direct
+ *                             parents if NULL all domains in the given cache
+ *                             are searched
+ * @param[in]  mtype           Type of the object, SYSDB_MEMBER_USER or
+ *                             SYSDB_MEMBER_GROUP
+ * @param[in]  name            Name of the object
+ * @param[out] _direct_parents List of names of the direct parent groups
+ *
+ *
+ * @return
+ *  - EOK:    success
+ *  - EINVAL: wrong mtype
+ *  - ENOMEM: Memory allocation failed
+ */
 errno_t sysdb_get_direct_parents(TALLOC_CTX *mem_ctx,
                                  struct sss_domain_info *dom,
+                                 struct sss_domain_info *parent_dom,
                                  enum sysdb_member_type mtype,
                                  const char *name,
                                  char ***_direct_parents);
@@ -1170,6 +1206,18 @@ errno_t sysdb_idmap_store_mapping(struct sss_domain_info *domain,
 errno_t sysdb_idmap_get_mappings(TALLOC_CTX *mem_ctx,
                                  struct sss_domain_info *domain,
                                  struct ldb_result **_result);
+
+errno_t sysdb_search_object_by_id(TALLOC_CTX *mem_ctx,
+                                  struct sss_domain_info *domain,
+                                  uint32_t id,
+                                  const char **attrs,
+                                  struct ldb_result **res);
+
+errno_t sysdb_search_object_by_name(TALLOC_CTX *mem_ctx,
+                                    struct sss_domain_info *domain,
+                                    const char *name,
+                                    const char **attrs,
+                                    struct ldb_result **res);
 
 errno_t sysdb_search_object_by_sid(TALLOC_CTX *mem_ctx,
                                    struct sss_domain_info *domain,
@@ -1273,9 +1321,4 @@ errno_t sysdb_handle_original_uuid(const char *orig_name,
                                    struct sysdb_attrs *dest_attrs,
                                    const char *dest_name);
 
-errno_t sysdb_try_to_find_expected_dn(struct sss_domain_info *dom,
-                                      const char *domain_component_name,
-                                      struct sysdb_attrs **usr_attrs,
-                                      size_t count,
-                                      struct sysdb_attrs **exp_usr);
 #endif /* __SYS_DB_H__ */

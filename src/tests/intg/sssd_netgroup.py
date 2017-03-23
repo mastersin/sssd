@@ -19,6 +19,7 @@
 from ctypes import (cdll, c_int, c_char, c_char_p, c_size_t, c_void_p, c_ulong,
                     POINTER, Structure, Union, create_string_buffer, get_errno)
 import config
+from sssd_nss import NssReturnCode, nss_sss_ctypes_loader
 
 
 class NetgroupType(object):
@@ -50,15 +51,6 @@ NameList._fields_ = [("next", POINTER(NameList)),
                      ("name", POINTER(c_char))]
 
 
-class NssReturnCode(object):
-    """ 'enum' class for name service switch return code """
-    TRYAGAIN = -2,
-    UNAVAIL = -1
-    NOTFOUND = 0
-    SUCCESS = 1
-    RETURN = 2
-
-
 class Netgrent(Structure):
     _fields_ = [("type", c_int),
                 ("val", Val),
@@ -73,7 +65,7 @@ class Netgrent(Structure):
 
 class NetgroupRetriever(object):
     def __init__(self, name):
-        self.name = name
+        self.name = name.encode('utf-8')
         self.needed_groups = []
         self.known_groups = []
         self.netgroups = []
@@ -92,10 +84,7 @@ class NetgroupRetriever(object):
             result_p will contain POINTER(Netgrent) which can be used in
             _getnetgrent_r or _getnetgrent_r.
         """
-        libnss_sss_path = config.NSS_MODULE_DIR + "/libnss_sss.so.2"
-        libnss_sss = cdll.LoadLibrary(libnss_sss_path)
-
-        func = libnss_sss._nss_sss_setnetgrent
+        func = nss_sss_ctypes_loader('_nss_sss_setnetgrent')
         func.restype = c_int
         func.argtypes = [c_char_p, POINTER(Netgrent)]
 
@@ -123,10 +112,7 @@ class NetgroupRetriever(object):
             if err is NssReturnCode.SUCCESS netgroups will contain list of
             touples. Each touple will consist of 3 elemets either string or
         """
-        libnss_sss_path = config.NSS_MODULE_DIR + "/libnss_sss.so.2"
-        libnss_sss = cdll.LoadLibrary(libnss_sss_path)
-
-        func = libnss_sss._nss_sss_getnetgrent_r
+        func = nss_sss_ctypes_loader('_nss_sss_getnetgrent_r')
         func.restype = c_int
         func.argtypes = [POINTER(Netgrent), POINTER(c_char), c_size_t,
                          POINTER(c_int)]
@@ -148,10 +134,7 @@ class NetgroupRetriever(object):
 
         @return int a constant from class NssReturnCode
         """
-        libnss_sss_path = config.NSS_MODULE_DIR + "/libnss_sss.so.2"
-        libnss_sss = cdll.LoadLibrary(libnss_sss_path)
-
-        func = libnss_sss._nss_sss_endnetgrent
+        func = nss_sss_ctypes_loader('_nss_sss_endnetgrent')
         func.restype = c_int
         func.argtypes = [POINTER(Netgrent)]
 
@@ -225,9 +208,10 @@ class NetgroupRetriever(object):
                     self.known_groups.append(nested_netgroup)
 
             if result_p[0].type == NetgroupType.TRIPLE_VAL:
-                result.append((result_p[0].val.triple.host,
-                               result_p[0].val.triple.user,
-                               result_p[0].val.triple.domain))
+                triple = result_p[0].val.triple
+                result.append((triple.host.decode('utf-8'),
+                               triple.user.decode('utf-8'),
+                               triple.domain.decode('utf-8')))
 
             res, errno, result_p = self._getnetgrent_r(result_p, buff,
                                                        buff_len)

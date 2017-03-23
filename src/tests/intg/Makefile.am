@@ -1,8 +1,12 @@
 dist_noinst_DATA = \
     config.py.m4 \
+    util.py \
+    sssd_nss.py \
     sssd_id.py \
     sssd_ldb.py \
     sssd_netgroup.py \
+    sssd_passwd.py \
+    sssd_group.py \
     ds.py \
     ds_openldap.py \
     ent.py \
@@ -18,6 +22,10 @@ dist_noinst_DATA = \
     test_netgroup.py \
     secrets.py \
     test_secrets.py \
+    test_sssctl.py \
+    files_ops.py \
+    test_files_ops.py \
+    test_files_provider.py \
     $(NULL)
 
 config.py: config.py.m4
@@ -30,6 +38,7 @@ config.py: config.py.m4
 	   -D "secdbpath=\`$(secdbpath)'" \
 	   -D "libexecpath=\`$(libexecdir)'" \
 	   -D "runstatedir=\`$(runstatedir)'" \
+	   -D "abs_builddir=\`$(abs_builddir)'" \
 	   $< > $@
 
 root:

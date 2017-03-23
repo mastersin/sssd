@@ -770,13 +770,13 @@ def test_extra_attribute_already_exists(ldap_conn, extra_attributes):
 
     user = 'user'
     extra_attribute = 'givenName'
-    given_name = 'unix_user'
+    given_name = b'unix_user'
 
     user_dn = "uid=" + user + ",ou=Users," + ldap_conn.ds_inst.base_dn
 
-    old = {'objectClass': ['top', 'inetOrgPerson', 'posixAccount']}
-    new = {'objectClass': ['top', 'inetOrgPerson', 'posixAccount',
-                           'extensibleObject']}
+    old = {'objectClass': [b'top', b'inetOrgPerson', b'posixAccount']}
+    new = {'objectClass': [b'top', b'inetOrgPerson', b'posixAccount',
+                           b'extensibleObject']}
     ldif = ldap.modlist.modifyModlist(old, new)
 
     ldap_conn.modify_s(user_dn, ldif)
@@ -848,9 +848,9 @@ def test_remove_user_from_group(ldap_conn, remove_user_from_group):
                              dict(mem=ent.contains_only("user1", "user2")))
 
     # removing of user2 from group1
-    old = {'member': ["uid=user1,ou=Users,dc=example,dc=com",
-                      "uid=user2,ou=Users,dc=example,dc=com"]}
-    new = {'member': ["uid=user1,ou=Users,dc=example,dc=com"]}
+    old = {'member': [b"uid=user1,ou=Users,dc=example,dc=com",
+                      b"uid=user2,ou=Users,dc=example,dc=com"]}
+    new = {'member': [b"uid=user1,ou=Users,dc=example,dc=com"]}
 
     ldif = ldap.modlist.modifyModlist(old, new)
     ldap_conn.modify_s(group1_dn, ldif)
@@ -863,7 +863,7 @@ def test_remove_user_from_group(ldap_conn, remove_user_from_group):
     ent.assert_group_by_name("group1", dict(mem=ent.contains_only("user1")))
 
     # removing of user1 from group1
-    old = {'member': ["uid=user1,ou=Users,dc=example,dc=com"]}
+    old = {'member': [b"uid=user1,ou=Users,dc=example,dc=com"]}
     new = {'member': []}
 
     ldif = ldap.modlist.modifyModlist(old, new)
@@ -912,9 +912,9 @@ def test_remove_user_from_nested_group(ldap_conn,
                                                         "user2")))
 
     # removing of group2 from group3
-    old = {'member': ["cn=group1,ou=Groups,dc=example,dc=com",
-                      "cn=group2,ou=Groups,dc=example,dc=com"]}
-    new = {'member': ["cn=group1,ou=Groups,dc=example,dc=com"]}
+    old = {'member': [b"cn=group1,ou=Groups,dc=example,dc=com",
+                      b"cn=group2,ou=Groups,dc=example,dc=com"]}
+    new = {'member': [b"cn=group1,ou=Groups,dc=example,dc=com"]}
 
     ldif = ldap.modlist.modifyModlist(old, new)
     ldap_conn.modify_s(group3_dn, ldif)
@@ -933,7 +933,7 @@ def test_remove_user_from_nested_group(ldap_conn,
                              dict(mem=ent.contains_only("user1")))
 
     # removing of group1 from group3
-    old = {'member': ["cn=group1,ou=Groups,dc=example,dc=com"]}
+    old = {'member': [b"cn=group1,ou=Groups,dc=example,dc=com"]}
     new = {'member': []}
 
     ldif = ldap.modlist.modifyModlist(old, new)
@@ -951,3 +951,32 @@ def test_remove_user_from_nested_group(ldap_conn,
                              dict(mem=ent.contains_only("user2")))
     ent.assert_group_by_name("group3",
                              dict(mem=ent.contains_only()))
+
+
+def zero_nesting_sssd_conf(ldap_conn, schema):
+    """Format an SSSD configuration with group nesting disabled"""
+    return \
+        format_basic_conf(ldap_conn, schema) + \
+        unindent("""
+            [domain/LDAP]
+            ldap_group_nesting_level                = 0
+        """).format(INTERACTIVE_TIMEOUT)
+
+
+@pytest.fixture
+def rfc2307bis_no_nesting(request, ldap_conn):
+    ent_list = ldap_ent.List(ldap_conn.ds_inst.base_dn)
+    ent_list.add_user("user1", 1001, 2001)
+    ent_list.add_group_bis("group1", 20001, member_uids=["user1"])
+    create_ldap_fixture(request, ldap_conn, ent_list)
+    create_conf_fixture(request,
+                        zero_nesting_sssd_conf(
+                            ldap_conn,
+                            SCHEMA_RFC2307_BIS))
+    create_sssd_fixture(request)
+    return None
+
+
+def test_zero_nesting_level(ldap_conn, rfc2307bis_no_nesting):
+    ent.assert_group_by_name("group1",
+                             dict(mem=ent.contains_only("user1")))

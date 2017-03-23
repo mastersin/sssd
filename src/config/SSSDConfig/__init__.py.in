@@ -50,6 +50,8 @@ option_strings = {
     'reconnection_retries' : _('Number of times to attempt connection to Data Providers'),
     'fd_limit' : _('The number of file descriptors that may be opened by this responder'),
     'client_idle_timeout' : _('Idle time before automatic disconnection of a client'),
+    'responder_idle_timeout' : _('Idle time before automatic shutdown of the responder'),
+    'cache_first': _('Always query all the caches before querying the Data Providers'),
 
     # [sssd]
     'services' : _('SSSD Services to start'),
@@ -63,6 +65,7 @@ option_strings = {
     'certificate_verification' : _('Tune certificate verification'),
     'override_space': _('All spaces in group or user names will be replaced with this character'),
     'disable_netlink' : _('Tune sssd to honor or ignore netlink state changes'),
+    'enable_files_domain' : _('Enable or disable the implicit files domain'),
 
     # [nss]
     'enum_cache_timeout' : _('Enumeration cache timeout length (seconds)'),
@@ -88,6 +91,7 @@ option_strings = {
     'offline_failed_login_attempts' : _('How many failed logins attempts are allowed when offline'),
     'offline_failed_login_delay' : _('How long (minutes) to deny login after offline_failed_login_attempts has been reached'),
     'pam_verbosity' : _('What kind of messages are displayed to the user during authentication'),
+    'pam_response_filter' : _('Filter PAM responses send the pam_sss'),
     'pam_id_timeout' : _('How many seconds to keep identity information cached for PAM requests'),
     'pam_pwd_expiration_warning' : _('How many days before password expiration a warning should be displayed'),
     'pam_trusted_users' : _('List of trusted uids or user\'s name'),
@@ -122,6 +126,7 @@ option_strings = {
     'provider': _('The provider where the secrets will be stored in'),
     'containers_nest_level': _('The maximum allowed number of nested containers'),
     'max_secrets': _('The maximum number of secrets that can be stored'),
+    'max_payload_size': _('The maximum payload size of a secret in kilobytes'),
     # secrets - proxy
     'proxy_url': _('The URL Custodia server is listening on'),
     'auth_type': _('The method to use when authenticating to a Custodia server'),

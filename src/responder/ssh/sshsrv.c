@@ -25,14 +25,12 @@
 #include "monitor/monitor_interfaces.h"
 #include "responder/common/responder.h"
 #include "responder/common/responder_sbus.h"
-#include "responder/ssh/sshsrv_private.h"
+#include "responder/ssh/ssh_private.h"
 #include "providers/data_provider.h"
 
 struct mon_cli_iface monitor_ssh_methods = {
     { &mon_cli_iface_meta, 0 },
-    .ping = monitor_common_pong,
     .resInit = monitor_common_res_init,
-    .shutDown = NULL,
     .goOffline = NULL,
     .resetOffline = NULL,
     .rotateLogs = responder_logrotate,
@@ -188,6 +186,7 @@ int main(int argc, const char *argv[])
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
         SSSD_SERVER_OPTS(uid, gid)
+        SSSD_RESPONDER_OPTS
         POPT_TABLEEND
     };
 

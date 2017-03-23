@@ -31,6 +31,7 @@
 #define DEFAULT_SEC_FD_LIMIT 2048
 #define DEFAULT_SEC_CONTAINERS_NEST_LEVEL 4
 #define DEFAULT_SEC_MAX_SECRETS 1024
+#define DEFAULT_SEC_MAX_PAYLOAD_SIZE 16
 
 static int sec_get_config(struct sec_ctx *sctx)
 {
@@ -71,6 +72,18 @@ static int sec_get_config(struct sec_ctx *sctx)
         goto fail;
     }
 
+    ret = confdb_get_int(sctx->rctx->cdb,
+                         sctx->rctx->confdb_service_path,
+                         CONFDB_SEC_MAX_PAYLOAD_SIZE,
+                         DEFAULT_SEC_MAX_PAYLOAD_SIZE,
+                         &sctx->max_payload_size);
+
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "Failed to get payload's maximum size for an entry\n");
+        goto fail;
+    }
+
     ret = confdb_get_int(sctx->rctx->cdb, sctx->rctx->confdb_service_path,
                          CONFDB_RESPONDER_CLI_IDLE_TIMEOUT,
                          CONFDB_RESPONDER_CLI_IDLE_DEFAULT_TIMEOUT,
@@ -85,6 +98,11 @@ static int sec_get_config(struct sec_ctx *sctx)
     /* Ensure that the client timeout is at least ten seconds */
     if (sctx->rctx->client_idle_timeout < 10) {
         sctx->rctx->client_idle_timeout = 10;
+    }
+
+    ret = responder_setup_idle_timeout_config(sctx->rctx);
+    if (ret != EOK) {
+        goto fail;
     }
 
     ret = EOK;
@@ -123,6 +141,8 @@ static int sec_process_init(TALLOC_CTX *mem_ctx,
     rctx->sock_name = SSS_SEC_SOCKET_NAME;
     rctx->confdb_service_path = CONFDB_SEC_CONF_ENTRY;
     rctx->shutting_down = false;
+    rctx->lfd = -1;
+    rctx->priv_lfd = -1;
 
     talloc_set_destructor((TALLOC_CTX*)rctx, sec_responder_ctx_destructor);
 

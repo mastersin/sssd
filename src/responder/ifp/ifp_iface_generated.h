@@ -27,10 +27,6 @@
 
 /* constants for org.freedesktop.sssd.infopipe.Components */
 #define IFACE_IFP_COMPONENTS "org.freedesktop.sssd.infopipe.Components"
-#define IFACE_IFP_COMPONENTS_ENABLE "Enable"
-#define IFACE_IFP_COMPONENTS_DISABLE "Disable"
-#define IFACE_IFP_COMPONENTS_CHANGEDEBUGLEVEL "ChangeDebugLevel"
-#define IFACE_IFP_COMPONENTS_CHANGEDEBUGLEVELTEMPORARILY "ChangeDebugLevelTemporarily"
 #define IFACE_IFP_COMPONENTS_NAME "name"
 #define IFACE_IFP_COMPONENTS_DEBUG_LEVEL "debug_level"
 #define IFACE_IFP_COMPONENTS_ENABLED "enabled"
@@ -76,6 +72,8 @@
 #define IFACE_IFP_USERS_FINDBYNAME "FindByName"
 #define IFACE_IFP_USERS_FINDBYID "FindByID"
 #define IFACE_IFP_USERS_FINDBYCERTIFICATE "FindByCertificate"
+#define IFACE_IFP_USERS_LISTBYCERTIFICATE "ListByCertificate"
+#define IFACE_IFP_USERS_FINDBYNAMEANDCERTIFICATE "FindByNameAndCertificate"
 #define IFACE_IFP_USERS_LISTBYNAME "ListByName"
 #define IFACE_IFP_USERS_LISTBYDOMAINANDNAME "ListByDomainAndName"
 
@@ -172,28 +170,12 @@ int iface_ifp_ListDomains_finish(struct sbus_request *req, const char *arg_domai
 /* vtable for org.freedesktop.sssd.infopipe.Components */
 struct iface_ifp_components {
     struct sbus_vtable vtable; /* derive from sbus_vtable */
-    int (*Enable)(struct sbus_request *req, void *data);
-    int (*Disable)(struct sbus_request *req, void *data);
-    int (*ChangeDebugLevel)(struct sbus_request *req, void *data, uint32_t arg_new_level);
-    int (*ChangeDebugLevelTemporarily)(struct sbus_request *req, void *data, uint32_t arg_new_level);
     void (*get_name)(struct sbus_request *, void *data, const char **);
     void (*get_debug_level)(struct sbus_request *, void *data, uint32_t*);
     void (*get_enabled)(struct sbus_request *, void *data, bool*);
     void (*get_type)(struct sbus_request *, void *data, const char **);
     void (*get_providers)(struct sbus_request *, void *data, const char ***, int *);
 };
-
-/* finish function for Enable */
-int iface_ifp_components_Enable_finish(struct sbus_request *req);
-
-/* finish function for Disable */
-int iface_ifp_components_Disable_finish(struct sbus_request *req);
-
-/* finish function for ChangeDebugLevel */
-int iface_ifp_components_ChangeDebugLevel_finish(struct sbus_request *req);
-
-/* finish function for ChangeDebugLevelTemporarily */
-int iface_ifp_components_ChangeDebugLevelTemporarily_finish(struct sbus_request *req);
 
 /* vtable for org.freedesktop.sssd.infopipe.Domains */
 struct iface_ifp_domains {
@@ -267,6 +249,8 @@ struct iface_ifp_users {
     int (*FindByName)(struct sbus_request *req, void *data, const char *arg_name);
     int (*FindByID)(struct sbus_request *req, void *data, uint32_t arg_id);
     int (*FindByCertificate)(struct sbus_request *req, void *data, const char *arg_pem_cert);
+    int (*ListByCertificate)(struct sbus_request *req, void *data, const char *arg_pem_cert, uint32_t arg_limit);
+    int (*FindByNameAndCertificate)(struct sbus_request *req, void *data, const char *arg_name, const char *arg_pem_cert);
     int (*ListByName)(struct sbus_request *req, void *data, const char *arg_name_filter, uint32_t arg_limit);
     int (*ListByDomainAndName)(struct sbus_request *req, void *data, const char *arg_domain_name, const char *arg_name_filter, uint32_t arg_limit);
 };
@@ -279,6 +263,12 @@ int iface_ifp_users_FindByID_finish(struct sbus_request *req, const char *arg_re
 
 /* finish function for FindByCertificate */
 int iface_ifp_users_FindByCertificate_finish(struct sbus_request *req, const char *arg_result);
+
+/* finish function for ListByCertificate */
+int iface_ifp_users_ListByCertificate_finish(struct sbus_request *req, const char *arg_result[], int len_result);
+
+/* finish function for FindByNameAndCertificate */
+int iface_ifp_users_FindByNameAndCertificate_finish(struct sbus_request *req, const char *arg_result);
 
 /* finish function for ListByName */
 int iface_ifp_users_ListByName_finish(struct sbus_request *req, const char *arg_result[], int len_result);

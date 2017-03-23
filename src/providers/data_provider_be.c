@@ -56,9 +56,7 @@ static int data_provider_logrotate(struct sbus_request *dbus_req, void *data);
 
 struct mon_cli_iface monitor_be_methods = {
     { &mon_cli_iface_meta, 0 },
-    .ping = monitor_common_pong,
     .resInit = data_provider_res_init,
-    .shutDown = NULL,
     .goOffline = data_provider_go_offline,
     .resetOffline = data_provider_reset_offline,
     .rotateLogs = data_provider_logrotate,
@@ -168,8 +166,10 @@ static void be_mark_subdom_offline(struct sss_domain_info *subdom,
     tv = tevent_timeval_current_ofs(reset_status_timeout, 0);
 
     switch (subdom->state) {
+    case DOM_INCONSISTENT:
     case DOM_DISABLED:
-        DEBUG(SSSDBG_MINOR_FAILURE, "Won't touch disabled subdomain\n");
+        DEBUG(SSSDBG_MINOR_FAILURE,
+              "Won't touch disabled or inconsistent subdomain\n");
         return;
     case DOM_INACTIVE:
         DEBUG(SSSDBG_TRACE_ALL, "Subdomain already inactive\n");
@@ -410,7 +410,8 @@ errno_t be_process_init(TALLOC_CTX *mem_ctx,
 
     ret = sss_monitor_init(be_ctx, be_ctx->ev, &monitor_be_methods,
                            be_ctx->identity, DATA_PROVIDER_VERSION,
-                           be_ctx, &be_ctx->mon_conn);
+                           MT_SVC_PROVIDER, be_ctx, NULL,
+                           &be_ctx->mon_conn);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Unable to initialize monitor connection\n");
         goto done;

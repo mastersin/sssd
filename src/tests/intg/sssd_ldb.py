@@ -19,6 +19,7 @@
 import os
 import ldb
 import config
+import subprocess
 
 
 class CacheType(object):
@@ -77,10 +78,19 @@ class SssdLdb(object):
     def get_entry_attr(self, cache_type, entry_type, name, domain, attr):
         dbconn = self._get_dbconn(cache_type)
         basedn = self._basedn(name, domain, entry_type)
-        print basedn
 
         res = dbconn.search(base=basedn, scope=ldb.SCOPE_BASE, attrs=[attr])
         if res.count != 1:
             return None
 
         return res.msgs[0].get(attr).get(0)
+
+    def invalidate_entry(self, name, entry_type, domain):
+        dbconn = self._get_dbconn(CacheType.timestamps)
+
+        m = ldb.Message()
+        m.dn = ldb.Dn(dbconn, self._basedn(name, domain, entry_type))
+        m["dataExpireTimestamp"] = ldb.MessageElement(str(1),
+                                                      ldb.FLAG_MOD_REPLACE,
+                                                      "dataExpireTimestamp")
+        dbconn.modify(m)

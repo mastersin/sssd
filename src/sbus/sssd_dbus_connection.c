@@ -27,9 +27,6 @@
 #include "sbus/sssd_dbus_private.h"
 #include "sbus/sssd_dbus_meta.h"
 
-/* Types */
-struct dbus_ctx_list;
-
 static int sbus_auto_reconnect(struct sbus_connection *conn);
 
 static void sbus_dispatch(struct tevent_context *ev,
@@ -148,6 +145,8 @@ int sbus_init_connection(TALLOC_CTX *ctx,
                          struct tevent_context *ev,
                          DBusConnection *dbus_conn,
                          int connection_type,
+                         time_t *last_request_time,
+                         void *client_destructor_data,
                          struct sbus_connection **_conn)
 {
     struct sbus_connection *conn;
@@ -161,23 +160,25 @@ int sbus_init_connection(TALLOC_CTX *ctx,
     conn->type = SBUS_CONNECTION;
     conn->dbus.conn = dbus_conn;
     conn->connection_type = connection_type;
+    conn->last_request_time = last_request_time;
+    conn->client_destructor_data = client_destructor_data;
 
-    ret = sbus_opath_hash_init(conn, conn, &conn->managed_paths);
-    if (ret != EOK) {
+    conn->managed_paths = sbus_opath_hash_init(conn, conn);
+    if (conn->managed_paths == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Cannot create object paths hash table\n");
         talloc_free(conn);
         return EIO;
     }
 
-    ret = sbus_nodes_hash_init(conn, conn, &conn->nodes_fns);
-    if (ret != EOK) {
+    conn->nodes_fns = sbus_nodes_hash_init(conn);
+    if (conn->nodes_fns == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Cannot create node functions hash table\n");
         talloc_free(conn);
         return EIO;
     }
 
-    ret = sbus_incoming_signal_hash_init(conn, &conn->incoming_signals);
-    if (ret != EOK) {
+    conn->incoming_signals = sbus_incoming_signal_hash_init(conn);
+    if (conn->incoming_signals == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Cannot create incoming singals "
               "hash table\n");
         talloc_free(conn);
@@ -259,7 +260,8 @@ static int sbus_conn_set_fns(struct sbus_connection *conn)
 }
 
 int sbus_new_connection(TALLOC_CTX *ctx, struct tevent_context *ev,
-                        const char *address, struct sbus_connection **_conn)
+                        const char *address, time_t *last_request_time,
+                        struct sbus_connection **_conn)
 {
     struct sbus_connection *conn;
     DBusConnection *dbus_conn;
@@ -278,7 +280,8 @@ int sbus_new_connection(TALLOC_CTX *ctx, struct tevent_context *ev,
         return EIO;
     }
 
-    ret = sbus_init_connection(ctx, ev, dbus_conn, SBUS_CONN_TYPE_SHARED, &conn);
+    ret = sbus_init_connection(ctx, ev, dbus_conn, SBUS_CONN_TYPE_SHARED,
+                               last_request_time, NULL, &conn);
     if (ret != EOK) {
         /* FIXME: release resources */
     }
@@ -495,12 +498,6 @@ void sbus_reconnect_init(struct sbus_connection *conn,
     conn->reconnect_pvt = pvt;
 }
 
-bool sbus_conn_disconnecting(struct sbus_connection *conn)
-{
-    if (conn->disconnect == 1) return true;
-    return false;
-}
-
 int sss_dbus_conn_send(DBusConnection *dbus_conn,
                        DBusMessage *msg,
                        int timeout_ms,
@@ -605,4 +602,14 @@ void sbus_allow_uid(struct sbus_connection *conn, uid_t *uid)
     dbus_connection_set_unix_user_function(sbus_get_connection(conn),
                                            is_uid_sssd_user,
                                            uid, NULL);
+}
+
+void *sbus_connection_get_destructor_data(struct sbus_connection *conn)
+{
+    if (conn == NULL) {
+        /* Should never happen! */
+        return NULL;
+    }
+
+    return conn->client_destructor_data;
 }

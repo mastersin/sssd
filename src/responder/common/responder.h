@@ -48,9 +48,14 @@ extern hash_table_t *dp_requests;
  * So we set umask to 0111. */
 #define SCKT_RSP_UMASK 0111
 
-/* if there is a provider other than the special local */
+/* Neither the local provider nor the files provider have a back
+ * end in the traditional sense and can always just consult
+ * the responder's cache
+ */
 #define NEED_CHECK_PROVIDER(provider) \
-    (provider != NULL && strcmp(provider, "local") != 0)
+    (provider != NULL && \
+     (strcmp(provider, "local") != 0 && \
+      strcmp(provider, "files") != 0))
 
 /* needed until nsssrv.h is updated */
 struct cli_request {
@@ -99,6 +104,7 @@ struct resp_ctx {
     const char *priv_sock_name;
 
     struct sss_nc_ctx *ncache;
+    struct sss_names_ctx *global_names;
 
     struct sbus_connection *mon_conn;
     struct be_conn *be_conns;
@@ -106,6 +112,10 @@ struct resp_ctx {
     struct sss_domain_info *domains;
     int domains_timeout;
     int client_idle_timeout;
+
+    time_t last_request_time;
+    int idle_timeout;
+    struct tevent_timer *idle;
 
     struct sss_cmd_table *sss_cmds;
     const char *sss_pipe_name;
@@ -126,6 +136,9 @@ struct resp_ctx {
     void *pvt_ctx;
 
     bool shutting_down;
+    bool socket_activated;
+    bool dbus_activated;
+    bool cache_first;
 };
 
 struct cli_creds;
@@ -145,6 +158,7 @@ struct cli_ctx {
     void *state_ctx;
 
     struct tevent_timer *idle;
+    time_t last_request_time;
 };
 
 struct sss_cmd_table {
@@ -195,7 +209,7 @@ int activate_unix_sockets(struct resp_ctx *rctx,
 
 /* responder_cmd.c */
 int sss_cmd_empty_packet(struct sss_packet *packet);
-int sss_cmd_send_empty(struct cli_ctx *cctx, TALLOC_CTX *freectx);
+int sss_cmd_send_empty(struct cli_ctx *cctx);
 int sss_cmd_send_error(struct cli_ctx *cctx, int err);
 void sss_cmd_done(struct cli_ctx *cctx, void *freectx);
 int sss_cmd_get_version(struct cli_ctx *cctx);
@@ -209,7 +223,6 @@ struct setent_req_list;
 /* A facility for notifying setent requests */
 struct tevent_req *setent_get_req(struct setent_req_list *sl);
 errno_t setent_add_ref(TALLOC_CTX *memctx,
-                       void *pvt,
                        struct setent_req_list **list,
                        struct tevent_req *req);
 void setent_notify(struct setent_req_list **list, errno_t err);
@@ -311,15 +324,28 @@ sss_dp_get_account_recv(TALLOC_CTX *mem_ctx,
                         dbus_uint32_t *err_min,
                         char **err_msg);
 
+struct tevent_req *
+sss_dp_get_ssh_host_send(TALLOC_CTX *mem_ctx,
+                         struct resp_ctx *rctx,
+                         struct sss_domain_info *dom,
+                         bool fast_reply,
+                         const char *name,
+                         const char *alias);
+
+errno_t
+sss_dp_get_ssh_host_recv(TALLOC_CTX *mem_ctx,
+                         struct tevent_req *req,
+                         dbus_uint16_t *dp_err,
+                         dbus_uint32_t *dp_ret,
+                         char **err_msg);
+
 bool sss_utf8_check(const uint8_t *s, size_t n);
 
 void responder_set_fd_limit(rlim_t fd_limit);
 
-errno_t reset_idle_timer(struct cli_ctx *cctx);
-void idle_handler(struct tevent_context *ev,
-                  struct tevent_timer *te,
-                  struct timeval current_time,
-                  void *data);
+errno_t reset_client_idle_timer(struct cli_ctx *cctx);
+
+errno_t responder_setup_idle_timeout_config(struct resp_ctx *rctx);
 
 #define GET_DOMAINS_DEFAULT_TIMEOUT 60
 
@@ -344,8 +370,11 @@ errno_t check_allowed_uids(uid_t uid, size_t allowed_uids_count,
                            uid_t *allowed_uids);
 
 struct tevent_req *
-sss_parse_inp_send(TALLOC_CTX *mem_ctx, struct resp_ctx *rctx,
+sss_parse_inp_send(TALLOC_CTX *mem_ctx,
+                   struct resp_ctx *rctx,
+                   const char *default_domain,
                    const char *rawinp);
+
 errno_t sss_parse_inp_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
                            char **_name, char **_domname);
 

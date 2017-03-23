@@ -454,6 +454,7 @@ static char *enum_filter(TALLOC_CTX *mem_ctx,
 
 int sysdb_getpwupn(TALLOC_CTX *mem_ctx,
                    struct sss_domain_info *domain,
+                   bool domain_scope,
                    const char *upn,
                    struct ldb_result **_res)
 {
@@ -468,7 +469,7 @@ int sysdb_getpwupn(TALLOC_CTX *mem_ctx,
         return ENOMEM;
     }
 
-    ret = sysdb_search_user_by_upn_res(tmp_ctx, domain, upn, attrs, &res);
+    ret = sysdb_search_user_by_upn_res(tmp_ctx, domain, domain_scope, upn, attrs, &res);
     if (ret != EOK && ret != ENOENT) {
         DEBUG(SSSDBG_OP_FAILURE, "sysdb_search_user_by_upn_res() failed.\n");
         goto done;
@@ -1322,7 +1323,7 @@ int sysdb_initgroups_by_upn(TALLOC_CTX *mem_ctx,
         return ENOMEM;
     }
 
-    ret = sysdb_search_user_by_upn(tmp_ctx, domain, upn, attrs, &msg);
+    ret = sysdb_search_user_by_upn(tmp_ctx, domain, false, upn, attrs, &msg);
     if (ret != EOK && ret != ENOENT) {
         DEBUG(SSSDBG_OP_FAILURE, "sysdb_search_user_by_upn() failed.\n");
         goto done;
@@ -1981,6 +1982,7 @@ done:
 
 errno_t sysdb_get_direct_parents(TALLOC_CTX *mem_ctx,
                                  struct sss_domain_info *dom,
+                                 struct sss_domain_info *parent_dom,
                                  enum sysdb_member_type mtype,
                                  const char *name,
                                  char ***_direct_parents)
@@ -2029,7 +2031,11 @@ errno_t sysdb_get_direct_parents(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    basedn = sysdb_group_base_dn(tmp_ctx, dom);
+    if (parent_dom == NULL) {
+        basedn = sysdb_base_dn(dom->sysdb, tmp_ctx);
+    } else {
+        basedn = sysdb_group_base_dn(tmp_ctx, parent_dom);
+    }
     if (!basedn) {
         ret = ENOMEM;
         goto done;
@@ -2108,7 +2114,7 @@ errno_t sysdb_get_real_name(TALLOC_CTX *mem_ctx,
     }
 
     if (res->count == 0) {
-        ret = sysdb_search_user_by_upn(tmp_ctx, domain, name_or_upn_or_sid,
+        ret = sysdb_search_user_by_upn(tmp_ctx, domain, false, name_or_upn_or_sid,
                                        NULL, &msg);
         if (ret == ENOENT) {
             ret = sysdb_search_user_by_sid_str(tmp_ctx, domain,

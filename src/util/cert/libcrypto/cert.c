@@ -22,6 +22,7 @@
 #include <openssl/pem.h>
 
 #include "util/util.h"
+#include "util/sss_endian.h"
 
 errno_t sss_cert_der_to_pem(TALLOC_CTX *mem_ctx, const uint8_t *der_blob,
                             size_t der_size, char **pem, size_t *pem_size)
@@ -182,6 +183,8 @@ errno_t cert_to_ssh_key(TALLOC_CTX *mem_ctx, const char *ca_db,
     size_t c;
     X509 *cert = NULL;
     EVP_PKEY *cert_pub_key = NULL;
+    const BIGNUM *n;
+    const BIGNUM *e;
     int modulus_len;
     unsigned char modulus[OPENSSL_RSA_MAX_MODULUS_BITS/8];
     int exponent_len;
@@ -208,16 +211,29 @@ errno_t cert_to_ssh_key(TALLOC_CTX *mem_ctx, const char *ca_db,
         goto done;
     }
 
-    if (cert_pub_key->type != EVP_PKEY_RSA) {
+    if (EVP_PKEY_base_id(cert_pub_key) != EVP_PKEY_RSA) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Expected RSA public key, found unsupported [%d].\n",
-              cert_pub_key->type);
+              EVP_PKEY_base_id(cert_pub_key));
         ret = EINVAL;
         goto done;
     }
 
-    modulus_len = BN_bn2bin(cert_pub_key->pkey.rsa->n, modulus);
-    exponent_len = BN_bn2bin(cert_pub_key->pkey.rsa->e, exponent);
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    RSA *rsa_pub_key = NULL;
+    rsa_pub_key = EVP_PKEY_get0_RSA(cert_pub_key);
+    if (rsa_pub_key == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    RSA_get0_key(rsa_pub_key, &n, &e, NULL);
+#else
+    n = cert_pub_key->pkey.rsa->n;
+    e = cert_pub_key->pkey.rsa->e;
+#endif
+    modulus_len = BN_bn2bin(n, modulus);
+    exponent_len = BN_bn2bin(e, exponent);
 
     size = SSH_RSA_HEADER_LEN + 3 * sizeof(uint32_t)
                 + modulus_len

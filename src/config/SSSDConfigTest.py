@@ -308,10 +308,13 @@ class SSSDConfigTestSSSDService(unittest.TestCase):
             'reconnection_retries',
             'fd_limit',
             'client_idle_timeout',
+            'responder_idle_timeout',
+            'cache_first',
             'description',
             'certificate_verification',
             'override_space',
-            'disable_netlink']
+            'disable_netlink',
+            'enable_files_domain']
 
         self.assertTrue(type(options) == dict,
                         "Options should be a dictionary")

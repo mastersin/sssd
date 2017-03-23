@@ -28,8 +28,8 @@
 #include "tests/cmocka/common_mock.h"
 #include "tests/cmocka/common_mock_resp.h"
 #include "responder/common/negcache.h"
-#include "responder/nss/nsssrv.h"
-#include "responder/nss/nsssrv_private.h"
+#include "responder/nss/nss_private.h"
+#include "responder/nss/nss_protocol.h"
 #include "sss_client/idmap/sss_nss_idmap.h"
 #include "util/util_sss_idmap.h"
 #include "util/crypto/sss_crypto.h"
@@ -127,13 +127,18 @@ void __wrap_sss_cmd_done(struct cli_ctx *cctx, void *freectx)
 
     check_cb = sss_mock_ptr_type(cmd_cb_fn_t);
 
-    pctx = talloc_get_type(cctx->protocol_ctx, struct cli_protocol);
-    packet = pctx->creq->out;
+    if (check_cb == NULL) {
+        nss_test_ctx->tctx->error = ENOENT;
+    } else {
+        pctx = talloc_get_type(cctx->protocol_ctx, struct cli_protocol);
+        packet = pctx->creq->out;
 
-    __real_sss_packet_get_body(packet, &body, &blen);
+        __real_sss_packet_get_body(packet, &body, &blen);
 
-    nss_test_ctx->tctx->error = check_cb(sss_packet_get_status(packet),
-                                         body, blen);
+        nss_test_ctx->tctx->error = check_cb(sss_packet_get_status(packet),
+                                             body, blen);
+    }
+
     nss_test_ctx->tctx->done = true;
     talloc_free(freectx);
 }
@@ -160,6 +165,21 @@ int __wrap_sss_ncache_check_user(struct sss_nc_ctx *ctx,
     int ret;
 
     ret = __real_sss_ncache_check_user(ctx, dom, name);
+    if (ret == EEXIST) {
+        nss_test_ctx->ncache_hits++;
+    }
+    return ret;
+}
+
+int __real_sss_ncache_check_upn(struct sss_nc_ctx *ctx,
+                                struct sss_domain_info *dom, const char *name);
+
+int __wrap_sss_ncache_check_upn(struct sss_nc_ctx *ctx,
+                                struct sss_domain_info *dom, const char *name)
+{
+    int ret;
+
+    ret = __real_sss_ncache_check_upn(ctx, dom, name);
     if (ret == EEXIST) {
         nss_test_ctx->ncache_hits++;
     }
@@ -208,10 +228,53 @@ int __wrap_sss_ncache_check_cert(struct sss_nc_ctx *ctx, const char *cert)
 }
 
 /* Mock input from the client library */
-static void mock_input_user_or_group(const char *username)
+static void mock_input_user_or_group(const char *input)
+{
+    const char *copy;
+    const char *shortname;
+    const char *domname;
+    char *separator;
+
+    copy = talloc_strdup(nss_test_ctx, input);
+    assert_non_null(copy);
+
+    separator = strrchr(copy, '@');
+    if (separator == NULL) {
+        shortname = input;
+        domname = NULL;
+    } else {
+        *separator = '\0';
+        shortname = copy;
+        domname = separator + 1;
+    }
+
+    will_return(__wrap_sss_packet_get_body, WRAP_CALL_WRAPPER);
+    will_return(__wrap_sss_packet_get_body, input);
+    will_return(__wrap_sss_packet_get_body, 0);
+
+    mock_parse_inp(shortname, domname, EOK);
+}
+
+static void mock_input_upn(const char *upn)
 {
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_WRAPPER);
-    will_return(__wrap_sss_packet_get_body, username);
+    will_return(__wrap_sss_packet_get_body, upn);
+    will_return(__wrap_sss_packet_get_body, 0);
+
+    mock_parse_inp(NULL, NULL, ERR_DOMAIN_NOT_FOUND);
+}
+
+static void mock_input_sid(const char *sid)
+{
+    will_return(__wrap_sss_packet_get_body, WRAP_CALL_WRAPPER);
+    will_return(__wrap_sss_packet_get_body, sid);
+    will_return(__wrap_sss_packet_get_body, 0);
+}
+
+static void mock_input_cert(const char *cert)
+{
+    will_return(__wrap_sss_packet_get_body, WRAP_CALL_WRAPPER);
+    will_return(__wrap_sss_packet_get_body, cert);
     will_return(__wrap_sss_packet_get_body, 0);
 }
 
@@ -240,30 +303,6 @@ static void mock_fill_bysid(void)
     /* One packet for the entry and one for num entries */
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 }
-
-static void mock_fill_initgr_user(void)
-{
-    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
-}
-
-static void mock_fill_group_with_members(unsigned members)
-{
-    unsigned i;
-
-    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
-    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
-
-    if (members == 0) return;
-
-    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
-
-    /* Member header , one per member */
-    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
-    for (i=0; i<members; i++) {
-        will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
-    }
-}
-
 
 static int parse_user_packet(uint8_t *body, size_t blen, struct passwd *pwd)
 {
@@ -566,6 +605,7 @@ void test_nss_getpwnam_neg(void **state)
 
     assert_int_equal(nss_test_ctx->ncache_hits, 0);
 
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETPWNAM,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -582,6 +622,7 @@ void test_nss_getpwnam_neg(void **state)
     nss_test_ctx->tctx->done = false;
 
     mock_input_user_or_group("testuser_neg");
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETPWNAM,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -1031,6 +1072,7 @@ void test_nss_getpwuid_neg(void **state)
 
     assert_int_equal(nss_test_ctx->ncache_hits, 0);
 
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETPWUID,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -1047,6 +1089,7 @@ void test_nss_getpwuid_neg(void **state)
     nss_test_ctx->tctx->done = false;
 
     mock_input_id(nss_test_ctx, uid_neg);
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETPWUID,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -1233,16 +1276,16 @@ void test_nss_setup(struct sss_test_conf_param params[],
     nss_test_ctx->nctx = mock_nctx(nss_test_ctx);
     assert_non_null(nss_test_ctx->nctx);
 
-    ret = sss_ad_default_names_ctx(nss_test_ctx->nctx,
-                                   &nss_test_ctx->nctx->global_names);
-    assert_int_equal(ret, EOK);
-    assert_non_null(nss_test_ctx->nctx->global_names);
-
     nss_test_ctx->rctx = mock_rctx(nss_test_ctx, nss_test_ctx->tctx->ev,
                                    nss_test_ctx->tctx->dom, nss_test_ctx->nctx);
     assert_non_null(nss_test_ctx->rctx);
     nss_test_ctx->rctx->cdb = nss_test_ctx->tctx->confdb;
     nss_test_ctx->nctx->rctx = nss_test_ctx->rctx;
+
+    ret = sss_ad_default_names_ctx(nss_test_ctx->nctx,
+                                   &nss_test_ctx->nctx->rctx->global_names);
+    assert_int_equal(ret, EOK);
+    assert_non_null(nss_test_ctx->nctx->rctx->global_names);
 
     /* Create client context */
     nss_test_ctx->cctx = mock_cctx(nss_test_ctx, nss_test_ctx->rctx);
@@ -1255,7 +1298,6 @@ void test_nss_setup(struct sss_test_conf_param params[],
     /* do after previous setup as the former nulls procotol_ctx */
     nss_test_ctx->cctx->protocol_ctx = mock_prctx(nss_test_ctx->cctx);
     assert_non_null(nss_test_ctx->cctx->protocol_ctx);
-
 }
 
 struct group getgrnam_no_members = {
@@ -1296,7 +1338,7 @@ void test_nss_getgrnam_no_members(void **state)
 
     mock_input_user_or_group(getgrnam_no_members.gr_name);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETGRNAM);
-    mock_fill_group_with_members(0);
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that group, call a callback when command finishes */
     set_cmd_cb(test_nss_getgrnam_no_members_check);
@@ -1398,7 +1440,7 @@ void test_nss_getgrnam_members(void **state)
 
     mock_input_user_or_group("testgroup_members");
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETGRNAM);
-    mock_fill_group_with_members(2);
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that group, call a callback when command finishes */
     set_cmd_cb(test_nss_getgrnam_members_check);
@@ -1465,7 +1507,7 @@ void test_nss_getgrnam_members_fqdn(void **state)
 
     mock_input_user_or_group("testgroup_members@"TEST_DOM_NAME);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETGRNAM);
-    mock_fill_group_with_members(2);
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that group, call a callback when command finishes */
     set_cmd_cb(test_nss_getgrnam_members_check_fqdn);
@@ -1587,7 +1629,7 @@ void test_nss_getgrnam_members_subdom(void **state)
 
     mock_input_user_or_group("testsubdomgroup@"TEST_SUBDOM_NAME);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETGRNAM);
-    mock_fill_group_with_members(2);
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that group, call a callback when command finishes */
     set_cmd_cb(test_nss_getgrnam_members_check_subdom);
@@ -1652,7 +1694,7 @@ void test_nss_getgrnam_mix_dom(void **state)
 
     mock_input_user_or_group("testgroup_members");
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETGRNAM);
-    mock_fill_group_with_members(3);
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that group, call a callback when command finishes */
     set_cmd_cb(test_nss_getgrnam_check_mix_dom);
@@ -1719,7 +1761,7 @@ void test_nss_getgrnam_mix_dom_fqdn(void **state)
 
     mock_input_user_or_group("testgroup_members@"TEST_DOM_NAME);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETGRNAM);
-    mock_fill_group_with_members(3);
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that group, call a callback when command finishes */
     set_cmd_cb(test_nss_getgrnam_check_mix_dom_fqdn);
@@ -1794,7 +1836,7 @@ void test_nss_getgrnam_mix_subdom(void **state)
 
     mock_input_user_or_group("testsubdomgroup@"TEST_SUBDOM_NAME);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETGRNAM);
-    mock_fill_group_with_members(3);
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that group, call a callback when command finishes */
     set_cmd_cb(test_nss_getgrnam_check_mix_subdom);
@@ -1847,7 +1889,7 @@ void test_nss_getgrnam_space(void **state)
 
     mock_input_user_or_group("space group");
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETGRNAM);
-    mock_fill_group_with_members(0);
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that group, call a callback when command finishes */
     set_cmd_cb(test_nss_getgrnam_space_check);
@@ -1892,7 +1934,7 @@ void test_nss_getgrnam_space_sub(void **state)
 
     mock_input_user_or_group("space group");
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETGRNAM);
-    mock_fill_group_with_members(0);
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that group, call a callback when command finishes */
     set_cmd_cb(test_nss_getgrnam_space_sub_check);
@@ -2000,7 +2042,7 @@ void test_nss_well_known_getidbysid_failure(void **state)
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_WRAPPER);
     will_return(__wrap_sss_packet_get_body, "S-1-5-32-550");
     will_return(__wrap_sss_packet_get_body, 0);
-    will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETIDBYSID);
+    will_return_always(__wrap_sss_packet_get_cmd, SSS_NSS_GETIDBYSID);
     will_return(test_nss_well_known_sid_check, NULL);
 
     set_cmd_cb(test_nss_well_known_sid_check);
@@ -2021,6 +2063,8 @@ void test_nss_well_known_getsidbyname(void **state)
     size_t c;
 
     for (c = 0; names[c] != NULL; c++) {
+        nss_test_ctx->tctx->done = false;
+
         will_return(__wrap_sss_packet_get_body, WRAP_CALL_WRAPPER);
         will_return(__wrap_sss_packet_get_body, names[c]);
         will_return(__wrap_sss_packet_get_body, 0);
@@ -2046,6 +2090,8 @@ void test_nss_well_known_getsidbyname_nonexisting(void **state)
     size_t c;
 
     for (c = 0; names[c] != NULL; c++) {
+        nss_test_ctx->tctx->done = false;
+
         will_return(__wrap_sss_packet_get_body, WRAP_CALL_WRAPPER);
         will_return(__wrap_sss_packet_get_body, names[c]);
         will_return(__wrap_sss_packet_get_body, 0);
@@ -2071,6 +2117,8 @@ void test_nss_well_known_getsidbyname_special(void **state)
     size_t c;
 
     for (c = 0; names[c] != NULL; c++) {
+        nss_test_ctx->tctx->done = false;
+
         will_return(__wrap_sss_packet_get_body, WRAP_CALL_WRAPPER);
         will_return(__wrap_sss_packet_get_body, names[c]);
         will_return(__wrap_sss_packet_get_body, 0);
@@ -2199,7 +2247,7 @@ void test_nss_getorigbyname(void **state)
     /* Also test looking up the same stuff with UPN */
     nss_test_ctx->tctx->done = false;
 
-    mock_input_user_or_group(test_upn);
+    mock_input_upn(test_upn);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETORIGBYNAME);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
@@ -2510,7 +2558,39 @@ void test_nss_getpwnam_upn(void **state)
                      &upn_user, attrs, 0);
     assert_int_equal(ret, EOK);
 
-    mock_input_user_or_group("upnuser@upndomain.test");
+    mock_input_upn("upnuser@upndomain.test");
+    will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETPWNAM);
+    mock_fill_user();
+
+    /* Query for that user, call a callback when command finishes */
+    set_cmd_cb(test_nss_getpwnam_upn_check);
+    ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETPWNAM,
+                          nss_test_ctx->nss_cmds);
+    assert_int_equal(ret, EOK);
+
+    /* Wait until the test finishes with EOK */
+    ret = test_ev_loop(nss_test_ctx->tctx);
+    assert_int_equal(ret, EOK);
+}
+
+void test_nss_getpwnam_upn_same_domain(void **state)
+{
+    errno_t ret;
+    struct sysdb_attrs *attrs;
+
+    attrs = sysdb_new_attrs(nss_test_ctx);
+    assert_non_null(attrs);
+
+    ret = sysdb_attrs_add_string(attrs, SYSDB_UPN, "upnuser_upn@" TEST_DOM_NAME);
+    assert_int_equal(ret, EOK);
+
+    /* Prime the cache with a valid user */
+    ret = store_user(nss_test_ctx, nss_test_ctx->tctx->dom,
+                     &upn_user, attrs, 0);
+    assert_int_equal(ret, EOK);
+
+    mock_input_user_or_group("upnuser_upn@" TEST_DOM_NAME);
+    mock_account_recv_simple();
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETPWNAM);
     mock_fill_user();
 
@@ -2532,11 +2612,12 @@ void test_nss_getpwnam_upn_neg(void **state)
 {
     errno_t ret;
 
-    mock_input_user_or_group("nosuchupnuser@upndomain.test");
+    mock_input_upn("nosuchupnuser@upndomain.test");
     mock_account_recv_simple();
 
     assert_int_equal(nss_test_ctx->ncache_hits, 0);
 
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETPWNAM,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -2544,7 +2625,7 @@ void test_nss_getpwnam_upn_neg(void **state)
     /* Wait until the test finishes with ENOENT */
     ret = test_ev_loop(nss_test_ctx->tctx);
     assert_int_equal(ret, ENOENT);
-    assert_int_equal(nss_test_ctx->ncache_hits, 1);
+    assert_int_equal(nss_test_ctx->ncache_hits, 0);
 
     /* Test that subsequent search for a nonexistent user yields
      * ENOENT and Account callback is not called, on the other hand
@@ -2553,7 +2634,8 @@ void test_nss_getpwnam_upn_neg(void **state)
     nss_test_ctx->tctx->done = false;
     nss_test_ctx->ncache_hits = 0;
 
-    mock_input_user_or_group("nosuchupnuser@upndomain.test");
+    mock_input_upn("nosuchupnuser@upndomain.test");
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETPWNAM,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -2643,7 +2725,7 @@ void test_nss_initgroups(void **state)
 
     mock_input_user_or_group("testinitgr");
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_INITGR);
-    mock_fill_initgr_user();
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that user, call a callback when command finishes */
     set_cmd_cb(test_nss_initgr_check);
@@ -2663,11 +2745,16 @@ void test_initgr_neg_by_name(const char *name, bool is_upn)
 {
     errno_t ret;
 
-    mock_input_user_or_group(name);
+    if (is_upn) {
+        mock_input_upn(name);
+    } else {
+        mock_input_user_or_group(name);
+    }
     mock_account_recv_simple();
 
     assert_int_equal(nss_test_ctx->ncache_hits, 0);
 
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_INITGR,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -2675,8 +2762,7 @@ void test_initgr_neg_by_name(const char *name, bool is_upn)
     /* Wait until the test finishes with ENOENT */
     ret = test_ev_loop(nss_test_ctx->tctx);
     assert_int_equal(ret, ENOENT);
-    /* UPN lookup will first hit negcache with the username */
-    assert_int_equal(nss_test_ctx->ncache_hits, is_upn ? 1 : 0);
+    assert_int_equal(nss_test_ctx->ncache_hits, 0);
 
     /* Test that subsequent search for a nonexistent user yields
      * ENOENT and Account callback is not called, on the other hand
@@ -2685,7 +2771,12 @@ void test_initgr_neg_by_name(const char *name, bool is_upn)
     nss_test_ctx->tctx->done = false;
     nss_test_ctx->ncache_hits = 0;
 
-    mock_input_user_or_group(name);
+    if (is_upn) {
+        mock_input_upn(name);
+    } else {
+        mock_input_user_or_group(name);
+    }
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_INITGR,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -2787,7 +2878,7 @@ void test_nss_initgr_search(void **state)
     mock_input_user_or_group("testinitgr_srch");
     mock_account_recv(0, 0, NULL, test_nss_initgr_search_acct_cb, nss_test_ctx);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_INITGR);
-    mock_fill_initgr_user();
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
     set_cmd_cb(test_nss_initgr_search_check);
 
     ret = get_user(nss_test_ctx, nss_test_ctx->tctx->dom,
@@ -2907,7 +2998,7 @@ void test_nss_initgr_update(void **state)
     mock_input_user_or_group("testinitgr_update");
     mock_account_recv(0, 0, NULL, test_nss_initgr_update_acct_cb, nss_test_ctx);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_INITGR);
-    mock_fill_initgr_user();
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
     set_cmd_cb(test_nss_initgr_update_check);
 
     /* Query for that user, call a callback when command finishes */
@@ -3029,7 +3120,7 @@ void test_nss_initgr_update_two_expire_attributes(void **state)
                       test_nss_initgr_update_acct_2expire_attributes_cb,
                       nss_test_ctx);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_INITGR);
-    mock_fill_initgr_user();
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
     set_cmd_cb(test_nss_initgr_update_2expire_attributes_check);
 
     /* Query for that user, call a callback when command finishes */
@@ -3046,9 +3137,9 @@ void test_nss_initgroups_upn(void **state)
 {
     errno_t ret;
 
-    mock_input_user_or_group("upninitgr@upndomain.test");
+    mock_input_upn("upninitgr@upndomain.test");
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_INITGR);
-    mock_fill_initgr_user();
+    will_return_always(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
     /* Query for that user, call a callback when command finishes */
     set_cmd_cb(test_nss_initgr_check);
@@ -3115,7 +3206,7 @@ static int nss_subdom_test_setup(void **state)
 
     subdomain = new_subdomain(nss_test_ctx, nss_test_ctx->tctx->dom,
                               testdom[0], testdom[1], testdom[2], testdom[3],
-                              false, false, NULL, 0);
+                              false, false, NULL, NULL, 0);
     assert_non_null(subdomain);
 
     ret = sysdb_subdomain_store(nss_test_ctx->tctx->sysdb,
@@ -3195,7 +3286,7 @@ static void test_nss_getnamebysid(void **state)
                      &testbysid, attrs, 0);
     assert_int_equal(ret, EOK);
 
-    mock_input_user_or_group(user_sid);
+    mock_input_sid(user_sid);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETNAMEBYSID);
     mock_fill_bysid();
 
@@ -3223,11 +3314,12 @@ void test_nss_getnamebysid_neg(void **state)
                                nss_test_ctx->tctx->dom->domain_id);
     assert_non_null(user_sid);
 
-    mock_input_user_or_group(user_sid);
+    mock_input_sid(user_sid);
     mock_account_recv_simple();
 
     assert_int_equal(nss_test_ctx->ncache_hits, 0);
 
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETNAMEBYSID,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -3243,7 +3335,8 @@ void test_nss_getnamebysid_neg(void **state)
      */
     nss_test_ctx->tctx->done = false;
 
-    mock_input_user_or_group(user_sid);
+    mock_input_sid(user_sid);
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETNAMEBYSID,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -3321,7 +3414,7 @@ void test_nss_getnamebysid_update(void **state)
     assert_int_equal(ret, EOK);
 
     /* Mock client input */
-    mock_input_user_or_group(user_sid);
+    mock_input_sid(user_sid);
     /* Mock client command */
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETNAMEBYSID);
     /* Call this function when user is updated by the mock DP request */
@@ -3425,7 +3518,7 @@ static void test_nss_getnamebycert(void **state)
     assert_int_equal(ret, EOK);
     talloc_free(attrs);
 
-    mock_input_user_or_group(TEST_TOKEN_CERT);
+    mock_input_cert(TEST_TOKEN_CERT);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETNAMEBYCERT);
     mock_fill_bysid();
 
@@ -3445,11 +3538,12 @@ void test_nss_getnamebycert_neg(void **state)
 {
     errno_t ret;
 
-    mock_input_user_or_group(TEST_TOKEN_CERT);
+    mock_input_cert(TEST_TOKEN_CERT);
     mock_account_recv_simple();
 
     assert_int_equal(nss_test_ctx->ncache_hits, 0);
 
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETNAMEBYCERT,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -3465,7 +3559,8 @@ void test_nss_getnamebycert_neg(void **state)
      */
     nss_test_ctx->tctx->done = false;
 
-    mock_input_user_or_group(TEST_TOKEN_CERT);
+    mock_input_cert(TEST_TOKEN_CERT);
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETNAMEBYCERT,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -3566,7 +3661,7 @@ void test_nss_getsidbyupn(void **state)
                      &sid_user, attrs, 0);
     assert_int_equal(ret, EOK);
 
-    mock_input_user_or_group(testuser_upn);
+    mock_input_upn(testuser_upn);
     will_return(__wrap_sss_packet_get_cmd, SSS_NSS_GETSIDBYNAME);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
 
@@ -3591,6 +3686,7 @@ void test_nss_getsidbyname_neg(void **state)
     mock_account_recv_simple();
 
     /* Query for that user, call a callback when command finishes */
+    set_cmd_cb(NULL);
     ret = sss_cmd_execute(nss_test_ctx->cctx, SSS_NSS_GETSIDBYNAME,
                           nss_test_ctx->nss_cmds);
     assert_int_equal(ret, EOK);
@@ -3693,6 +3789,8 @@ int main(int argc, const char *argv[])
                                         nss_test_setup,
                                         nss_test_teardown),
         cmocka_unit_test_setup_teardown(test_nss_getpwnam_upn,
+                                        nss_test_setup, nss_test_teardown),
+        cmocka_unit_test_setup_teardown(test_nss_getpwnam_upn_same_domain,
                                         nss_test_setup, nss_test_teardown),
         cmocka_unit_test_setup_teardown(test_nss_getpwnam_upn_neg,
                                         nss_test_setup, nss_test_teardown),

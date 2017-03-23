@@ -237,7 +237,6 @@ static void ipa_subdomain_account_got_override(struct tevent_req *subreq)
                       "Switching back to BE_REQ_INITGROUPS.\n");
                 ar->entry_type = BE_REQ_INITGROUPS;
                 ar->filter_type = BE_FILTER_SECID;
-                ar->attr_type = BE_ATTR_CORE;
             }
         } else {
             DEBUG(SSSDBG_CRIT_FAILURE,
@@ -1008,6 +1007,12 @@ errno_t get_object_from_cache(TALLOC_CTX *mem_ctx,
                    ret, sss_strerror(ret));
             goto done;
         }
+        if (res->count != 1) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "More than one result found in our cache\n");
+            ret = EINVAL;
+            goto done;
+        }
 
         *_msg = res->msgs[0];
 
@@ -1052,7 +1057,7 @@ errno_t get_object_from_cache(TALLOC_CTX *mem_ctx,
         case BE_REQ_USER_AND_GROUP:
             if (ar->extra_value
                     && strcmp(ar->extra_value, EXTRA_NAME_IS_UPN) == 0) {
-                ret = sysdb_search_user_by_upn(mem_ctx, dom, ar->filter_value,
+                ret = sysdb_search_user_by_upn(mem_ctx, dom, false, ar->filter_value,
                                                attrs, &msg);
             } else {
                 ret = sysdb_search_user_by_name(mem_ctx, dom, ar->filter_value,

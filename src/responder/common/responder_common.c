@@ -38,6 +38,7 @@
 #include "confdb/confdb.h"
 #include "sbus/sssd_dbus.h"
 #include "responder/common/responder.h"
+#include "responder/common/iface/responder_iface.h"
 #include "responder/common/responder_packet.h"
 #include "providers/data_provider.h"
 #include "monitor/monitor_interfaces.h"
@@ -350,6 +351,88 @@ static void client_recv(struct cli_ctx *cctx)
     return;
 }
 
+static errno_t schedule_responder_idle_timer(struct resp_ctx *rctx);
+
+static void responder_idle_handler(struct tevent_context *ev,
+                                   struct tevent_timer *te,
+                                   struct timeval current_time,
+                                   void *data)
+{
+    struct resp_ctx *rctx;
+    time_t now;
+
+    rctx = talloc_get_type(data, struct resp_ctx);
+
+    now = time(NULL);
+    if (rctx->last_request_time > now) {
+        DEBUG(SSSDBG_IMPORTANT_INFO,
+              "Time shift detected, re-scheduling the responder timeout\n");
+        goto end;
+    }
+
+    if ((now - rctx->last_request_time) > rctx->idle_timeout) {
+        /* This responder is idle. Terminate it */
+        DEBUG(SSSDBG_TRACE_INTERNAL,
+              "Terminating idle responder [%p]\n", rctx);
+
+        talloc_free(rctx);
+
+        orderly_shutdown(0);
+    }
+
+    DEBUG(SSSDBG_TRACE_INTERNAL,
+          "Re-scheduling the idle timeout for the responder [%p]\n", rctx);
+
+end:
+    schedule_responder_idle_timer(rctx);
+}
+
+static errno_t schedule_responder_idle_timer(struct resp_ctx *rctx)
+{
+    struct timeval tv;
+
+    tv = tevent_timeval_current_ofs(rctx->idle_timeout / 2, 0);
+
+    talloc_zfree(rctx->idle);
+    rctx->idle = tevent_add_timer(rctx->ev,
+                                  rctx,
+                                  tv,
+                                  responder_idle_handler,
+                                  rctx);
+    if (rctx->idle == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to allocate time event: responder [%p] shutdown timeout\n",
+              rctx);
+        return ENOMEM;
+    }
+
+    DEBUG(SSSDBG_TRACE_INTERNAL,
+          "Re-scheduling the idle timeout for the responder [%p]\n", rctx);
+
+    return EOK;
+}
+
+static errno_t setup_responder_idle_timer(struct resp_ctx *rctx)
+{
+    errno_t ret;
+
+    rctx->last_request_time = time(NULL);
+
+    ret = schedule_responder_idle_timer(rctx);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_TRACE_INTERNAL,
+              "Error scheduling the idle timeout for the responder [%p]: "
+              "%d [%s]\n",
+              rctx, ret, sss_strerror(ret));
+        return ret;
+    }
+
+    DEBUG(SSSDBG_TRACE_INTERNAL,
+          "Setting up the idle timeout for the responder [%p]\n", rctx);
+
+    return EOK;
+}
+
 static void client_fd_handler(struct tevent_context *ev,
                               struct tevent_fd *fde,
                               uint16_t flags, void *ptr)
@@ -358,7 +441,10 @@ static void client_fd_handler(struct tevent_context *ev,
     struct cli_ctx *cctx = talloc_get_type(ptr, struct cli_ctx);
 
     /* Always reset the idle timer on any activity */
-    ret = reset_idle_timer(cctx);
+    cctx->rctx->last_request_time = time(NULL);
+
+    /* Always reset the idle timer on any activity */
+    ret = reset_client_idle_timer(cctx);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Could not create idle timer for client. "
@@ -375,6 +461,8 @@ static void client_fd_handler(struct tevent_context *ev,
         return;
     }
 }
+
+static errno_t setup_client_idle_timer(struct cli_ctx *cctx);
 
 struct accept_fd_ctx {
     struct resp_ctx *rctx;
@@ -502,7 +590,7 @@ static void accept_fd_handler(struct tevent_context *ev,
     cctx->rctx = rctx;
 
     /* Set up the idle timer */
-    ret = reset_idle_timer(cctx);
+    ret = setup_client_idle_timer(cctx);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Could not create idle timer for client. "
@@ -517,14 +605,52 @@ static void accept_fd_handler(struct tevent_context *ev,
     return;
 }
 
-errno_t reset_idle_timer(struct cli_ctx *cctx)
+static void client_idle_handler(struct tevent_context *ev,
+                                struct tevent_timer *te,
+                                struct timeval current_time,
+                                void *data)
 {
-    struct timeval tv =
-            tevent_timeval_current_ofs(cctx->rctx->client_idle_timeout, 0);
+    time_t now = time(NULL);
+    struct cli_ctx *cctx = talloc_get_type(data, struct cli_ctx);
 
+    if (cctx->last_request_time > now) {
+        DEBUG(SSSDBG_IMPORTANT_INFO,
+              "Time shift detected, re-scheduling the client timeout\n");
+        goto end;
+    }
+
+    if ((now - cctx->last_request_time) > cctx->rctx->client_idle_timeout) {
+        /* This connection is idle. Terminate it */
+        DEBUG(SSSDBG_TRACE_INTERNAL,
+              "Terminating idle client [%p][%d]\n",
+              cctx, cctx->cfd);
+
+        /* The cli_ctx destructor will handle the rest */
+        talloc_free(cctx);
+        return;
+    }
+
+end:
+    setup_client_idle_timer(cctx);
+}
+
+errno_t reset_client_idle_timer(struct cli_ctx *cctx)
+{
+    cctx->last_request_time = time(NULL);
+
+    return EOK;
+}
+
+static errno_t setup_client_idle_timer(struct cli_ctx *cctx)
+{
+    time_t now = time(NULL);
+    struct timeval tv =
+            tevent_timeval_current_ofs(cctx->rctx->client_idle_timeout/2, 0);
+
+    cctx->last_request_time = now;
     talloc_zfree(cctx->idle);
 
-    cctx->idle = tevent_add_timer(cctx->ev, cctx, tv, idle_handler, cctx);
+    cctx->idle = tevent_add_timer(cctx->ev, cctx, tv, client_idle_handler, cctx);
     if (!cctx->idle) return ENOMEM;
 
     DEBUG(SSSDBG_TRACE_ALL,
@@ -534,23 +660,6 @@ errno_t reset_idle_timer(struct cli_ctx *cctx)
     return EOK;
 }
 
-void idle_handler(struct tevent_context *ev,
-                  struct tevent_timer *te,
-                  struct timeval current_time,
-                  void *data)
-{
-    /* This connection is idle. Terminate it */
-    struct cli_ctx *cctx =
-            talloc_get_type(data, struct cli_ctx);
-
-    DEBUG(SSSDBG_TRACE_INTERNAL,
-          "Terminating idle client [%p][%d]\n",
-           cctx, cctx->cfd);
-
-    /* The cli_ctx destructor will handle the rest */
-    talloc_free(cctx);
-}
-
 static int sss_dp_init(struct resp_ctx *rctx,
                        struct sbus_iface_map *sbus_iface,
                        const char *cli_name,
@@ -558,6 +667,7 @@ static int sss_dp_init(struct resp_ctx *rctx,
 {
     struct be_conn *be_conn;
     int ret;
+    struct sbus_iface_map *resp_sbus_iface;
 
     be_conn = talloc_zero(rctx, struct be_conn);
     if (!be_conn) return ENOMEM;
@@ -574,6 +684,7 @@ static int sss_dp_init(struct resp_ctx *rctx,
     }
     ret = sbus_client_init(rctx, rctx->ev,
                            be_conn->sbus_address,
+                           NULL,
                            &be_conn->conn);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Failed to connect to monitor services.\n");
@@ -584,6 +695,19 @@ static int sss_dp_init(struct resp_ctx *rctx,
         ret = sbus_conn_register_iface_map(be_conn->conn, sbus_iface, rctx);
         if (ret != EOK) {
             DEBUG(SSSDBG_FATAL_FAILURE, "Failed to register D-Bus interface.\n");
+            return ret;
+        }
+    }
+
+    resp_sbus_iface = responder_get_sbus_interface();
+    if (resp_sbus_iface != NULL) {
+        ret = sbus_conn_register_iface_map(be_conn->conn,
+                                           resp_sbus_iface,
+                                           rctx);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_FATAL_FAILURE,
+                  "Cannot register generic responder iface at %s: %d\n",
+                  resp_sbus_iface->path, ret);
             return ret;
         }
     }
@@ -771,53 +895,51 @@ int activate_unix_sockets(struct resp_ctx *rctx,
 {
     int ret;
 
-    /* by default we want to open sockets ourselves */
-    rctx->lfd = -1;
-    rctx->priv_lfd = -1;
-
 #ifdef HAVE_SYSTEMD
-    int numfds = (rctx->sock_name ? 1 : 0)
-                + (rctx->priv_sock_name ? 1 : 0);
-    /* but if systemd support is available, check if the sockets
-     * have been opened for us, via socket activation */
-    ret = sd_listen_fds(1);
-    if (ret < 0) {
-        DEBUG(SSSDBG_MINOR_FAILURE,
-              "Unexpected error probing for active sockets. "
-              "Will proceed with no sockets. [Error %d (%s)]\n",
-              -ret, sss_strerror(-ret));
-    } else if (ret > numfds) {
-        DEBUG(SSSDBG_FATAL_FAILURE,
-              "Too many activated sockets have been found, "
-              "expected %d, found %d\n", numfds, ret);
-        ret = E2BIG;
-        goto done;
-    }
-
-    if (ret == numfds) {
-        rctx->lfd = SD_LISTEN_FDS_START;
-        ret = sd_is_socket_unix(rctx->lfd, SOCK_STREAM, 1, NULL, 0);
+    if (rctx->lfd == -1 && rctx->priv_lfd == -1) {
+        int numfds = (rctx->sock_name ? 1 : 0)
+                     + (rctx->priv_sock_name ? 1 : 0);
+        /* but if systemd support is available, check if the sockets
+         * have been opened for us, via socket activation */
+        ret = sd_listen_fds(1);
         if (ret < 0) {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "Activated socket is not a UNIX listening socket\n");
-            ret = EIO;
+            DEBUG(SSSDBG_MINOR_FAILURE,
+                  "Unexpected error probing for active sockets. "
+                  "Will proceed with no sockets. [Error %d (%s)]\n",
+                  -ret, sss_strerror(-ret));
+        } else if (ret > numfds) {
+            DEBUG(SSSDBG_FATAL_FAILURE,
+                  "Too many activated sockets have been found, "
+                  "expected %d, found %d\n", numfds, ret);
+            ret = E2BIG;
             goto done;
         }
 
-        ret = sss_fd_nonblocking(rctx->lfd);
-        if (ret != EOK) goto done;
-        if (numfds == 2) {
-            rctx->priv_lfd = SD_LISTEN_FDS_START + 1;
-            ret = sd_is_socket_unix(rctx->priv_lfd, SOCK_STREAM, 1, NULL, 0);
+        if (ret == numfds) {
+            rctx->lfd = SD_LISTEN_FDS_START;
+            ret = sd_is_socket_unix(rctx->lfd, SOCK_STREAM, 1, NULL, 0);
             if (ret < 0) {
                 DEBUG(SSSDBG_CRIT_FAILURE,
-                    "Activated priv socket is not a UNIX listening socket\n");
+                      "Activated socket is not a UNIX listening socket\n");
                 ret = EIO;
                 goto done;
             }
 
-            ret = sss_fd_nonblocking(rctx->priv_lfd);
+            ret = sss_fd_nonblocking(rctx->lfd);
             if (ret != EOK) goto done;
+            if (numfds == 2) {
+                rctx->priv_lfd = SD_LISTEN_FDS_START + 1;
+                ret = sd_is_socket_unix(rctx->priv_lfd, SOCK_STREAM, 1, NULL, 0);
+                if (ret < 0) {
+                    DEBUG(SSSDBG_CRIT_FAILURE,
+                          "Activated priv socket is not a UNIX listening socket\n");
+                    ret = EIO;
+                    goto done;
+                }
+
+                ret = sss_fd_nonblocking(rctx->priv_lfd);
+                if (ret != EOK) goto done;
+            }
         }
     }
 #endif
@@ -882,7 +1004,6 @@ static errno_t responder_init_ncache(TALLOC_CTX *mem_ctx,
     }
 
     neg_timeout = tmp_value;
-    ret = EOK;
 
     /* local_timeout */
     ret = confdb_get_int(cdb, CONFDB_NSS_CONF_ENTRY,
@@ -901,7 +1022,6 @@ static errno_t responder_init_ncache(TALLOC_CTX *mem_ctx,
     }
 
     locals_timeout = tmp_value;
-    ret = EOK;
 
     /* negative cache init */
     ret = sss_ncache_init(mem_ctx, neg_timeout, locals_timeout, ncache);
@@ -953,6 +1073,8 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
     rctx->priv_lfd = priv_pipe_fd;
     rctx->confdb_service_path = confdb_service_path;
     rctx->shutting_down = false;
+    rctx->socket_activated = is_socket_activated();
+    rctx->dbus_activated = is_dbus_activated();
 
     talloc_set_destructor((TALLOC_CTX*)rctx, sss_responder_ctx_destructor);
 
@@ -970,6 +1092,24 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
     /* Ensure that the client timeout is at least ten seconds */
     if (rctx->client_idle_timeout < 10) {
         rctx->client_idle_timeout = 10;
+    }
+
+    if (rctx->socket_activated || rctx->dbus_activated) {
+        ret = responder_setup_idle_timeout_config(rctx);
+        if (ret != EOK) {
+            goto fail;
+        }
+    }
+
+    ret = confdb_get_bool(rctx->cdb, rctx->confdb_service_path,
+                          CONFDB_RESPONDER_CACHE_FIRST,
+                          false, &rctx->cache_first);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "Cannot get \"cache_first_option\".\n"
+              "Querying the caches first before querying the "
+              "Data Providers will not be enforced [%d]: %s.\n",
+              ret, sss_strerror(ret));
     }
 
     ret = confdb_get_int(rctx->cdb, rctx->confdb_service_path,
@@ -1024,7 +1164,8 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
     }
 
     ret = sss_monitor_init(rctx, rctx->ev, monitor_intf,
-                           svc_name, svc_version, rctx,
+                           svc_name, svc_version, MT_SVC_SERVICE,
+                           rctx, &rctx->last_request_time,
                            &rctx->mon_conn);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "fatal error setting up message bus\n");
@@ -1062,7 +1203,7 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
     }
 
     /* after all initializations we are ready to listen on our socket */
-    ret = set_unix_socket(rctx, conn_setup);
+    ret = activate_unix_sockets(rctx, conn_setup);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "fatal error initializing socket\n");
         goto fail;
@@ -1082,7 +1223,17 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
         goto fail;
     }
 
-    DEBUG(SSSDBG_TRACE_FUNC, "Responder Initialization complete\n");
+    ret = sss_ad_default_names_ctx(rctx, &rctx->global_names);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "sss_ad_default_names_ctx failed.\n");
+        goto fail;
+    }
+
+    DEBUG(SSSDBG_TRACE_FUNC,
+          "Responder initialization complete (%s)\n",
+          rctx->socket_activated  ? "socket-activated" :
+                                    rctx->dbus_activated ? "dbus-activated" :
+                                                            "explicitly configured");
 
     *responder_ctx = rctx;
     return EOK;
@@ -1250,4 +1401,55 @@ void responder_set_fd_limit(rlim_t fd_limit)
               "Could not determine fd limits. "
                "Proceeding with system values\n");
     }
+}
+
+errno_t responder_setup_idle_timeout_config(struct resp_ctx *rctx)
+{
+    errno_t ret;
+
+    ret = confdb_get_int(rctx->cdb, rctx->confdb_service_path,
+                         CONFDB_RESPONDER_IDLE_TIMEOUT,
+                         CONFDB_RESPONDER_IDLE_DEFAULT_TIMEOUT,
+                         &rctx->idle_timeout);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "Cannot get the responder idle timeout [%d]: %s\n",
+              ret, sss_strerror(ret));
+        goto fail;
+    }
+
+    /* Idle timeout set to 0 means that no timeout will be set up to
+     * the responder */
+    if (rctx->idle_timeout == 0) {
+        DEBUG(SSSDBG_TRACE_INTERNAL,
+              "Responder idle timeout won't be set up as the "
+              "responder_idle_timeout is set to 0");
+    } else {
+        /* Ensure that the responder timeout is at least sixty seconds */
+        if (rctx->idle_timeout < 60) {
+            DEBUG(SSSDBG_TRACE_INTERNAL,
+                  "responder_idle_timeout is set to a value lower than "
+                  "the minimum allowed (60s).\n"
+                  "The minimum allowed value will be used.");
+
+            rctx->idle_timeout = 60;
+        }
+
+        ret = setup_responder_idle_timer(rctx);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_MINOR_FAILURE,
+                  "An error ocurrend when setting up the responder's idle "
+                  "timeout for the responder [%p]: %s [%d].\n"
+                  "The responder won't be automatically shutdown after %d "
+                  "seconds inactive. \n",
+                  rctx, sss_strerror(ret), ret,
+                  rctx->idle_timeout);
+        }
+    }
+
+    ret = EOK;
+
+fail:
+    return ret;
+
 }

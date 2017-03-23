@@ -49,9 +49,7 @@ static int ifp_sysbus_reconnect(struct sbus_request *dbus_req, void *data);
 
 struct mon_cli_iface monitor_ifp_methods = {
     { &mon_cli_iface_meta, 0 },
-    .ping = monitor_common_pong,
     .resInit = monitor_common_res_init,
-    .shutDown = NULL,
     .goOffline = NULL,
     .resetOffline = NULL,
     .rotateLogs = responder_logrotate,
@@ -140,7 +138,7 @@ sysbus_init(TALLOC_CTX *mem_ctx,
     /* Integrate with tevent loop */
     ret = sbus_init_connection(system_bus, ev, conn,
                                SBUS_CONN_TYPE_SYSBUS,
-                               &system_bus->conn);
+                               NULL, NULL, &system_bus->conn);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Could not integrate D-BUS into mainloop.\n");
@@ -366,6 +364,7 @@ int main(int argc, const char *argv[])
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
         SSSD_SERVER_OPTS(uid, gid)
+        SSSD_RESPONDER_OPTS
         POPT_TABLEEND
     };
 

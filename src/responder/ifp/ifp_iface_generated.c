@@ -15,6 +15,9 @@ static int invoke_u_method(struct sbus_request *dbus_req, void *function_ptr);
 /* invokes a handler with a 'su' DBus signature */
 static int invoke_su_method(struct sbus_request *dbus_req, void *function_ptr);
 
+/* invokes a handler with a 'ss' DBus signature */
+static int invoke_ss_method(struct sbus_request *dbus_req, void *function_ptr);
+
 /* invokes a handler with a 'ssu' DBus signature */
 static int invoke_ssu_method(struct sbus_request *dbus_req, void *function_ptr);
 
@@ -263,75 +266,6 @@ const struct sbus_interface_meta iface_ifp_meta = {
     sbus_invoke_get_all, /* GetAll invoker */
 };
 
-int iface_ifp_components_Enable_finish(struct sbus_request *req)
-{
-   return sbus_request_return_and_finish(req,
-                                         DBUS_TYPE_INVALID);
-}
-
-int iface_ifp_components_Disable_finish(struct sbus_request *req)
-{
-   return sbus_request_return_and_finish(req,
-                                         DBUS_TYPE_INVALID);
-}
-
-/* arguments for org.freedesktop.sssd.infopipe.Components.ChangeDebugLevel */
-const struct sbus_arg_meta iface_ifp_components_ChangeDebugLevel__in[] = {
-    { "new_level", "u" },
-    { NULL, }
-};
-
-int iface_ifp_components_ChangeDebugLevel_finish(struct sbus_request *req)
-{
-   return sbus_request_return_and_finish(req,
-                                         DBUS_TYPE_INVALID);
-}
-
-/* arguments for org.freedesktop.sssd.infopipe.Components.ChangeDebugLevelTemporarily */
-const struct sbus_arg_meta iface_ifp_components_ChangeDebugLevelTemporarily__in[] = {
-    { "new_level", "u" },
-    { NULL, }
-};
-
-int iface_ifp_components_ChangeDebugLevelTemporarily_finish(struct sbus_request *req)
-{
-   return sbus_request_return_and_finish(req,
-                                         DBUS_TYPE_INVALID);
-}
-
-/* methods for org.freedesktop.sssd.infopipe.Components */
-const struct sbus_method_meta iface_ifp_components__methods[] = {
-    {
-        "Enable", /* name */
-        NULL, /* no in_args */
-        NULL, /* no out_args */
-        offsetof(struct iface_ifp_components, Enable),
-        NULL, /* no invoker */
-    },
-    {
-        "Disable", /* name */
-        NULL, /* no in_args */
-        NULL, /* no out_args */
-        offsetof(struct iface_ifp_components, Disable),
-        NULL, /* no invoker */
-    },
-    {
-        "ChangeDebugLevel", /* name */
-        iface_ifp_components_ChangeDebugLevel__in,
-        NULL, /* no out_args */
-        offsetof(struct iface_ifp_components, ChangeDebugLevel),
-        invoke_u_method,
-    },
-    {
-        "ChangeDebugLevelTemporarily", /* name */
-        iface_ifp_components_ChangeDebugLevelTemporarily__in,
-        NULL, /* no out_args */
-        offsetof(struct iface_ifp_components, ChangeDebugLevelTemporarily),
-        invoke_u_method,
-    },
-    { NULL, }
-};
-
 /* property info for org.freedesktop.sssd.infopipe.Components */
 const struct sbus_property_meta iface_ifp_components__properties[] = {
     {
@@ -385,7 +319,7 @@ const struct sbus_property_meta iface_ifp_components__properties[] = {
 /* interface info for org.freedesktop.sssd.infopipe.Components */
 const struct sbus_interface_meta iface_ifp_components_meta = {
     "org.freedesktop.sssd.infopipe.Components", /* name */
-    iface_ifp_components__methods,
+    NULL, /* no methods */
     NULL, /* no signals */
     iface_ifp_components__properties,
     sbus_invoke_get_all, /* GetAll invoker */
@@ -811,6 +745,46 @@ int iface_ifp_users_FindByCertificate_finish(struct sbus_request *req, const cha
                                          DBUS_TYPE_INVALID);
 }
 
+/* arguments for org.freedesktop.sssd.infopipe.Users.ListByCertificate */
+const struct sbus_arg_meta iface_ifp_users_ListByCertificate__in[] = {
+    { "pem_cert", "s" },
+    { "limit", "u" },
+    { NULL, }
+};
+
+/* arguments for org.freedesktop.sssd.infopipe.Users.ListByCertificate */
+const struct sbus_arg_meta iface_ifp_users_ListByCertificate__out[] = {
+    { "result", "ao" },
+    { NULL, }
+};
+
+int iface_ifp_users_ListByCertificate_finish(struct sbus_request *req, const char *arg_result[], int len_result)
+{
+   return sbus_request_return_and_finish(req,
+                                         DBUS_TYPE_ARRAY, DBUS_TYPE_OBJECT_PATH, &arg_result, len_result,
+                                         DBUS_TYPE_INVALID);
+}
+
+/* arguments for org.freedesktop.sssd.infopipe.Users.FindByNameAndCertificate */
+const struct sbus_arg_meta iface_ifp_users_FindByNameAndCertificate__in[] = {
+    { "name", "s" },
+    { "pem_cert", "s" },
+    { NULL, }
+};
+
+/* arguments for org.freedesktop.sssd.infopipe.Users.FindByNameAndCertificate */
+const struct sbus_arg_meta iface_ifp_users_FindByNameAndCertificate__out[] = {
+    { "result", "o" },
+    { NULL, }
+};
+
+int iface_ifp_users_FindByNameAndCertificate_finish(struct sbus_request *req, const char *arg_result)
+{
+   return sbus_request_return_and_finish(req,
+                                         DBUS_TYPE_OBJECT_PATH, &arg_result,
+                                         DBUS_TYPE_INVALID);
+}
+
 /* arguments for org.freedesktop.sssd.infopipe.Users.ListByName */
 const struct sbus_arg_meta iface_ifp_users_ListByName__in[] = {
     { "name_filter", "s" },
@@ -874,6 +848,20 @@ const struct sbus_method_meta iface_ifp_users__methods[] = {
         iface_ifp_users_FindByCertificate__out,
         offsetof(struct iface_ifp_users, FindByCertificate),
         invoke_s_method,
+    },
+    {
+        "ListByCertificate", /* name */
+        iface_ifp_users_ListByCertificate__in,
+        iface_ifp_users_ListByCertificate__out,
+        offsetof(struct iface_ifp_users, ListByCertificate),
+        invoke_su_method,
+    },
+    {
+        "FindByNameAndCertificate", /* name */
+        iface_ifp_users_FindByNameAndCertificate__in,
+        iface_ifp_users_FindByNameAndCertificate__out,
+        offsetof(struct iface_ifp_users, FindByNameAndCertificate),
+        invoke_ss_method,
     },
     {
         "ListByName", /* name */
@@ -1211,6 +1199,25 @@ const struct sbus_interface_meta iface_ifp_groups_group_meta = {
     iface_ifp_groups_group__properties,
     sbus_invoke_get_all, /* GetAll invoker */
 };
+
+/* invokes a handler with a 'ss' DBus signature */
+static int invoke_ss_method(struct sbus_request *dbus_req, void *function_ptr)
+{
+    const char * arg_0;
+    const char * arg_1;
+    int (*handler)(struct sbus_request *, void *, const char *, const char *) = function_ptr;
+
+    if (!sbus_request_parse_or_finish(dbus_req,
+                               DBUS_TYPE_STRING, &arg_0,
+                               DBUS_TYPE_STRING, &arg_1,
+                               DBUS_TYPE_INVALID)) {
+         return EOK; /* request handled */
+    }
+
+    return (handler)(dbus_req, dbus_req->intf->handler_data,
+                     arg_0,
+                     arg_1);
+}
 
 /* invokes a handler with a 'ssu' DBus signature */
 static int invoke_ssu_method(struct sbus_request *dbus_req, void *function_ptr)

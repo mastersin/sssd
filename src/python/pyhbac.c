@@ -18,6 +18,8 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "config.h"
+
 #include <Python.h>
 #include <structmember.h>
 
@@ -1619,6 +1621,7 @@ py_hbac_evaluate(HbacRequest *self, PyObject *args)
             goto fail;
         }
         /* FALLTHROUGH */
+        SSS_ATTRIBUTE_FALLTHROUGH;
     case HBAC_EVAL_DENY:
         ret = PYNUMBER_FROMLONG(eres);
         break;

@@ -327,8 +327,18 @@ static const char *sssctl_create_filter(TALLOC_CTX *mem_ctx,
         return NULL;
     }
 
-    filter = talloc_asprintf(mem_ctx, "(&(objectClass=%s)(%s=%s))",
-                             class, attr_name, filter_value);
+    if (dom->case_sensitive == false) {
+        char *filter_value_old;
+
+        filter_value_old = filter_value;
+        filter_value = sss_tc_utf8_str_tolower(mem_ctx, filter_value_old);
+        talloc_free(filter_value_old);
+    }
+
+    filter = talloc_asprintf(mem_ctx, "(&(objectClass=%s)(|(%s=%s)(%s=%s)))",
+                             class, attr_name, filter_value,
+                             SYSDB_NAME_ALIAS, filter_value);
+
     talloc_free(filter_value);
 
     return filter;
@@ -424,8 +434,8 @@ static errno_t sssctl_fetch_object(TALLOC_CTX *mem_ctx,
                                    struct sss_domain_info **_dom)
 {
     TALLOC_CTX *tmp_ctx;
-    struct sysdb_attrs *entry;
-    struct sss_domain_info *dom;
+    struct sysdb_attrs *entry = NULL;
+    struct sss_domain_info *dom = NULL;
     const char **attrs;
     char *sanitized;
     errno_t ret;

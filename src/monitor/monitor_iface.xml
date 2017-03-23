@@ -15,15 +15,7 @@
 
     <interface name="org.freedesktop.sssd.service">
         <annotation value="mon_cli_iface" name="org.freedesktop.DBus.GLib.CSymbol"/>
-        <method name="ping"> <!-- deprecated -->
-            <!-- no arguments, raw handler -->
-            <annotation name="org.freedesktop.sssd.RawHandler" value="true"/>
-        </method>
         <method name="resInit">
-            <!-- no arguments, raw handler -->
-            <annotation name="org.freedesktop.sssd.RawHandler" value="true"/>
-        </method>
-        <method name="shutDown">
             <!-- no arguments, raw handler -->
             <annotation name="org.freedesktop.sssd.RawHandler" value="true"/>
         </method>

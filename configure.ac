@@ -62,12 +62,17 @@ AC_COMPILE_IFELSE(
 
 AM_CONDITIONAL([HAVE_PTHREAD], [test x"$HAVE_PTHREAD" != "x"])
 
+# Check library for the timer_create function
 SAVE_LIBS=$LIBS
-LIBS="$LIBS -lpthread"
-AC_CHECK_FUNCS([ pthread_mutexattr_setrobust \
-                 pthread_mutex_consistent \
-                 pthread_mutexattr_setrobust_np \
-                 pthread_mutex_consistent_np ])
+LIBS=
+LIBADD_TIMER=
+AC_SEARCH_LIBS([timer_create], [rt posix4],
+    [AC_DEFINE([HAVE_LIBRT], [1],
+         [Define if you have the librt library or equivalent.])
+     LIBADD_TIMER="$LIBS"],
+    [AC_MSG_ERROR([unable to find library fot the timer_create() function])])
+
+AC_SUBST([LIBADD_TIMER])
 LIBS=$SAVE_LIBS
 
 # Check for presence of modern functions for setting file timestamps
@@ -182,21 +187,17 @@ m4_include([src/external/signal.m4])
 m4_include([src/external/inotify.m4])
 m4_include([src/external/samba.m4])
 m4_include([src/external/sasl.m4])
-m4_include([src/external/configlib.m4])
 m4_include([src/external/libnfsidmap.m4])
 m4_include([src/external/cwrap.m4])
 m4_include([src/external/libresolv.m4])
 m4_include([src/external/intgcheck.m4])
 m4_include([src/external/systemtap.m4])
 m4_include([src/external/service.m4])
+m4_include([src/external/libcurl.m4])
 
 if test x$with_secrets = xyes; then
     m4_include([src/external/libhttp_parser.m4])
     m4_include([src/external/libjansson.m4])
-fi
-
-if test x$build_config_lib = xyes; then
-    m4_include([src/external/libaugeas.m4])
 fi
 
 WITH_UNICODE_LIB
@@ -418,6 +419,30 @@ if test x"$sss_cv_attribute_warn_unused_result" = xyes ; then
              [whether compiler supports __attribute__((warn_unused_result))])
 fi
 
+SAFE_CFLAGS=$CFLAGS
+CFLAGS="-Werror"
+AC_CACHE_CHECK(
+    [whether compiler supports __attribute__((fallthrough))],
+    [sss_cv_attribute_fallthrough],
+    [AC_COMPILE_IFELSE(
+         [AC_LANG_SOURCE(
+             [ __attribute__ ((fallthrough)); ])
+         ],[
+             sss_cv_attribute_fallthrough=yes
+             sss_cv_attribute_fallthrough_val="__attribute__ ((fallthrough))"
+         ],[
+             sss_cv_attribute_fallthrough=no
+             sss_cv_attribute_fallthrough_val=
+         ])
+    ])
+CFLAGS=$SAFE_CFLAGS
+
+AC_DEFINE_UNQUOTED(
+    [SSS_ATTRIBUTE_FALLTHROUGH],
+    [$sss_cv_attribute_fallthrough_val],
+    [__attribute__((fallthrough)) if supported])
+
+
 PKG_CHECK_MODULES([CHECK], [check >= 0.9.5], [have_check=1], [have_check=])
 if test x$have_check = x; then
     AC_MSG_WARN([Without the 'CHECK' libraries, you will be unable to run all tests in the 'make check' suite])
@@ -464,7 +489,6 @@ AC_CONFIG_FILES([Makefile contrib/sssd.spec src/examples/rwtab src/doxy.config
                  src/lib/sifp/sss_simpleifp.pc
                  src/lib/sifp/sss_simpleifp.doxy
                  src/config/setup.py
-                 src/responder/ifp/org.freedesktop.sssd.infopipe.service
                  src/systemtap/sssd.stp
                  src/config/SSSDConfig/__init__.py])
 AC_OUTPUT

@@ -50,9 +50,7 @@
 
 struct mon_cli_iface monitor_pac_methods = {
     { &mon_cli_iface_meta, 0 },
-    .ping = monitor_common_pong,
     .resInit = monitor_common_res_init,
-    .shutDown = NULL,
     .goOffline = NULL,
     .resetOffline = NULL,
     .rotateLogs = responder_logrotate,
@@ -220,6 +218,7 @@ int main(int argc, const char *argv[])
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
         SSSD_SERVER_OPTS(uid, gid)
+        SSSD_RESPONDER_OPTS
         POPT_TABLEEND
     };
 

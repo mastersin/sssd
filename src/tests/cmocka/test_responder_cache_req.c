@@ -26,7 +26,7 @@
 #include "tests/cmocka/common_mock.h"
 #include "tests/cmocka/common_mock_resp.h"
 #include "db/sysdb.h"
-#include "responder/common/responder_cache_req.h"
+#include "responder/common/cache_req/cache_req.h"
 
 #define TESTS_PATH "tp_" BASE_FILE_STEM
 #define TEST_CONF_DB "test_responder_cache_req_conf.ldb"
@@ -89,9 +89,7 @@ struct cache_req_test_ctx {
     struct resp_ctx *rctx;
     struct sss_nc_ctx *ncache;
 
-    struct ldb_result *result;
-    struct sss_domain_info *domain;
-    char *name;
+    struct cache_req_result *result;
     bool dp_called;
 
     /* NOTE: Please, instead of adding new create_[user|group] bool,
@@ -123,10 +121,7 @@ static void cache_req_user_by_name_test_done(struct tevent_req *req)
 
     ctx = tevent_req_callback_data(req, struct cache_req_test_ctx);
 
-    ctx->tctx->error = cache_req_user_by_name_recv(ctx, req,
-                                                   &ctx->result,
-                                                   &ctx->domain,
-                                                   &ctx->name);
+    ctx->tctx->error = cache_req_user_by_name_recv(ctx, req, &ctx->result);
     talloc_zfree(req);
 
     ctx->tctx->done = true;
@@ -138,8 +133,7 @@ static void cache_req_user_by_id_test_done(struct tevent_req *req)
 
     ctx = tevent_req_callback_data(req, struct cache_req_test_ctx);
 
-    ctx->tctx->error = cache_req_user_by_id_recv(ctx, req,
-                                                 &ctx->result, &ctx->domain);
+    ctx->tctx->error = cache_req_user_by_id_recv(ctx, req, &ctx->result);
     talloc_zfree(req);
 
     ctx->tctx->done = true;
@@ -151,10 +145,7 @@ static void cache_req_group_by_name_test_done(struct tevent_req *req)
 
     ctx = tevent_req_callback_data(req, struct cache_req_test_ctx);
 
-    ctx->tctx->error = cache_req_group_by_name_recv(ctx, req,
-                                                    &ctx->result,
-                                                    &ctx->domain,
-                                                    &ctx->name);
+    ctx->tctx->error = cache_req_group_by_name_recv(ctx, req, &ctx->result);
     talloc_zfree(req);
 
     ctx->tctx->done = true;
@@ -166,8 +157,7 @@ static void cache_req_group_by_id_test_done(struct tevent_req *req)
 
     ctx = tevent_req_callback_data(req, struct cache_req_test_ctx);
 
-    ctx->tctx->error = cache_req_group_by_id_recv(ctx, req,
-                                                  &ctx->result, &ctx->domain);
+    ctx->tctx->error = cache_req_group_by_id_recv(ctx, req, &ctx->result);
     talloc_zfree(req);
 
     ctx->tctx->done = true;
@@ -179,9 +169,7 @@ static void cache_req_object_by_sid_test_done(struct tevent_req *req)
 
     ctx = tevent_req_callback_data(req, struct cache_req_test_ctx);
 
-    ctx->tctx->error = cache_req_object_by_sid_recv(ctx, req,
-                                                    &ctx->result,
-                                                    &ctx->domain);
+    ctx->tctx->error = cache_req_object_by_sid_recv(ctx, req, &ctx->result);
     talloc_zfree(req);
 
     ctx->tctx->done = true;
@@ -295,8 +283,8 @@ static void check_user(struct cache_req_test_ctx *test_ctx,
                                        SYSDB_UIDNUM, 0);
     assert_int_equal(ldbuid, user->uid);
 
-    assert_non_null(test_ctx->domain);
-    assert_string_equal(exp_dom->name, test_ctx->domain->name);
+    assert_non_null(test_ctx->result->domain);
+    assert_string_equal(exp_dom->name, test_ctx->result->domain->name);
 }
 
 static void prepare_group(struct sss_domain_info *domain,
@@ -370,8 +358,8 @@ static void check_group(struct cache_req_test_ctx *test_ctx,
                                        SYSDB_GIDNUM, 0);
     assert_int_equal(ldbgid, group->gid);
 
-    assert_non_null(test_ctx->domain);
-    assert_string_equal(exp_dom->name, test_ctx->domain->name);
+    assert_non_null(test_ctx->result->domain);
+    assert_string_equal(exp_dom->name, test_ctx->result->domain->name);
 }
 
 static void run_object_by_sid(struct cache_req_test_ctx *test_ctx,
@@ -471,7 +459,6 @@ static int test_single_domain_teardown(void **state)
     test_ctx = talloc_get_type_abort(*state, struct cache_req_test_ctx);
 
     talloc_zfree(test_ctx->result);
-    talloc_zfree(test_ctx->name);
 
     assert_true(check_leaks_pop(test_ctx));
     talloc_zfree(test_ctx);
@@ -518,7 +505,6 @@ static int test_multi_domain_teardown(void **state)
     test_ctx = talloc_get_type_abort(*state, struct cache_req_test_ctx);
 
     talloc_zfree(test_ctx->result);
-    talloc_zfree(test_ctx->name);
 
     reset_ldb_errstrings(test_ctx->tctx->dom);
     assert_true(check_leaks_pop(test_ctx));
@@ -544,7 +530,7 @@ void test_user_by_name_multiple_domains_found(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
     mock_parse_inp(users[0].short_name, NULL, ERR_OK);
 
     /* Test. */
@@ -561,7 +547,7 @@ void test_user_by_name_multiple_domains_notfound(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
     mock_parse_inp(users[0].short_name, NULL, ERR_OK);
 
     /* Test. */
@@ -631,8 +617,8 @@ void test_user_by_name_multiple_domains_parse(void **state)
 
     check_user(test_ctx, &users[0], domain);
 
-    assert_non_null(test_ctx->name);
-    assert_string_equal(input_fqn, test_ctx->name);
+    assert_non_null(test_ctx->result->lookup_name);
+    assert_string_equal(input_fqn, test_ctx->result->lookup_name);
 
     talloc_free(input_fqn);
 }
@@ -763,7 +749,7 @@ void test_user_by_upn_multiple_domains_found(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
     mock_parse_inp(NULL, NULL, ERR_DOMAIN_NOT_FOUND);
 
     /* Test. */
@@ -780,7 +766,7 @@ void test_user_by_upn_multiple_domains_notfound(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
     mock_parse_inp(NULL, NULL, ERR_DOMAIN_NOT_FOUND);
 
     /* Test. */
@@ -853,9 +839,9 @@ void test_user_by_upn_ncache(void **state)
 
     test_ctx = talloc_get_type_abort(*state, struct cache_req_test_ctx);
 
-    /* Setup user. */
-    ret = sss_ncache_set_user(test_ctx->ncache, false,
-                              test_ctx->tctx->dom, users[0].upn);
+    /* Setup user's UPN. */
+    ret = sss_ncache_set_upn(test_ctx->ncache, false,
+                             test_ctx->tctx->dom, users[0].upn);
     assert_int_equal(ret, EOK);
 
     /* Mock values. */
@@ -918,7 +904,7 @@ void test_user_by_id_multiple_domains_found(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
 
     /* Test. */
     run_user_by_id(test_ctx, NULL, 0, ERR_OK);
@@ -934,7 +920,7 @@ void test_user_by_id_multiple_domains_notfound(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
 
     /* Test. */
     run_user_by_id(test_ctx, NULL, 0, ENOENT);
@@ -1059,7 +1045,7 @@ void test_group_by_name_multiple_domains_found(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
     mock_parse_inp(groups[0].short_name, NULL, ERR_OK);
 
     /* Test. */
@@ -1076,7 +1062,7 @@ void test_group_by_name_multiple_domains_notfound(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
     mock_parse_inp(groups[0].short_name, NULL, ERR_OK);
 
     /* Test. */
@@ -1144,8 +1130,8 @@ void test_group_by_name_multiple_domains_parse(void **state)
 
     check_group(test_ctx, &groups[0], domain);
 
-    assert_non_null(test_ctx->name);
-    assert_string_equal(input_fqn, test_ctx->name);
+    assert_non_null(test_ctx->result->lookup_name);
+    assert_string_equal(input_fqn, test_ctx->result->lookup_name);
 
     talloc_free(input_fqn);
 }
@@ -1275,7 +1261,7 @@ void test_group_by_id_multiple_domains_found(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
 
     /* Test. */
     run_group_by_id(test_ctx, NULL, 0, ERR_OK);
@@ -1291,7 +1277,7 @@ void test_group_by_id_multiple_domains_notfound(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
 
     /* Test. */
     run_group_by_id(test_ctx, NULL, 0, ENOENT);
@@ -1407,9 +1393,7 @@ static void cache_req_user_by_filter_test_done(struct tevent_req *req)
 
     ctx = tevent_req_callback_data(req, struct cache_req_test_ctx);
 
-    ctx->tctx->error = cache_req_user_by_filter_recv(ctx, req,
-                                                     &ctx->result,
-                                                     &ctx->domain);
+    ctx->tctx->error = cache_req_user_by_filter_recv(ctx, req, &ctx->result);
     talloc_zfree(req);
     ctx->tctx->done = true;
 }
@@ -1495,10 +1479,10 @@ void test_users_by_recent_filter_valid(void **state)
     user_names = talloc_zero_array(test_ctx, const char *, num_users);
     assert_non_null(user_names);
     user_names[0] = sss_create_internal_fqname(user_names, users[0].short_name,
-                                               test_ctx->domain->name);
+                                               test_ctx->result->domain->name);
     assert_non_null(user_names[0]);
     user_names[1] = sss_create_internal_fqname(user_names, users[1].short_name,
-                                               test_ctx->domain->name);
+                                               test_ctx->result->domain->name);
     assert_non_null(user_names[1]);
 
     for (int i = 0; i < num_users; ++i) {
@@ -1624,9 +1608,7 @@ static void cache_req_group_by_filter_test_done(struct tevent_req *req)
 
     ctx = tevent_req_callback_data(req, struct cache_req_test_ctx);
 
-    ctx->tctx->error = cache_req_group_by_filter_recv(ctx, req,
-                                                      &ctx->result,
-                                                      &ctx->domain);
+    ctx->tctx->error = cache_req_group_by_filter_recv(ctx, req, &ctx->result);
     talloc_zfree(req);
     ctx->tctx->done = true;
 }
@@ -1716,10 +1698,10 @@ void test_groups_by_recent_filter_valid(void **state)
     group_names = talloc_array(tmp_ctx, const char *, 2);
     assert_non_null(group_names);
     group_names[0] = sss_create_internal_fqname(group_names, groups[0].short_name,
-                                                test_ctx->domain->name);
+                                                test_ctx->result->domain->name);
     assert_non_null(group_names[0]);
     group_names[1] = sss_create_internal_fqname(group_names, groups[1].short_name,
-                                                test_ctx->domain->name);
+                                                test_ctx->result->domain->name);
     assert_non_null(group_names[1]);
 
     ldb_results = talloc_array(tmp_ctx, const char *, 2);
@@ -1930,7 +1912,7 @@ void test_object_by_sid_user_multiple_domains_found(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
 
     /* Test. */
     run_object_by_sid(test_ctx, NULL, users[0].sid, attrs, 0, ERR_OK);
@@ -1947,7 +1929,7 @@ void test_object_by_sid_user_multiple_domains_notfound(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
 
     /* Test. */
     run_object_by_sid(test_ctx, NULL, users[0].sid, attrs, 0, ENOENT);
@@ -2086,7 +2068,7 @@ void test_object_by_sid_group_multiple_domains_found(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
 
     /* Test. */
     run_object_by_sid(test_ctx, NULL, groups[0].sid, attrs, 0, ERR_OK);
@@ -2103,7 +2085,7 @@ void test_object_by_sid_group_multiple_domains_notfound(void **state)
 
     /* Mock values. */
     will_return_always(__wrap_sss_dp_get_account_send, test_ctx);
-    will_return_always(sss_dp_get_account_recv, 0);
+    will_return_always(sss_dp_req_recv, 0);
 
     /* Test. */
     run_object_by_sid(test_ctx, NULL, groups[0].sid, attrs, 0, ENOENT);

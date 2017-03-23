@@ -16,8 +16,10 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+from __future__ import print_function
 import os
 import stat
+import sys
 import config
 import signal
 import subprocess
@@ -46,20 +48,25 @@ def create_sssd_secrets_fixture(request):
     resp_path = os.path.join(config.LIBEXEC_PATH, "sssd", "sssd_secrets")
 
     secpid = os.fork()
+    assert secpid >= 0
+
     if secpid == 0:
         if subprocess.call([resp_path, "--uid=0", "--gid=0"]) != 0:
-            raise Exception("sssd_secrets failed to start")
+            print("sssd_secrets failed to start")
+            sys.exit(99)
+    else:
+        sock_path = os.path.join(config.RUNSTATEDIR, "secrets.socket")
+        sck = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        for _ in range(1, 10):
+            try:
+                sck.connect(sock_path)
+            except:
+                time.sleep(0.1)
+            else:
+                break
+        sck.close()
 
-    sock_path = os.path.join(config.RUNSTATEDIR, "secrets.socket")
-    sck = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    for _ in range(1, 10):
-        try:
-            sck.connect(sock_path)
-        except:
-            time.sleep(0.1)
-        else:
-            break
-    sck.close()
+        assert os.path.exists(sock_path)
 
     def sec_teardown():
         if secpid == 0:
@@ -69,6 +76,7 @@ def create_sssd_secrets_fixture(request):
         for secdb_file in os.listdir(config.SECDB_PATH):
             os.unlink(config.SECDB_PATH + "/" + secdb_file)
     request.addfinalizer(sec_teardown)
+    return secpid
 
 
 @pytest.fixture
@@ -87,6 +95,7 @@ def setup_for_secrets(request):
 
         [secrets]
         max_secrets = 10
+        max_payload_size = 2
     """).format(**locals())
 
     create_conf_fixture(request, conf)
@@ -94,11 +103,25 @@ def setup_for_secrets(request):
     return None
 
 
+def get_secrets_socket():
+    return os.path.join(config.RUNSTATEDIR, "secrets.socket")
+
+
 @pytest.fixture
 def secrets_cli(request):
-    sock_path = os.path.join(config.RUNSTATEDIR, "secrets.socket")
+    sock_path = get_secrets_socket()
     cli = SecretsLocalClient(sock_path=sock_path)
     return cli
+
+
+@pytest.fixture
+def curlwrap_tool(request):
+    curlwrap_path = os.path.join(config.ABS_BUILDDIR,
+                                 "..", "..", "..", "tcurl-test-tool")
+    if os.access(curlwrap_path, os.X_OK):
+        return curlwrap_path
+
+    return None
 
 
 def test_crd_ops(setup_for_secrets, secrets_cli):
@@ -144,12 +167,156 @@ def test_crd_ops(setup_for_secrets, secrets_cli):
     MAX_SECRETS = 10
 
     sec_value = "value"
-    for x in xrange(MAX_SECRETS):
+    for x in range(MAX_SECRETS):
         cli.set_secret(str(x), sec_value)
 
     with pytest.raises(HTTPError) as err507:
         cli.set_secret(str(MAX_SECRETS), sec_value)
     assert str(err507.value).startswith("507")
+
+    # Delete all stored secrets used for max secrets tests
+    for x in range(MAX_SECRETS):
+        cli.del_secret(str(x))
+
+    # Don't allow storing a secrets which has a payload larger
+    # than max_payload_size
+    KILOBYTE = 1024
+    MAX_PAYLOAD_SIZE = 2 * KILOBYTE
+
+    sec_value = "x" * MAX_PAYLOAD_SIZE
+
+    cli.set_secret("foo", sec_value)
+
+    sec_value += "x"
+    with pytest.raises(HTTPError) as err413:
+        cli.set_secret("bar", sec_value)
+    assert str(err413.value).startswith("413")
+
+
+def run_curlwrap_tool(args, exp_http_code):
+    cmd = subprocess.Popen(args,
+                           stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE)
+    out, _ = cmd.communicate()
+
+    assert cmd.returncode == 0
+
+    out = out.decode('utf-8')
+    exp_http_code_str = "Request HTTP code: %d" % exp_http_code
+    assert exp_http_code_str in out
+
+    return out
+
+
+def test_curlwrap_crd_ops(setup_for_secrets,
+                          curlwrap_tool):
+    """
+    Test that the basic Create, Retrieve, Delete operations work using our
+    tevent libcurl code
+    """
+    if not curlwrap_tool:
+        pytest.skip("The tcurl tool is not available, skipping test")
+    sock_path = get_secrets_socket()
+
+    # listing an empty DB yields a 404
+    run_curlwrap_tool([curlwrap_tool,
+                       '-v', '-s', sock_path,
+                       'http://localhost/secrets/'],
+                      404)
+
+    # listing a non-existent secret yields a 404
+    run_curlwrap_tool([curlwrap_tool,
+                       '-v', '-s', sock_path,
+                       'http://localhost/secrets/foo'],
+                      404)
+
+    # set a secret foo:bar
+    run_curlwrap_tool([curlwrap_tool, '-p',
+                       '-v', '-s', sock_path,
+                       'http://localhost/secrets/foo',
+                       'bar'],
+                      200)
+
+    # list secrets
+    output = run_curlwrap_tool([curlwrap_tool,
+                                '-v', '-s', sock_path,
+                                'http://localhost/secrets/'],
+                               200)
+    assert "foo" in output
+
+    # get the foo secret
+    output = run_curlwrap_tool([curlwrap_tool,
+                                '-v', '-s', sock_path,
+                                'http://localhost/secrets/foo'],
+                               200)
+    assert "bar" in output
+
+    # Overwriting a secret is an error
+    run_curlwrap_tool([curlwrap_tool, '-p',
+                       '-v', '-s', sock_path,
+                       'http://localhost/secrets/foo',
+                       'baz'],
+                      409)
+
+    # Delete a secret
+    run_curlwrap_tool([curlwrap_tool, '-d',
+                       '-v', '-s', sock_path,
+                       'http://localhost/secrets/foo'],
+                      200)
+
+    # Delete a non-existent secret must yield a 404
+    run_curlwrap_tool([curlwrap_tool, '-d',
+                       '-v', '-s', sock_path,
+                       'http://localhost/secrets/foo'],
+                      404)
+
+
+def test_curlwrap_parallel(setup_for_secrets,
+                           curlwrap_tool):
+    """
+    The tevent libcurl wrapper is meant to be non-blocking. Test
+    its operation in parallel.
+    """
+    if not curlwrap_tool:
+        pytest.skip("The tcurl tool is not available, skipping test")
+    sock_path = get_secrets_socket()
+
+    secrets = dict()
+    nsecrets = 10
+
+    for i in range(0, nsecrets):
+        secrets["key" + str(i)] = "value" + str(i)
+
+    args = [curlwrap_tool, '-p', '-v', '-s', sock_path]
+    for skey, svalue in secrets.items():
+        args.extend(['http://localhost/secrets/%s' % skey, svalue])
+    run_curlwrap_tool(args, 200)
+
+    output = run_curlwrap_tool([curlwrap_tool,
+                                '-v', '-s', sock_path,
+                                'http://localhost/secrets/'],
+                               200)
+    for skey in secrets:
+        assert skey in output
+
+    args = [curlwrap_tool, '-g', '-v', '-s', sock_path]
+    for skey in secrets:
+        args.extend(['http://localhost/secrets/%s' % skey])
+    output = run_curlwrap_tool(args, 200)
+
+    for svalue in secrets.values():
+        assert svalue in output
+
+    args = [curlwrap_tool, '-d', '-v', '-s', sock_path]
+    for skey in secrets:
+        args.extend(['http://localhost/secrets/%s' % skey])
+    output = run_curlwrap_tool(args, 200)
+
+    run_curlwrap_tool([curlwrap_tool,
+                       '-v', '-s', sock_path,
+                       'http://localhost/secrets/'],
+                      404)
 
 
 def test_containers(setup_for_secrets, secrets_cli):
@@ -179,7 +346,7 @@ def test_containers(setup_for_secrets, secrets_cli):
     # Don't allow creating a container after reaching the max nested level
     DEFAULT_CONTAINERS_NEST_LEVEL = 4
     container = "mycontainer"
-    for x in xrange(DEFAULT_CONTAINERS_NEST_LEVEL):
+    for x in range(DEFAULT_CONTAINERS_NEST_LEVEL):
         container += "%s/" % str(x)
         cli.create_container(container)
 

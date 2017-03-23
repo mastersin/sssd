@@ -47,10 +47,6 @@ struct iface_ifp iface_ifp = {
 
 struct iface_ifp_components iface_ifp_components = {
     { &iface_ifp_components_meta, 0 },
-    .Enable = ifp_component_enable,
-    .Disable = ifp_component_disable,
-    .ChangeDebugLevel = ifp_component_change_debug_level,
-    .ChangeDebugLevelTemporarily = ifp_component_change_debug_level_tmp,
     .get_name = ifp_component_get_name,
     .get_debug_level = ifp_component_get_debug_level,
     .get_enabled = ifp_component_get_enabled,
@@ -91,6 +87,8 @@ struct iface_ifp_users iface_ifp_users = {
     .FindByName = ifp_users_find_by_name,
     .FindByID = ifp_users_find_by_id,
     .FindByCertificate = ifp_users_find_by_cert,
+    .ListByCertificate = ifp_users_list_by_cert,
+    .FindByNameAndCertificate = ifp_users_find_by_name_and_cert,
     .ListByName = ifp_users_list_by_name,
     .ListByDomainAndName = ifp_users_list_by_domain_and_name
 };
