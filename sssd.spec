@@ -2,7 +2,7 @@
 
 Name: sssd
 Version: 1.15.2
-Release: alt2%ubt
+Release: alt3%ubt
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -729,6 +729,9 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 /%_lib/libnfsidmap/sss.so
 
 %changelog
+* Fri Apr 28 2017 Evgeny Sinelnikov <sin@altlinux.ru> 1.15.2-alt3%ubt
+- Fix PAM config with pam_localuser.so for separate configuration for local and global users
+
 * Fri Apr 07 2017 Evgeny Sinelnikov <sin@altlinux.ru> 1.15.2-alt2%ubt
 - Rebuild with http-parser-2.7.1
 
