@@ -1,8 +1,9 @@
 #%PAM-1.0
 auth		required	pam_env.so
+auth		[success=ignore default=1]	pam_localuser.so
 auth		[success=done default=ignore]	pam_tcb.so shadow fork prefix=$2y$ count=8 nullok
 auth		requisite	pam_succeed_if.so uid >= 500 quiet
-auth		required	pam_sss.so use_first_pass
+auth		required	pam_sss.so
 
 account		[success=ignore default=1]	pam_localuser.so
 account		[success=done default=ignore]	pam_tcb.so shadow fork
