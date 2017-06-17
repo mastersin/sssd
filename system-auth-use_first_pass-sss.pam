@@ -1,9 +1,10 @@
 #%PAM-1.0
-auth		[success=done default=ignore]	pam_tcb.so shadow fork prefix=$2y$ count=8 nullok use_first_pass
+auth		[success=ignore default=1]	pam_localuser.so
+auth		[success=done default=bad]	pam_tcb.so shadow fork prefix=$2y$ count=8 nullok use_first_pass
 auth		requisite	pam_succeed_if.so uid >= 500 quiet
 auth		required	pam_sss.so use_first_pass
 
 password	[success=ignore default=1]	pam_localuser.so
-password	[success=done default=ignore]	pam_tcb.so use_authtok shadow fork prefix=$2y$ count=8 nullok write_to=tcb
+password	[success=done default=bad]	pam_tcb.so use_authtok shadow fork prefix=$2y$ count=8 nullok write_to=tcb
 password	requisite	pam_succeed_if.so uid >= 500 quiet
 password	required	pam_sss.so use_authtok
