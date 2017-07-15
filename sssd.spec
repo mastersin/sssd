@@ -37,7 +37,11 @@ Requires: %name-client = %version-%release
 Requires: libsss_idmap = %version-%release
 Requires: libldb = %ldb_version
 
+%if %ubt_id == "M70C"
+Requires: libkrb5 > 1.13.7-alt1
+%else
 Requires: libkrb5 >= 1.14.4-alt2
+%endif
 
 BuildRequires(pre):rpm-build-ubt
 
@@ -50,7 +54,7 @@ BuildRequires: libtdb-devel >= 1.1.3
 BuildRequires: libldb-devel = %ldb_version
 BuildRequires: libdhash-devel >= 0.4.2
 BuildRequires: libcollection-devel >= 0.5.1
-BuildRequires: libini_config-devel >= 1.0.0
+BuildRequires: libini_config-devel >= 1.3.0
 BuildRequires: libdbus-devel
 BuildRequires: libldap-devel
 BuildRequires: libpam-devel
@@ -76,7 +80,11 @@ BuildRequires: diffstat
 BuildRequires: findutils
 BuildRequires: samba-devel
 BuildRequires: libsmbclient-devel
-BuildRequires: systemd-devel libsystemd-devel
+%if %ubt_id <= "M70P"
+BuildRequires: systemd-devel libsystemd-daemon-devel libsystemd-journal-devel libsystemd-login-devel
+%else
+BuildRequires: libsystemd-devel
+%endif
 BuildRequires: selinux-policy-targeted
 BuildRequires: cifs-utils-devel
 BuildRequires: libsasl2-devel
