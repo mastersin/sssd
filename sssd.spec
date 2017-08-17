@@ -1,8 +1,10 @@
 %define libwbc_alternatives_version 0.13.0
+%def_with kcm
+%def_without python3_bindings
 
 Name: sssd
-Version: 1.15.2
-Release: alt7%ubt
+Version: 1.15.3
+Release: alt1%ubt
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -94,6 +96,9 @@ BuildRequires: libcmocka-devel >= 1.0.0
 BuildRequires: nscd
 BuildRequires: libjansson-devel
 BuildRequires: libhttp-parser-devel
+%if_with kcm
+BuildRequires: libuuid-devel libcurl-devel
+%endif
 
 %description
 Provides a set of daemons to manage access to remote directories and
@@ -232,6 +237,18 @@ Requires: %name = %version-%release
 Provides the proxy back end which can be used to wrap an existing NSS and/or
 PAM modules to leverage SSSD caching.
 
+%package kcm
+Summary: The SSSD Kerberos credentials manager
+Group: System/Servers
+License: GPLv3+
+Requires: %name = %version-%release
+
+%description kcm
+An implementation of a Kerberos KCM server is a process that stores, tracks and
+manages Kerberos credential caches. It originates in the Heimdal Kerberos
+project, although the MIT Kerberos library also provides client side support for
+the KCM credential cache.
+
 %package -n libsss_idmap
 Summary: FreeIPA Idmap library
 Group: System/Libraries
@@ -248,6 +265,24 @@ Requires: libsss_idmap = %version-%release
 
 %description -n libsss_idmap-devel
 Utility library to SIDs to Unix uids and gids
+
+%package -n libsss_certmap
+Summary: SSSD Certficate Mapping Library
+Group: System/Libraries
+License: LGPLv3+
+Conflicts: sssd < %version-%release
+
+%description -n libsss_certmap
+Library to map certificates to users based on rules
+
+%package -n libsss_certmap-devel
+Summary: SSSD Certficate Mapping Library
+Group: Development/C
+License: LGPLv3+
+Requires: libsss_certmap = %version-%release
+
+%description -n libsss_certmap-devel
+Library to map certificates to users based on rules
 
 %package -n libipa_hbac
 Summary: FreeIPA HBAC Evaluator library
@@ -415,7 +450,11 @@ UIDs/GIDs to names and vice versa. It can be also used for mapping principal
     --with-sssd-user=%sssd_user \
     --disable-rpath \
     --disable-static \
-    --without-python3-bindings
+    %{subst_with kcm} \
+%if_without python3_bindings
+    --without-python3-bindings \
+%endif
+    #
 
 # %%make_build all docs
 %make all docs
@@ -589,9 +628,14 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %files -n python-module-sss
 %python_sitelibdir/pysss.so
 
+%if_with python3_bindings
+%files -n python3-module-sss
+%python3_sitelibdir/pysss.so
+%endif
+
 %files -n python-module-sss-murmur
 %python_sitelibdir/pysss_murmur.so
- 
+
 %files ldap
 %_libdir/%name/libsss_ldap.so
 %_man5dir/sssd-ldap*
@@ -665,6 +709,14 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %python_sitelibdir_noarch/SSSDConfig*.egg-info
 %python_sitelibdir_noarch/SSSDConfig/*.py
 
+%if_with python3_bindings
+%files -n python3-sssdconfig
+%dir %python3_sitelibdir_noarch/SSSDConfig
+%python3_sitelibdir_noarch/SSSDConfig/*.py*
+%dir %python3_sitelibdir_noarch/SSSDConfig/__pycache__
+%python3_sitelibdir_noarch/SSSDConfig/__pycache__/*.py*
+%endif
+
 %files -n libsss_idmap
 %_libdir/libsss_idmap.so.*
 
@@ -673,6 +725,16 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %_includedir/sss_idmap.h
 %_libdir/libsss_idmap.so
 %_pkgconfigdir/sss_idmap.pc
+
+%files -n libsss_certmap
+%_libdir/libsss_certmap.so.*
+%_man5dir/sss-certmap*
+
+%files -n libsss_certmap-devel
+%doc certmap_doc/html
+%_includedir/sss_certmap.h
+%_libdir/libsss_certmap.so
+%_pkgconfigdir/sss_certmap.pc
 
 %files -n libipa_hbac
 %_libdir/libipa_hbac.so.*
@@ -703,6 +765,16 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %_sysconfdir/dbus-1/system.d/org.freedesktop.sssd.infopipe.conf
 %_datadir/dbus-1/system-services/org.freedesktop.sssd.infopipe.service
 %_unitdir/sssd-ifp.service
+
+%if_with kcm
+%files kcm
+%_libexecdir/%name/sssd_kcm
+%dir %_datadir/sssd-kcm
+%_datadir/sssd-kcm/kcm_default_ccache
+%_unitdir/sssd-kcm.socket
+%_unitdir/sssd-kcm.service
+%_man8dir/sssd-kcm*
+%endif
 
 %files -n libsss_simpleifp
 %_libdir/libsss_simpleifp.so.*
@@ -737,6 +809,11 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 /%_lib/libnfsidmap/sss.so
 
 %changelog
+* Thu Aug 17 2017 Evgeny Sinelnikov <sin@altlinux.ru> 1.15.3-alt1%ubt
+- Update to latest release with:
+ + SSSD Kerberos credentials manager (sssd-kcm)
+ + SSSD Certficate Mapping Library (libsss_certmap)
+
 * Sat Jul 15 2017 Evgeny Sinelnikov <sin@altlinux.ru> 1.15.2-alt7%ubt
 - Rebuild new version with latest fixes for p7 and c7
 
