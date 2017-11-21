@@ -4,7 +4,7 @@
 
 Name: sssd
 Version: 1.15.3
-Release: alt5%ubt
+Release: alt5%ubt.1
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -94,7 +94,7 @@ BuildRequires: libsystemd-devel
 BuildRequires: selinux-policy-targeted
 BuildRequires: cifs-utils-devel
 BuildRequires: libsasl2-devel
-BuildRequires: libnfsidmap-devel >= 1:2.2.1-alt1
+BuildRequires: libnfsidmap-devel < 1:2.2.1-alt1
 BuildRequires: libaugeas-devel
 BuildRequires: libcmocka-devel >= 1.0.0
 BuildRequires: nscd
@@ -445,6 +445,7 @@ UIDs/GIDs to names and vice versa. It can be also used for mapping principal
     --enable-nsslibdir=/%_lib \
     --enable-pammoddir=/%_lib/security \
     --enable-ldb-version-check \
+    --enable-nfsidmaplibdir=/%_lib/libnfsidmap \
     --with-syslog=journald \
     --with-test-dir=/dev/shm \
     --enable-krb5-locator-plugin \
@@ -811,9 +812,12 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %_man8dir/idmap_sss*
 
 %files nfs-idmap
-%_libdir/libnfsidmap/sss.so
+/%_lib/libnfsidmap/sss.so
 
 %changelog
+* Tue Nov 21 2017 Evgeny Sinelnikov <sin@altlinux.org> 1.15.3-alt5%ubt.1
+- Backport sssd to stable branches
+
 * Tue Nov 21 2017 Evgeny Sinelnikov <sin@altlinux.org> 1.15.3-alt5%ubt
 - Don't restart sssd services until reboot or manual restart (ALT #34054)
 
