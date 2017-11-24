@@ -1,10 +1,23 @@
 %define libwbc_alternatives_version 0.13.0
 %def_with kcm
 %def_without python3_bindings
+%define if_branch_le() %if "%(rpmvercmp '%ubt_id' '%1')" <= "0"
+%define if_branch_eq() %if "%(rpmvercmp '%ubt_id' '%1')" == "0"
+%define if_branch_ge() %if "%(rpmvercmp '%ubt_id' '%1')" >= "0"
+
+%if_branch_eq N.M80P
+%define nfsidmapdir /%_lib/libnfsidmap
+%else
+%if_branch_le M80P
+%define nfsidmapdir /%_lib/libnfsidmap
+%else
+%define nfsidmapdir %_libdir/libnfsidmap
+%endif
+%endif
 
 Name: sssd
 Version: 1.15.3
-Release: alt5%ubt.1
+Release: alt5%ubt.2
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -39,13 +52,9 @@ Requires: %name-client = %version-%release
 Requires: libsss_idmap = %version-%release
 Requires: libldb = %ldb_version
 
-# Avoid trouble with rpm-macros-ubt-0.2-alt1.M80C.2.noarch.rpm
-# where %__ubt_branch_id N.M80C in /usr/lib/rpm/macros.d/ubt
-#if %ubt_id == "M70C"
-#Requires: libkrb5 > 1.13.7-alt1
-#else
+%if_branch_ge M80C
 Requires: libkrb5 >= 1.14.4-alt2
-#endif
+%endif
 
 BuildRequires(pre):rpm-build-ubt
 
@@ -84,17 +93,23 @@ BuildRequires: diffstat
 BuildRequires: findutils
 BuildRequires: samba-devel
 BuildRequires: libsmbclient-devel
-# Avoid trouble with rpm-macros-ubt-0.2-alt1.M80C.2.noarch.rpm
-# where %__ubt_branch_id N.M80C in /usr/lib/rpm/macros.d/ubt
-#if %ubt_id <= "M70P"
-#BuildRequires: systemd-devel libsystemd-daemon-devel libsystemd-journal-devel libsystemd-login-devel
-#else
+%if_branch_le M70P
+BuildRequires: systemd-devel libsystemd-daemon-devel libsystemd-journal-devel libsystemd-login-devel
+%else
 BuildRequires: libsystemd-devel
-#endif
+%endif
 BuildRequires: selinux-policy-targeted
 BuildRequires: cifs-utils-devel
 BuildRequires: libsasl2-devel
+%if_branch_eq N.M80P
 BuildRequires: libnfsidmap-devel < 1:2.2.1-alt1
+%else
+%if_branch_le M80P
+BuildRequires: libnfsidmap-devel < 1:2.2.1-alt1
+%else
+BuildRequires: libnfsidmap-devel >= 1:2.2.1-alt1
+%endif
+%endif
 BuildRequires: libaugeas-devel
 BuildRequires: libcmocka-devel >= 1.0.0
 BuildRequires: nscd
@@ -445,7 +460,12 @@ UIDs/GIDs to names and vice versa. It can be also used for mapping principal
     --enable-nsslibdir=/%_lib \
     --enable-pammoddir=/%_lib/security \
     --enable-ldb-version-check \
-    --enable-nfsidmaplibdir=/%_lib/libnfsidmap \
+%if_branch_le M80P
+    --enable-nfsidmaplibdir=%nfsidmapdir \
+%endif
+%if_branch_eq N.M80P
+    --enable-nfsidmaplibdir=%nfsidmapdir \
+%endif
     --with-syslog=journald \
     --with-test-dir=/dev/shm \
     --enable-krb5-locator-plugin \
@@ -812,9 +832,13 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %_man8dir/idmap_sss*
 
 %files nfs-idmap
-/%_lib/libnfsidmap/sss.so
+%nfsidmapdir/sss.so
 
 %changelog
+* Thu Nov 23 2017 Evgeny Sinelnikov <sin@altlinux.org> 1.15.3-alt5%ubt.2
+- Backport sssd to legacy stable branches
+- Fix trouble with ubt macros id on branch c8
+
 * Tue Nov 21 2017 Evgeny Sinelnikov <sin@altlinux.org> 1.15.3-alt5%ubt.1
 - Backport sssd to stable branches
 
