@@ -17,7 +17,7 @@
 
 Name: sssd
 Version: 1.15.3
-Release: alt5%ubt.2
+Release: alt5%ubt.3
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -835,6 +835,10 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %nfsidmapdir/sss.so
 
 %changelog
+* Fri Dec 22 2017 Evgeny Sinelnikov <sin@altlinux.org> 1.15.3-alt5%ubt.3
+- Fix logrotate insecure parent directory permissions (closes: 34335)
+- Fix trouble with incomplete group object found during initgroups
+
 * Thu Nov 23 2017 Evgeny Sinelnikov <sin@altlinux.org> 1.15.3-alt5%ubt.2
 - Backport sssd to legacy stable branches
 - Fix trouble with ubt macros id on branch c8
