@@ -1,4 +1,5 @@
 /var/log/sssd/*.log {
+    su root @SSSD_USER@
     weekly
     missingok
     notifempty
