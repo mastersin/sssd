@@ -17,7 +17,7 @@
 
 Name: sssd
 Version: 1.15.3
-Release: alt6%ubt
+Release: alt7%ubt
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -835,6 +835,9 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %nfsidmapdir/sss.so
 
 %changelog
+* Fri Mar 02 2018 Evgeny Sinelnikov <sin@altlinux.org> 1.15.3-alt7%ubt
+- Rebuild with fixes from p8
+
 * Tue Feb 27 2018 Alexey Shabalin <shaba@altlinux.ru> 1.15.3-alt6%ubt
 - Rebuild with http-parser-2.8.0
 - backport fix for building the PAC plugin with krb5 1.16
