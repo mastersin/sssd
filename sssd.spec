@@ -17,7 +17,7 @@
 
 Name: sssd
 Version: 1.15.3
-Release: alt5%ubt.3
+Release: alt6%ubt
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -835,6 +835,10 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %nfsidmapdir/sss.so
 
 %changelog
+* Tue Feb 27 2018 Alexey Shabalin <shaba@altlinux.ru> 1.15.3-alt6%ubt
+- Rebuild with http-parser-2.8.0
+- backport fix for building the PAC plugin with krb5 1.16
+
 * Fri Dec 22 2017 Evgeny Sinelnikov <sin@altlinux.org> 1.15.3-alt5%ubt.3
 - Fix logrotate insecure parent directory permissions (closes: 34335)
 - Fix trouble with incomplete group object found during initgroups
