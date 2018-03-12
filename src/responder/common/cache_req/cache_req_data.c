@@ -26,7 +26,9 @@ static const char **
 cache_req_data_create_attrs(TALLOC_CTX *mem_ctx,
                             const char **requested)
 {
-    static const char *defattrs[] = { SYSDB_DEFAULT_ATTRS };
+    static const char *defattrs[] = { SYSDB_DEFAULT_ATTRS, SYSDB_NAME,
+                                      OVERRIDE_PREFIX SYSDB_NAME,
+                                      SYSDB_DEFAULT_OVERRIDE_NAME };
     static size_t defnum = sizeof(defattrs) / sizeof(defattrs[0]);
     const char **attrs;
     size_t reqnum;
@@ -119,12 +121,6 @@ cache_req_data_create(TALLOC_CTX *mem_ctx,
     case CACHE_REQ_USER_BY_ID:
     case CACHE_REQ_GROUP_BY_ID:
     case CACHE_REQ_OBJECT_BY_ID:
-        if (input->id == 0) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "Bug: id cannot be 0!\n");
-            ret = ERR_INTERNAL;
-            goto done;
-        }
-
         data->id = input->id;
         break;
     case CACHE_REQ_OBJECT_BY_SID:
@@ -368,4 +364,16 @@ cache_req_data_set_bypass_cache(struct cache_req_data *data,
     }
 
     data->bypass_cache = bypass_cache;
+}
+
+void
+cache_req_data_set_bypass_dp(struct cache_req_data *data,
+                             bool bypass_dp)
+{
+    if (data == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "cache_req_data should never be NULL\n");
+        return;
+    }
+
+    data->bypass_dp = bypass_dp;
 }

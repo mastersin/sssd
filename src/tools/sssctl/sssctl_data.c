@@ -23,7 +23,6 @@
 
 #include "util/util.h"
 #include "db/sysdb.h"
-#include "tools/common/sss_tools.h"
 #include "tools/common/sss_process.h"
 #include "tools/sssctl/sssctl.h"
 #include "tools/tools_util.h"
@@ -31,6 +30,7 @@
 #define SSS_BACKUP_DIR SSS_STATEDIR "/backup"
 #define SSS_BACKUP_USER_OVERRIDES SSS_BACKUP_DIR "/sssd_user_overrides.bak"
 #define SSS_BACKUP_GROUP_OVERRIDES SSS_BACKUP_DIR "/sssd_group_overrides.bak"
+#define SSS_CACHE "sss_cache"
 
 struct sssctl_data_opts {
     int override;
@@ -92,7 +92,7 @@ static errno_t sssctl_backup(bool force)
     }
 
     if (sssctl_backup_exist(files) && !force) {
-        prompt = sssctl_prompt(_("SSSD backup of local data already exist, "
+        prompt = sssctl_prompt(_("SSSD backup of local data already exists, "
                                  "override?"), SSSCTL_PROMPT_NO);
         switch (prompt) {
         case SSSCTL_PROMPT_YES:
@@ -241,7 +241,7 @@ errno_t sssctl_cache_remove(struct sss_cmdline *cmdline,
     }
 
     printf(_("Removing cache files...\n"));
-    ret = remove_subtree(DB_PATH);
+    ret = sss_remove_subtree(DB_PATH);
     if (ret != EOK) {
         fprintf(stderr, _("Unable to remove cache files\n"));
         return ret;
@@ -270,7 +270,7 @@ errno_t sssctl_cache_upgrade(struct sss_cmdline *cmdline,
         return ret;
     }
 
-    if (sss_deamon_running()) {
+    if (sss_daemon_running()) {
         return ERR_SSSD_RUNNING;
     }
 
@@ -289,4 +289,47 @@ errno_t sssctl_cache_upgrade(struct sss_cmdline *cmdline,
     }
 
     return EOK;
+}
+
+errno_t sssctl_cache_expire(struct sss_cmdline *cmdline,
+                            struct sss_tool_ctx *tool_ctx,
+                            void *pvt)
+{
+    errno_t ret;
+    char *cmd_args = NULL;
+    const char *cachecmd = SSS_CACHE;
+    char *cmd = NULL;
+    int i;
+
+    if (cmdline->argc == 0) {
+        ret = sssctl_run_command(cachecmd);
+        goto done;
+    }
+
+    cmd_args = talloc_strdup(tool_ctx, "");
+    if (cmd_args == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    for (i = 0; i < cmdline->argc; i++) {
+        cmd_args = talloc_strdup_append(cmd_args, cmdline->argv[i]);
+        if (i != cmdline->argc - 1) {
+            cmd_args = talloc_strdup_append(cmd_args, " ");
+        }
+    }
+
+    cmd = talloc_asprintf(tool_ctx, "%s %s", cachecmd, cmd_args);
+    if (cmd == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = sssctl_run_command(cmd);
+
+done:
+    talloc_free(cmd_args);
+    talloc_free(cmd);
+
+    return ret;
 }

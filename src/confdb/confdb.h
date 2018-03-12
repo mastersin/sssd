@@ -139,6 +139,8 @@
 #define CONFDB_DEFAULT_SUDO_TIMED false
 #define CONFDB_SUDO_INVERSE_ORDER "sudo_inverse_order"
 #define CONFDB_DEFAULT_SUDO_INVERSE_ORDER false
+#define CONFDB_SUDO_THRESHOLD "sudo_threshold"
+#define CONFDB_DEFAULT_SUDO_THRESHOLD 50
 
 /* autofs */
 #define CONFDB_AUTOFS_CONF_ENTRY "config/autofs"
@@ -162,6 +164,12 @@
 #define CONFDB_IFP_USER_ATTR_LIST "user_attributes"
 #define CONFDB_IFP_WILDCARD_LIMIT "wildcard_limit"
 
+/* Session Recording */
+#define CONFDB_SESSION_RECORDING_CONF_ENTRY "config/session_recording"
+#define CONFDB_SESSION_RECORDING_SCOPE "scope"
+#define CONFDB_SESSION_RECORDING_USERS "users"
+#define CONFDB_SESSION_RECORDING_GROUPS "groups"
+
 /* Domains */
 #define CONFDB_DOMAIN_PATH_TMPL "config/domain/%s"
 #define CONFDB_DOMAIN_BASEDN "cn=domain,cn=config"
@@ -175,6 +183,7 @@
 #define CONFDB_DOMAIN_SELINUX_PROVIDER "selinux_provider"
 #define CONFDB_DOMAIN_HOSTID_PROVIDER "hostid_provider"
 #define CONFDB_DOMAIN_SUBDOMAINS_PROVIDER "subdomains_provider"
+#define CONFDB_DOMAIN_SESSION_PROVIDER "session_provider"
 #define CONFDB_DOMAIN_COMMAND "command"
 #define CONFDB_DOMAIN_TIMEOUT "timeout"
 #define CONFDB_DOMAIN_ATTR "cn"
@@ -188,7 +197,7 @@
                                  "cache_credentials_minimal_first_factor_length"
 #define CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH 8
 #define CONFDB_DOMAIN_LEGACY_PASS "store_legacy_passwords"
-#define CONFDB_DOMAIN_MPG "magic_private_groups"
+#define CONFDB_DOMAIN_AUTO_UPG "auto_private_groups"
 #define CONFDB_DOMAIN_FQ "use_fully_qualified_names"
 #define CONFDB_DOMAIN_ENTRY_CACHE_TIMEOUT "entry_cache_timeout"
 #define CONFDB_DOMAIN_ACCOUNT_CACHE_EXPIRATION "account_cache_expiration"
@@ -198,6 +207,7 @@
 #define CONFDB_DOMAIN_DEFAULT_SUBDOMAIN_HOMEDIR "/home/%d/%u"
 #define CONFDB_DOMAIN_IGNORE_GROUP_MEMBERS "ignore_group_members"
 #define CONFDB_DOMAIN_SUBDOMAIN_REFRESH "subdomain_refresh_interval"
+#define CONFDB_DOMAIN_SUBDOMAIN_REFRESH_DEFAULT_VALUE 14400
 
 #define CONFDB_DOMAIN_USER_CACHE_TIMEOUT "entry_cache_user_timeout"
 #define CONFDB_DOMAIN_GROUP_CACHE_TIMEOUT "entry_cache_group_timeout"
@@ -236,6 +246,7 @@
 #define CONFDB_SEC_CONF_ENTRY "config/secrets"
 #define CONFDB_SEC_CONTAINERS_NEST_LEVEL "containers_nest_level"
 #define CONFDB_SEC_MAX_SECRETS "max_secrets"
+#define CONFDB_SEC_MAX_UID_SECRETS "max_uid_secrets"
 #define CONFDB_SEC_MAX_PAYLOAD_SIZE "max_payload_size"
 
 /* KCM Service */
@@ -625,7 +636,7 @@ int confdb_get_string_as_list(struct confdb_ctx *cdb, TALLOC_CTX *ctx,
  * @param[in] section The ConfDB section to look for.
  *                    All sections should start with 'config/'.
  *                    Subsections are separated by slashes.
- * @param[out] sections Names of the subsections realtive to the section
+ * @param[out] sections Names of the subsections relative to the section
  *                      requested. If "a/b" is requested then "c/d" is
  *                      returned for the section named [a/b/c/d]
  * @param[out] num_sections Number of section names returned

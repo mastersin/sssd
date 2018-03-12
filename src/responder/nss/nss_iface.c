@@ -91,7 +91,7 @@ void nss_update_initgr_memcache(struct nss_ctx *nctx,
         for (i = 0; i < res->count; i++) {
             id = ldb_msg_find_attr_as_uint(res->msgs[i], SYSDB_GIDNUM, 0);
             if (id == 0) {
-                /* probably non-posix group, skip */
+                /* probably non-POSIX group, skip */
                 continue;
             }
             for (j = 0; j < gnum; j++) {
@@ -212,7 +212,7 @@ static struct sbus_iface_map iface_map[] = {
     { NULL, NULL }
 };
 
-struct sbus_iface_map *nss_get_sbus_interface()
+struct sbus_iface_map *nss_get_sbus_interface(void)
 {
     return iface_map;
 }

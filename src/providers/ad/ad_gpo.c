@@ -680,7 +680,7 @@ ad_gpo_ace_includes_client_sid(const char *user_sid,
  * named "ApplyGroupPolicy" (AGP) is allowed, by comparing the specified
  * user_sid and group_sids against the specified access control entry (ACE).
  * This function returns ALLOWED, DENIED, or NEUTRAL depending on whether
- * the ACE explictly allows, explicitly denies, or does neither.
+ * the ACE explicitly allows, explicitly denies, or does neither.
  *
  * Note that the 'M' abbreviation used in the evaluation algorithm stands for
  * "access_mask", which represents the set of access rights associated with an
@@ -3860,7 +3860,7 @@ ad_gpo_sd_process_attrs(struct tevent_req *req,
     ret = sysdb_attrs_get_int32_t(result, AD_AT_FUNC_VERSION,
                                   &gp_gpo->gpo_func_version);
     if (ret == ENOENT) {
-        /* If this attrbute is missing we can skip the GPO. It will
+        /* If this attribute is missing we can skip the GPO. It will
          * be filtered out according to MS-GPOL:
          * https://msdn.microsoft.com/en-us/library/cc232538.aspx */
         DEBUG(SSSDBG_TRACE_ALL, "GPO with GUID %s is missing attribute "
@@ -4354,7 +4354,7 @@ ad_gpo_get_sd_referral_send(TALLOC_CTX *mem_ctx,
     struct tevent_req *req;
     struct ad_gpo_get_sd_referral_state *state;
     struct tevent_req *subreq;
-    LDAPURLDesc *lud;
+    LDAPURLDesc *lud = NULL;
 
     req = tevent_req_create(mem_ctx, &state,
                             struct ad_gpo_get_sd_referral_state);
@@ -4390,14 +4390,17 @@ ad_gpo_get_sd_referral_send(TALLOC_CTX *mem_ctx,
      */
     state->ref_domain = find_domain_by_name(state->host_domain,
                                             lud->lud_host, true);
-    ldap_free_urldesc(lud);
     if (!state->ref_domain) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Could not find domain matching [%s]\n",
               lud->lud_host);
+        ldap_free_urldesc(lud);
         ret = EIO;
         goto done;
     }
+
+    ldap_free_urldesc(lud);
+    lud = NULL;
 
     state->conn = ad_get_dom_ldap_conn(state->access_ctx->ad_id_ctx,
                                        state->ref_domain);

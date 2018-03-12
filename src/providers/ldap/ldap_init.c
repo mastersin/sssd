@@ -26,6 +26,7 @@
 #include "providers/ldap/ldap_common.h"
 #include "providers/ldap/sdap_async_private.h"
 #include "providers/ldap/sdap_access.h"
+#include "providers/ldap/sdap_hostid.h"
 #include "providers/ldap/sdap_sudo.h"
 #include "providers/ldap/sdap_autofs.h"
 #include "providers/ldap/sdap_idmap.h"
@@ -286,6 +287,8 @@ static errno_t set_access_rules(TALLOC_CTX *mem_ctx,
             access_ctx->access_rule[c] = LDAP_ACCESS_SERVICE;
         } else if (strcasecmp(order_list[c], LDAP_ACCESS_HOST_NAME) == 0) {
             access_ctx->access_rule[c] = LDAP_ACCESS_HOST;
+        } else if (strcasecmp(order_list[c], LDAP_ACCESS_RHOST_NAME) == 0) {
+            access_ctx->access_rule[c] = LDAP_ACCESS_RHOST;
         } else if (strcasecmp(order_list[c], LDAP_ACCESS_LOCK_NAME) == 0) {
             access_ctx->access_rule[c] = LDAP_ACCESS_LOCKOUT;
         } else if (strcasecmp(order_list[c],
@@ -529,6 +532,10 @@ errno_t sssm_ldap_id_init(TALLOC_CTX *mem_ctx,
                   sdap_online_check_handler_send, sdap_online_check_handler_recv, id_ctx,
                   struct sdap_id_ctx, void, struct dp_reply_std);
 
+    dp_set_method(dp_methods, DPM_ACCT_DOMAIN_HANDLER,
+                  default_account_domain_send, default_account_domain_recv, NULL,
+                  void, struct dp_get_acct_domain_data, struct dp_reply_std);
+
     return EOK;
 }
 
@@ -616,6 +623,26 @@ done:
     }
 
     return ret;
+}
+
+errno_t sssm_ldap_hostid_init(TALLOC_CTX *mem_ctx,
+                              struct be_ctx *be_ctx,
+                              void *module_data,
+                              struct dp_method *dp_methods)
+{
+#ifdef BUILD_SSH
+    struct ldap_init_ctx *init_ctx;
+
+    DEBUG(SSSDBG_TRACE_INTERNAL, "Initializing LDAP host handler\n");
+    init_ctx = talloc_get_type(module_data, struct ldap_init_ctx);
+
+    return sdap_hostid_init(mem_ctx, be_ctx, init_ctx->id_ctx, dp_methods);
+
+#else
+    DEBUG(SSSDBG_MINOR_FAILURE, "HostID init handler called but SSSD is "
+                                "built without SSH support, ignoring\n");
+    return EOK;
+#endif
 }
 
 errno_t sssm_ldap_autofs_init(TALLOC_CTX *mem_ctx,

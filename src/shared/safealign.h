@@ -20,14 +20,13 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef _SHARED_SAFEALIGN_H
+#define _SHARED_SAFEALIGN_H
+
 /* CAUTION:
- * This file is also used in sss_client (pam, nss). Therefore it has to be
+ * This file is also used in sss_client (pam, nss). Therefore it have to be
  * minimalist and cannot include DEBUG macros or header file util.h.
  */
-
-
-#ifndef _UTIL_SAFEALIGN_H
-#define _UTIL_SAFEALIGN_H
 
 #include <string.h>
 #include <stdint.h>
@@ -99,8 +98,8 @@ safealign_memcpy(void *dest, const void *src, size_t n, size_t *counter)
     SAFEALIGN_SETMEM_VALUE(dest, value, uint16_t, pctr)
 
 /* These macros are the same as their equivalents without _CHECK suffix,
- * but additionally make the caller return EINVAL immediatelly if *pctr
- * would excceed len. */
+ * but additionally make the caller return EINVAL immediately if *pctr
+ * would exceed len. */
 #define SAFEALIGN_COPY_UINT32_CHECK(dest, src, len, pctr) do { \
     if ((*(pctr) + sizeof(uint32_t)) > (len) || \
         SIZE_T_OVERFLOW(*(pctr), sizeof(uint32_t))) { return EINVAL; } \
@@ -144,4 +143,4 @@ safealign_memcpy(void *dest, const void *src, size_t n, size_t *counter)
 #define SAFEALIGN_SET_UINT16 SAFEALIGN_SETMEM_UINT16
 #define SAFEALIGN_SET_STRING SAFEALIGN_SETMEM_STRING
 
-#endif /* _UTIL_SAFEALIGN_H */
+#endif /* _SHARED_SAFEALIGN_H */

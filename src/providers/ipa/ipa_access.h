@@ -35,7 +35,6 @@ enum ipa_access_mode {
 struct ipa_access_ctx {
     struct sdap_id_ctx *sdap_ctx;
     struct dp_option *ipa_options;
-    struct time_rules_ctx *tr_ctx;
     time_t last_update;
     struct sdap_access_ctx *sdap_access_ctx;
 
@@ -64,9 +63,14 @@ ipa_pam_access_handler_recv(TALLOC_CTX *mem_ctx,
                              struct tevent_req *req,
                              struct pam_data **_data);
 
-errno_t hbac_get_cached_rules(TALLOC_CTX *mem_ctx,
-                              struct sss_domain_info *domain,
-                              size_t *_rule_count,
-                              struct sysdb_attrs ***_rules);
+struct tevent_req *
+ipa_refresh_access_rules_send(TALLOC_CTX *mem_ctx,
+                              struct ipa_access_ctx *access_ctx,
+                              void *no_input_data,
+                              struct dp_req_params *params);
+
+errno_t ipa_refresh_access_rules_recv(TALLOC_CTX *mem_ctx,
+                                      struct tevent_req *req,
+                                      void **_no_output_data);
 
 #endif /* _IPA_ACCESS_H_ */

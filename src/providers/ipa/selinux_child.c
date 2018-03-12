@@ -157,9 +157,9 @@ static int sc_set_seuser(const char *login_name, const char *seuser_name,
          * default. We need to remove the SELinux user from the DB
          * in that case
          */
-        ret = del_seuser(login_name);
+        ret = sss_del_seuser(login_name);
     } else {
-        ret = set_seuser(login_name, seuser_name, mls);
+        ret = sss_set_seuser(login_name, seuser_name, mls);
     }
     umask(old_mask);
     return ret;
@@ -172,11 +172,10 @@ static bool seuser_needs_update(struct input_buffer *ibuf)
     char *db_mls_range = NULL;
     errno_t ret;
 
-    ret = get_seuser(ibuf, ibuf->username, &db_seuser, &db_mls_range);
+    ret = sss_get_seuser(ibuf->username, &db_seuser, &db_mls_range);
     DEBUG(SSSDBG_TRACE_INTERNAL,
-          "get_seuser: ret: %d msg: [%s] seuser: %s mls: %s\n",
-          ret, sss_strerror(ret),
-          db_seuser ? db_seuser : "unknown",
+          "getseuserbyname: ret: %d seuser: %s mls: %s\n",
+          ret, db_seuser ? db_seuser : "unknown",
           db_mls_range ? db_mls_range : "unknown");
     if (ret == EOK && db_seuser && db_mls_range &&
             strcmp(db_seuser, ibuf->seuser) == 0 &&
@@ -188,8 +187,8 @@ static bool seuser_needs_update(struct input_buffer *ibuf)
         needs_update = false;
     }
 
-    talloc_free(db_seuser);
-    talloc_free(db_mls_range);
+    free(db_seuser);
+    free(db_mls_range);
     return needs_update;
 }
 
@@ -206,6 +205,7 @@ int main(int argc, const char *argv[])
     struct response *resp = NULL;
     ssize_t written;
     bool needs_update;
+    const char *opt_logger = NULL;
 
     struct poptOption long_options[] = {
         POPT_AUTOHELP
@@ -220,6 +220,7 @@ int main(int argc, const char *argv[])
         {"debug-to-stderr", 0, POPT_ARG_NONE | POPT_ARGFLAG_DOC_HIDDEN,
          &debug_to_stderr, 0,
          _("Send the debug output to stderr directly."), NULL },
+        SSSD_LOGGER_OPTS
         POPT_TABLEEND
     };
 
@@ -252,7 +253,10 @@ int main(int argc, const char *argv[])
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, "set_debug_file_from_fd failed.\n");
         }
+        opt_logger = sss_logger_str[FILES_LOGGER];
     }
+
+    sss_set_logger(opt_logger);
 
     DEBUG(SSSDBG_TRACE_FUNC, "selinux_child started.\n");
     DEBUG(SSSDBG_TRACE_INTERNAL,

@@ -27,6 +27,7 @@
 #include "providers/backend.h"
 #include "util/dlinklist.h"
 #include "util/util.h"
+#include "util/probes.h"
 
 struct dp_req {
     struct data_provider *provider;
@@ -301,7 +302,7 @@ struct tevent_req *dp_req_send(TALLOC_CTX *mem_ctx,
                           method, dp_flags, request_data, req, &dp_req);
 
     if (dp_req == NULL) {
-        /* An error ocurred before request could be created. */
+        /* An error occurred before request could be created. */
         if (_request_name != NULL) {
             *_request_name = "Request Not Yet Created";
         }
@@ -309,6 +310,7 @@ struct tevent_req *dp_req_send(TALLOC_CTX *mem_ctx,
         goto immediately;
     }
 
+    PROBE(DP_REQ_SEND, domain, dp_req->name, target, method);
     state->dp_req = dp_req;
     if (_request_name != NULL) {
         request_name = talloc_strdup(mem_ctx, dp_req->name);
@@ -363,6 +365,9 @@ static void dp_req_done(struct tevent_req *subreq)
     talloc_zfree(subreq);
     state->dp_req->handler_req = NULL;
 
+    PROBE(DP_REQ_DONE, state->dp_req->name, state->dp_req->target,
+          state->dp_req->method, ret, sss_strerror(ret));
+
     DP_REQ_DEBUG(SSSDBG_TRACE_FUNC, state->dp_req->name,
                  "Request handler finished [%d]: %s", ret, sss_strerror(ret));
 
@@ -407,7 +412,7 @@ static void dp_terminate_request(struct dp_req *dp_req)
 {
     if (dp_req->handler_req == NULL) {
         /* This may occur when the handler already finished but the caller
-         * of dp request did not yet recieved data/free dp_req. We just
+         * of dp request did not yet received data/free dp_req. We just
          * return here. */
         return;
     }

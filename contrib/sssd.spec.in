@@ -2,8 +2,8 @@
 # Set --with sssd_user or bcond_without to run SSSD as non-root user(sssd).
 %bcond_with sssd_user
 
-%global rhel6_minor %(%{__grep} -o "6.[0-9]*" /etc/redhat-release |%{__sed} -s 's/6.//')
-%global rhel7_minor %(%{__grep} -o "7.[0-9]*" /etc/redhat-release |%{__sed} -s 's/7.//')
+%global rhel6_minor %(%{__grep} -o "6\\.[0-9]*" /etc/redhat-release |%{__sed} -s 's/6.//')
+%global rhel7_minor %(%{__grep} -o "7\\.[0-9]*" /etc/redhat-release |%{__sed} -s 's/7.//')
 
 %if 0%{?rhel} && 0%{?rhel} <= 6
 %{!?__python2: %global __python2 /usr/bin/python2}
@@ -64,7 +64,7 @@
 %endif
 
 # on Fedora and RHEL7 p11_child needs a polkit config snippet to be allowed to
-# talk to pcscd if SSSD runs as unpriviledged user
+# talk to pcscd if SSSD runs as unprivileged user
 %if (%{with sssd_user} && (0%{?fedora} || 0%{?rhel} >= 7))
     %global install_pcscd_polkit_rule 1
 %else
@@ -97,7 +97,7 @@
     %global with_cifs_utils_plugin_option --disable-cifs-idmap-plugin
 %endif
 
-%if (0%{?fedora})
+%if (0%{?fedora} || 0%{?rhel} > 7)
     %global with_python3 1
 %else
     %global with_python3_option --without-python3-bindings
@@ -108,7 +108,7 @@
     %global enable_systemtap_opt --enable-systemtap
 %endif
 
-%if (0%{?fedora} || 0%{?epel} >= 7)
+%if (0%{?fedora} || (0%{?rhel} >= 7 && 0%{rhel7_minor} >= 4))
     %global with_secrets 1
 %else
     %global with_secret_responder --without-secrets
@@ -119,6 +119,12 @@
     %global with_kcm_option --with-kcm
 %else
     %global with_kcm_option --without-kcm
+%endif
+
+%if (0%{?fedora} >= 27 || (0%{?rhel} >= 7 && 0%{?rhel7_minor} > 4))
+    %global with_gdm_pam_extensions 1
+%else
+    %global with_gdm_pam_extensions 0
 %endif
 
 Name: @PACKAGE_NAME@
@@ -156,6 +162,7 @@ Requires: python2-sssdconfig = %{version}-%{release}
 %global pubconfpath %{sssdstatedir}/pubconf
 %global gpocachepath %{sssdstatedir}/gpo_cache
 %global secdbpath %{sssdstatedir}/secrets
+%global deskprofilepath %{sssdstatedir}/deskprofile
 
 ### Build Dependencies ###
 
@@ -183,7 +190,7 @@ BuildRequires: libxml2
 BuildRequires: docbook-style-xsl
 BuildRequires: krb5-devel
 BuildRequires: c-ares-devel
-BuildRequires: python-devel
+BuildRequires: python2-devel
 %if (0%{?with_python3} == 1)
 BuildRequires: python3-devel
 %endif
@@ -206,6 +213,7 @@ BuildRequires: nss_wrapper
 BuildRequires: libnl3-devel
 %if (0%{?use_systemd} == 1)
 BuildRequires: systemd-devel
+BuildRequires: systemd
 %endif
 %if (0%{?with_cifs_utils_plugin} == 1)
 BuildRequires: cifs-utils-devel
@@ -232,6 +240,9 @@ BuildRequires: libuuid-devel
 BuildRequires: jansson-devel
 BuildRequires: libcurl-devel
 %endif
+%if (0%{?with_gdm_pam_extensions} == 1)
+BuildRequires: gdm-pam-extensions-devel
+%endif
 
 %description
 Provides a set of daemons to manage access to remote directories and
@@ -240,7 +251,7 @@ the system and a pluggable backend system to connect to multiple different
 account sources. It is also the basis to provide client auditing and policy
 services for projects like FreeIPA.
 
-The sssd subpackage is a meta-package that contains the deamon as well as all
+The sssd subpackage is a meta-package that contains the daemon as well as all
 the existing back ends.
 
 %package common
@@ -253,9 +264,7 @@ Requires: libsss_autofs%{?_isa} = %{version}-%{release}
 Requires: libsss_idmap = %{version}-%{release}
 Conflicts: sssd < %{version}-%{release}
 %if (0%{?use_systemd} == 1)
-Requires(post): systemd-units systemd-sysv
-Requires(preun): systemd-units
-Requires(postun): systemd-units
+%{?systemd_requires}
 %else
 Requires(post): initscripts chkconfig
 Requires(preun):  initscripts chkconfig
@@ -469,8 +478,8 @@ License: GPLv3+
 Conflicts: sssd < %{version}-%{release}
 Requires: sssd-common = %{version}-%{release}
 Requires: sssd-krb5-common = %{version}-%{release}
-Requires: bind-utils
 Requires: sssd-common-pac = %{version}-%{release}
+Requires: bind-utils
 
 %description ad
 Provides the Active Directory back end that the SSSD can utilize to fetch
@@ -495,7 +504,7 @@ Requires(post): /sbin/ldconfig
 Requires(postun): /sbin/ldconfig
 
 %description -n libsss_idmap
-Utility library to convert SIDs to Unix uids and gids
+Utility library to convert SIDs to UNIX UIDs and GIDs
 
 %package -n libsss_idmap-devel
 Summary: FreeIPA Idmap library
@@ -504,7 +513,7 @@ License: LGPLv3+
 Requires: libsss_idmap = %{version}-%{release}
 
 %description -n libsss_idmap-devel
-Utility library to SIDs to Unix uids and gids
+Utility library to SIDs to UNIX UIDs and GIDs
 
 %package -n libipa_hbac
 Summary: FreeIPA HBAC Evaluator library
@@ -601,6 +610,7 @@ Summary: The D-Bus responder of the SSSD
 Group: Applications/System
 License: GPLv3+
 Requires: sssd-common = %{version}-%{release}
+%{?systemd_requires}
 
 %description dbus
 Provides the D-Bus responder of the SSSD, called the InfoPipe, that allows
@@ -700,6 +710,7 @@ Summary: An implementation of a Kerberos KCM server
 Group:  Applications/System
 License: GPLv3+
 Requires: sssd-common = %{version}-%{release}
+%{?systemd_requires}
 
 %description kcm
 An implementation of a Kerberos KCM server. Use this package if you want to
@@ -958,6 +969,7 @@ done
 %if (0%{?with_secrets} == 1)
 %attr(700,root,root) %dir %{secdbpath}
 %endif
+%attr(751,sssd,sssd) %dir %{deskprofilepath}
 %ghost %attr(0644,sssd,sssd) %verify(not md5 size mtime) %{mcpath}/passwd
 %ghost %attr(0644,sssd,sssd) %verify(not md5 size mtime) %{mcpath}/group
 %ghost %attr(0644,sssd,sssd) %verify(not md5 size mtime) %{mcpath}/initgroups
@@ -969,16 +981,13 @@ done
 %attr(711,sssd,sssd) %dir %{_sysconfdir}/sssd
 %attr(711,sssd,sssd) %dir %{_sysconfdir}/sssd/conf.d
 %ghost %attr(0600,sssd,sssd) %config(noreplace) %{_sysconfdir}/sssd/sssd.conf
-%if (0%{?use_systemd} == 1)
-%attr(755,root,root) %dir %{_sysconfdir}/systemd/system/sssd.service.d
-%config(noreplace) %{_sysconfdir}/systemd/system/sssd.service.d/journal.conf
-%endif
 %dir %{_sysconfdir}/logrotate.d
 %config(noreplace) %{_sysconfdir}/logrotate.d/sssd
 %dir %{_sysconfdir}/rwtab.d
 %config(noreplace) %{_sysconfdir}/rwtab.d/sssd
 %dir %{_datadir}/sssd
 %{_sysconfdir}/pam.d/sssd-shadowutils
+%dir %{_libdir}/%{name}/conf
 %{_libdir}/%{name}/conf/sssd.conf
 
 %{_datadir}/sssd/cfg_rules.ini
@@ -990,6 +999,7 @@ done
 %{_mandir}/man5/sssd-files.5*
 %{_mandir}/man5/sssd-simple.5*
 %{_mandir}/man5/sssd-sudo.5*
+%{_mandir}/man5/sssd-session-recording.5*
 %if (0%{?with_secrets} == 1)
 %{_mandir}/man5/sssd-secrets.5*
 %endif
@@ -999,10 +1009,12 @@ done
 %dir %{_datadir}/sssd/systemtap
 %{_datadir}/sssd/systemtap/id_perf.stp
 %{_datadir}/sssd/systemtap/nested_group_perf.stp
+%{_datadir}/sssd/systemtap/dp_request.stp
 %dir %{_datadir}/systemtap
 %dir %{_datadir}/systemtap/tapset
 %{_datadir}/systemtap/tapset/sssd.stp
 %{_datadir}/systemtap/tapset/sssd_functions.stp
+%{_mandir}/man5/sssd-systemtap.5*
 %endif
 
 %if (0%{?install_pcscd_polkit_rule} == 1)
@@ -1262,7 +1274,7 @@ done
 %{_libdir}/pkgconfig/sss_certmap.pc
 
 %if (0%{?with_kcm} == 1)
-%files kcm
+%files kcm -f sssd_kcm.lang
 %{_libexecdir}/%{servicename}/sssd_kcm
 %dir %{_datadir}/sssd-kcm
 %{_datadir}/sssd-kcm/kcm_default_ccache

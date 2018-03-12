@@ -26,7 +26,7 @@
 #include <popt.h>
 
 #include "limits.h"
-#include "util/io.h"
+#include "shared/io.h"
 #include "util/inotify.h"
 #include "util/util.h"
 #include "tests/common.h"
@@ -561,7 +561,7 @@ int main(int argc, const char *argv[])
                                         inotify_test_dir_teardown),
     };
 
-    /* Set debug level to invalid value so we can deside if -d 0 was used. */
+    /* Set debug level to invalid value so we can decide if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
 
     pc = poptGetContext(argv[0], argc, argv, long_options, 0);

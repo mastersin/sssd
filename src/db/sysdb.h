@@ -102,6 +102,7 @@
 
 #define SYSDB_AUTHORIZED_SERVICE "authorizedService"
 #define SYSDB_AUTHORIZED_HOST "authorizedHost"
+#define SYSDB_AUTHORIZED_RHOST "authorizedRHost"
 
 #define SYSDB_NETGROUP_TRIPLE "netgroupTriple"
 #define SYSDB_ORIG_NETGROUP_MEMBER "originalMemberNisNetgroup"
@@ -153,6 +154,7 @@
 #define SYSDB_SUBDOMAIN_FOREST "memberOfForest"
 #define SYSDB_SUBDOMAIN_TRUST_DIRECTION "trustDirection"
 #define SYSDB_UPN_SUFFIXES "upnSuffixes"
+#define SYSDB_SITE "site"
 
 #define SYSDB_BASE_ID "baseID"
 #define SYSDB_ID_RANGE_SIZE "idRangeSize"
@@ -186,12 +188,14 @@
 #define SYSDB_OVERRIDE_OBJECT_DN "overrideObjectDN"
 #define SYSDB_USE_DOMAIN_RESOLUTION_ORDER "useDomainResolutionOrder"
 #define SYSDB_DOMAIN_RESOLUTION_ORDER "domainResolutionOrder"
+#define SYSDB_SESSION_RECORDING "sessionRecording"
 
 #define SYSDB_NEXTID_FILTER "("SYSDB_NEXTID"=*)"
 
-#define SYSDB_UC "objectclass="SYSDB_USER_CLASS
-#define SYSDB_GC "objectclass="SYSDB_GROUP_CLASS
-#define SYSDB_NC "objectclass="SYSDB_NETGROUP_CLASS
+#define SYSDB_OBJECTCATEGORY "objectCategory"
+#define SYSDB_UC SYSDB_OBJECTCATEGORY"="SYSDB_USER_CLASS
+#define SYSDB_GC SYSDB_OBJECTCATEGORY"="SYSDB_GROUP_CLASS
+#define SYSDB_NC SYSDB_OBJECTCLASS"="SYSDB_NETGROUP_CLASS
 #define SYSDB_MPGC "|("SYSDB_UC")("SYSDB_GC")"
 
 #define SYSDB_PWNAM_FILTER "(&("SYSDB_UC")(|("SYSDB_NAME_ALIAS"=%s)("SYSDB_NAME_ALIAS"=%s)("SYSDB_NAME"=%s)))"
@@ -224,7 +228,8 @@
 #define SYSDB_DEFAULT_ATTRS SYSDB_LAST_UPDATE, \
                             SYSDB_CACHE_EXPIRE, \
                             SYSDB_INITGR_EXPIRE, \
-                            SYSDB_OBJECTCLASS
+                            SYSDB_OBJECTCLASS, \
+                            SYSDB_OBJECTCATEGORY
 
 #define SYSDB_PW_ATTRS {SYSDB_NAME, SYSDB_UIDNUM, \
                         SYSDB_GIDNUM, SYSDB_GECOS, \
@@ -238,6 +243,7 @@
                         SYSDB_OVERRIDE_DN, \
                         SYSDB_OVERRIDE_OBJECT_DN, \
                         SYSDB_DEFAULT_OVERRIDE_NAME, \
+                        SYSDB_SESSION_RECORDING, \
                         SYSDB_UUID, \
                         SYSDB_ORIG_DN, \
                         NULL}
@@ -340,6 +346,12 @@ struct certmap_info {
     const char **domains;
 };
 
+enum sysdb_member_type {
+    SYSDB_MEMBER_USER,
+    SYSDB_MEMBER_GROUP,
+    SYSDB_MEMBER_NETGROUP,
+    SYSDB_MEMBER_SERVICE,
+};
 
 /* These attributes are stored in the timestamp cache */
 extern const char *sysdb_ts_cache_attrs[];
@@ -500,6 +512,15 @@ errno_t sysdb_domain_update_domain_resolution_order(
                                         const char *domain_name,
                                         const char *domain_resolution_order);
 
+errno_t
+sysdb_get_site(TALLOC_CTX *mem_ctx,
+               struct sss_domain_info *dom,
+               const char **_site);
+
+errno_t
+sysdb_set_site(struct sss_domain_info *dom,
+               const char *site);
+
 errno_t sysdb_subdomain_store(struct sysdb_ctx *sysdb,
                               const char *name, const char *realm,
                               const char *flat_name, const char *domain_id,
@@ -571,6 +592,20 @@ errno_t sysdb_invalidate_overrides(struct sysdb_ctx *sysdb);
 errno_t sysdb_apply_default_override(struct sss_domain_info *domain,
                                      struct sysdb_attrs *override_attrs,
                                      struct ldb_dn *obj_dn);
+
+errno_t sysdb_search_by_orig_dn(TALLOC_CTX *mem_ctx,
+                                struct sss_domain_info *domain,
+                                enum sysdb_member_type type,
+                                const char *member_dn,
+                                const char **attrs,
+                                size_t *msgs_counts,
+                                struct ldb_message ***msgs);
+
+#define sysdb_search_users_by_orig_dn(mem_ctx, domain, member_dn, attrs, msgs_counts, msgs) \
+    sysdb_search_by_orig_dn(mem_ctx, domain, SYSDB_MEMBER_USER, member_dn, attrs, msgs_counts, msgs);
+
+#define sysdb_search_groups_by_orig_dn(mem_ctx, domain, member_dn, attrs, msgs_counts, msgs) \
+    sysdb_search_by_orig_dn(mem_ctx, domain, SYSDB_MEMBER_GROUP, member_dn, attrs, msgs_counts, msgs);
 
 errno_t sysdb_search_user_override_attrs_by_name(TALLOC_CTX *mem_ctx,
                                             struct sss_domain_info *domain,
@@ -819,7 +854,7 @@ int sysdb_get_netgroup_attr(TALLOC_CTX *mem_ctx,
                             const char **attributes,
                             struct ldb_result **res);
 
-/* functions that modify the databse
+/* functions that modify the database
  * they have to be called within a transaction
  * See sysdb_transaction_send()/_recv() */
 
@@ -1037,13 +1072,6 @@ int sysdb_store_group(struct sss_domain_info *domain,
                       struct sysdb_attrs *attrs,
                       uint64_t cache_timeout,
                       time_t now);
-
-enum sysdb_member_type {
-    SYSDB_MEMBER_USER,
-    SYSDB_MEMBER_GROUP,
-    SYSDB_MEMBER_NETGROUP,
-    SYSDB_MEMBER_SERVICE,
-};
 
 int sysdb_add_group_member(struct sss_domain_info *domain,
                            const char *group,

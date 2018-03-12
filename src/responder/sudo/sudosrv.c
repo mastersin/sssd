@@ -148,6 +148,17 @@ int sudo_process_init(TALLOC_CTX *mem_ctx,
         goto fail;
     }
 
+    /* Get sudo_inverse_order option */
+    ret = confdb_get_int(sudo_ctx->rctx->cdb,
+                         CONFDB_SUDO_CONF_ENTRY, CONFDB_SUDO_THRESHOLD,
+                         CONFDB_DEFAULT_SUDO_THRESHOLD,
+                         &sudo_ctx->threshold);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE, "Error reading from confdb (%d) [%s]\n",
+              ret, strerror(ret));
+        goto fail;
+    }
+
     ret = schedule_get_domains_task(rctx, rctx->ev, rctx, NULL);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "schedule_get_domains_tasks failed.\n");
@@ -167,6 +178,7 @@ int main(int argc, const char *argv[])
 {
     int opt;
     poptContext pc;
+    char *opt_logger = NULL;
     struct main_context *main_ctx;
     int ret;
     uid_t uid;
@@ -175,12 +187,13 @@ int main(int argc, const char *argv[])
     struct poptOption long_options[] = {
         POPT_AUTOHELP
         SSSD_MAIN_OPTS
+        SSSD_LOGGER_OPTS
         SSSD_SERVER_OPTS(uid, gid)
         SSSD_RESPONDER_OPTS
         POPT_TABLEEND
     };
 
-    /* Set debug level to invalid value so we can deside if -d 0 was used. */
+    /* Set debug level to invalid value so we can decide if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
 
     umask(DFL_RSP_UMASK);
@@ -200,8 +213,10 @@ int main(int argc, const char *argv[])
 
     DEBUG_INIT(debug_level);
 
-    /* set up things like debug, signals, daemonization, etc... */
+    /* set up things like debug, signals, daemonization, etc. */
     debug_log_file = "sssd_sudo";
+
+    sss_set_logger(opt_logger);
 
     ret = server_setup("sssd[sudo]", 0, uid, gid, CONFDB_SUDO_CONF_ENTRY,
                        &main_ctx);

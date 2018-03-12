@@ -1107,7 +1107,7 @@ resolv_gethostbyname_send(TALLOC_CTX *mem_ctx, struct tevent_context *ev,
                                            &state->rhostent);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
-                  "Canot create a fake hostent structure\n");
+                  "Cannot create a fake hostent structure\n");
             goto fail;
         }
 
@@ -2200,7 +2200,7 @@ static int reply_weight_rearrange(int len,
     *end = prev ? prev : *start;
 
     while (*start != NULL) {
-        /* Commpute the sum of the weights of those RRs, and with each RR
+        /* Compute the sum of the weights of those RRs, and with each RR
          * associate the running sum in the selected order.
          */
         total = 0;
@@ -2210,7 +2210,7 @@ static int reply_weight_rearrange(int len,
             total = totals[i];
         }
 
-        /* choose a  uniform random number between 0 and the sum computed
+        /* choose a uniform random number between 0 and the sum computed
          * (inclusive), and select the RR whose running sum value is the
          * first in the selected order which is greater than or equal to
          * the random number selected.
@@ -2244,6 +2244,13 @@ static int reply_weight_rearrange(int len,
             new_end->next = r;
             new_end = r;
         }
+    }
+
+    if (new_end == NULL) {
+        ret = EINVAL;
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Bug: no new server has been selected!\n");
+        goto done;
     }
     new_end->next = NULL;
 

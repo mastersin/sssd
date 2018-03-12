@@ -34,7 +34,6 @@
 #include "providers/ipa/ipa_id.h"
 #include "providers/ipa/ipa_auth.h"
 #include "providers/ipa/ipa_access.h"
-#include "providers/ipa/ipa_hostid.h"
 #include "providers/ipa/ipa_dyndns.h"
 #include "providers/ipa/ipa_selinux.h"
 #include "providers/ldap/sdap_access.h"
@@ -42,6 +41,7 @@
 #include "providers/ipa/ipa_subdomains.h"
 #include "providers/ipa/ipa_srv.h"
 #include "providers/be_dyndns.h"
+#include "providers/ipa/ipa_session.h"
 
 #define DNS_SRV_MISCONFIGURATION "SRV discovery is enabled on the IPA " \
     "server while using custom dns_discovery_domain. DNS discovery of " \
@@ -259,9 +259,10 @@ static errno_t ipa_init_server_mode(struct be_ctx *be_ctx,
     dnsdomain = dp_opt_get_string(be_ctx->be_res->opts, DP_RES_OPT_DNS_DOMAIN);
 
     if (srv_in_server_list(ipa_servers) || sites_enabled) {
-        DEBUG(SSSDBG_MINOR_FAILURE, "SRV resolution or IPA sites enabled "
-              "on the IPA server. Site discovery of trusted AD servers "
-              "might not work.\n");
+        DEBUG(SSSDBG_IMPORTANT_INFO, "SSSD configuration uses either DNS "
+              "SRV resolution or IPA site discovery to locate IPA servers. "
+              "On IPA server itself, it is recommended that SSSD is "
+              "configured to only connect to the IPA server it's running at. ");
 
         /* If SRV discovery is enabled on the server and
          * dns_discovery_domain is set explicitly, then
@@ -576,12 +577,23 @@ done:
     return ret;
 }
 
+static bool ipa_check_fqdn(const char *str)
+{
+    return strchr(str, '.');
+}
+
 static errno_t ipa_init_misc(struct be_ctx *be_ctx,
                              struct ipa_options *ipa_options,
                              struct ipa_id_ctx *ipa_id_ctx,
                              struct sdap_id_ctx *sdap_id_ctx)
 {
     errno_t ret;
+
+    if (!ipa_check_fqdn(dp_opt_get_string(ipa_options->basic,
+                        IPA_HOSTNAME))) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "ipa_hostname is not Fully Qualified Domain Name.\n");
+    }
 
     ret = ipa_init_dyndns(be_ctx, ipa_options);
     if (ret != EOK) {
@@ -647,6 +659,13 @@ static errno_t ipa_init_misc(struct be_ctx *be_ctx,
     if (ipa_id_ctx->sdap_id_ctx->opts->ext_ctx == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to set the extrernal group ctx\n");
         return ENOMEM;
+    }
+
+    ret = sdap_init_certmap(sdap_id_ctx, sdap_id_ctx);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to initialized certificate mapping.\n");
+        return ret;
     }
 
     return EOK;
@@ -734,6 +753,10 @@ errno_t sssm_ipa_id_init(TALLOC_CTX *mem_ctx,
                   sdap_online_check_handler_send, sdap_online_check_handler_recv, id_ctx->sdap_id_ctx,
                   struct sdap_id_ctx, void, struct dp_reply_std);
 
+    dp_set_method(dp_methods, DPM_ACCT_DOMAIN_HANDLER,
+                  default_account_domain_send, default_account_domain_recv, NULL,
+                  void, struct dp_get_acct_domain_data, struct dp_reply_std);
+
     return EOK;
 }
 
@@ -783,9 +806,9 @@ errno_t sssm_ipa_access_init(TALLOC_CTX *mem_ctx,
     }
 
     access_ctx->sdap_ctx = id_ctx->sdap_id_ctx;
-    access_ctx->host_map = id_ctx->ipa_options->host_map;
+    access_ctx->host_map = id_ctx->ipa_options->id->host_map;
     access_ctx->hostgroup_map = id_ctx->ipa_options->hostgroup_map;
-    access_ctx->host_search_bases = id_ctx->ipa_options->host_search_bases;
+    access_ctx->host_search_bases = id_ctx->ipa_options->id->sdom->host_search_bases;
     access_ctx->hbac_search_bases = id_ctx->ipa_options->hbac_search_bases;
 
     ret = dp_copy_options(access_ctx, id_ctx->ipa_options->basic,
@@ -811,6 +834,10 @@ errno_t sssm_ipa_access_init(TALLOC_CTX *mem_ctx,
                   ipa_pam_access_handler_send, ipa_pam_access_handler_recv, access_ctx,
                   struct ipa_access_ctx, struct pam_data, struct pam_data *);
 
+    dp_set_method(dp_methods, DPM_REFRESH_ACCESS_RULES,
+                      ipa_refresh_access_rules_send, ipa_refresh_access_rules_recv, access_ctx,
+                      struct ipa_access_ctx, void, void *);
+
     ret = EOK;
 
 done:
@@ -826,7 +853,7 @@ errno_t sssm_ipa_selinux_init(TALLOC_CTX *mem_ctx,
                               void *module_data,
                               struct dp_method *dp_methods)
 {
-#if defined HAVE_SELINUX && defined HAVE_SELINUX_LOGIN_DIR
+#if defined HAVE_SELINUX
     struct ipa_selinux_ctx *selinux_ctx;
     struct ipa_init_ctx *init_ctx;
     struct ipa_options *opts;
@@ -842,7 +869,7 @@ errno_t sssm_ipa_selinux_init(TALLOC_CTX *mem_ctx,
 
     selinux_ctx->id_ctx = init_ctx->id_ctx;
     selinux_ctx->hbac_search_bases = opts->hbac_search_bases;
-    selinux_ctx->host_search_bases = opts->host_search_bases;
+    selinux_ctx->host_search_bases = opts->id->sdom->host_search_bases;
     selinux_ctx->selinux_search_bases = opts->selinux_search_bases;
 
     dp_set_method(dp_methods, DPM_SELINUX_HANDLER,
@@ -852,7 +879,7 @@ errno_t sssm_ipa_selinux_init(TALLOC_CTX *mem_ctx,
     return EOK;
 #else
     DEBUG(SSSDBG_MINOR_FAILURE, "SELinux init handler called but SSSD is "
-                                "built without SSH support, ignoring\n");
+                                "built without SELinux support, ignoring\n");
     return EOK;
 #endif
 }
@@ -863,26 +890,13 @@ errno_t sssm_ipa_hostid_init(TALLOC_CTX *mem_ctx,
                              struct dp_method *dp_methods)
 {
 #ifdef BUILD_SSH
-    struct ipa_hostid_ctx *hostid_ctx;
     struct ipa_init_ctx *init_ctx;
 
+    DEBUG(SSSDBG_TRACE_INTERNAL, "Initializing IPA host handler\n");
     init_ctx = talloc_get_type(module_data, struct ipa_init_ctx);
 
-    hostid_ctx = talloc_zero(mem_ctx, struct ipa_hostid_ctx);
-    if (hostid_ctx == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_zero failed.\n");
-        return ENOMEM;
-    }
+    return ipa_hostid_init(mem_ctx, be_ctx, init_ctx->id_ctx, dp_methods);
 
-    hostid_ctx->sdap_id_ctx = init_ctx->id_ctx->sdap_id_ctx;
-    hostid_ctx->host_search_bases = init_ctx->options->host_search_bases;
-    hostid_ctx->ipa_opts = init_ctx->options;
-
-    dp_set_method(dp_methods, DPM_HOSTID_HANDLER,
-                  ipa_hostid_handler_send, ipa_hostid_handler_recv, hostid_ctx,
-                  struct ipa_hostid_ctx, struct dp_hostid_data, struct dp_reply_std);
-
-    return EOK;
 #else
     DEBUG(SSSDBG_MINOR_FAILURE, "HostID init handler called but SSSD is "
                                 "built without SSH support, ignoring\n");
@@ -939,4 +953,52 @@ errno_t sssm_ipa_sudo_init(TALLOC_CTX *mem_ctx,
                                 "built without sudo support, ignoring\n");
     return EOK;
 #endif
+}
+
+errno_t sssm_ipa_session_init(TALLOC_CTX *mem_ctx,
+                              struct be_ctx *be_ctx,
+                              void *module_data,
+                              struct dp_method *dp_methods)
+{
+    struct ipa_session_ctx *session_ctx;
+    struct ipa_init_ctx *init_ctx;
+    struct ipa_id_ctx *id_ctx;
+    errno_t ret;
+
+    init_ctx = talloc_get_type(module_data, struct ipa_init_ctx);
+    id_ctx = init_ctx->id_ctx;
+
+    session_ctx = talloc_zero(mem_ctx, struct ipa_session_ctx);
+    if (session_ctx == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_zero() failed.\n");
+
+        return ENOMEM;
+    }
+
+    session_ctx->sdap_ctx = id_ctx->sdap_id_ctx;
+    session_ctx->host_map = id_ctx->ipa_options->id->host_map;
+    session_ctx->hostgroup_map = id_ctx->ipa_options->hostgroup_map;
+    session_ctx->host_search_bases = id_ctx->ipa_options->id->sdom->host_search_bases;
+    session_ctx->deskprofile_search_bases = id_ctx->ipa_options->deskprofile_search_bases;
+
+    ret = dp_copy_options(session_ctx, id_ctx->ipa_options->basic,
+                          IPA_OPTS_BASIC, &session_ctx->ipa_options);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "dp_copy_options() failed.\n");
+
+        goto done;
+    }
+
+    dp_set_method(dp_methods, DPM_SESSION_HANDLER,
+                  ipa_pam_session_handler_send, ipa_pam_session_handler_recv, session_ctx,
+                  struct ipa_session_ctx, struct pam_data, struct pam_data *);
+
+    ret = EOK;
+
+done:
+    if (ret != EOK) {
+        talloc_free(session_ctx);
+    }
+
+    return ret;
 }

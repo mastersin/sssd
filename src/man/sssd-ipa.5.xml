@@ -64,6 +64,12 @@
             configuration of access provider is required on the client side.
         </para>
         <para>
+            If <quote>auth_provider=ipa</quote> or
+            <quote>access_provider=ipa</quote> is configured
+            in sssd.conf then the id_provider must also be set to
+            <quote>ipa</quote>.
+        </para>
+        <para>
             The IPA provider will use the PAC responder if the Kerberos tickets
             of users from trusted realms contain a PAC. To make configuration
             easier the PAC responder is started automatically if the IPA ID
@@ -113,6 +119,7 @@
                             Optional. May be set on machines where the
                             hostname(5) does not reflect the fully qualified
                             name used in the IPA domain to identify this host.
+                            The hostname must be fully qualified.
                         </para>
                     </listitem>
                 </varlistentry>
@@ -307,6 +314,19 @@
                 </varlistentry>
 
                 <varlistentry>
+                    <term>ipa_deskprofile_search_base (string)</term>
+                    <listitem>
+                        <para>
+                            Optional. Use the given string as search base for
+                            Desktop Profile related objects.
+                        </para>
+                        <para>
+                            Default: Use base DN
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>ipa_hbac_search_base (string)</term>
                     <listitem>
                         <para>
@@ -323,17 +343,7 @@
                     <term>ipa_host_search_base (string)</term>
                     <listitem>
                         <para>
-                            Optional. Use the given string as search base for
-                            host objects.
-                        </para>
-                        <para>
-                            See <quote>ldap_search_base</quote> for
-                            information about configuring multiple search
-                            bases.
-                        </para>
-                        <para>
-                            Default: the value of
-                            <emphasis>ldap_search_base</emphasis>
+                            Deprecated. Use ldap_host_search_base instead.
                         </para>
                     </listitem>
                 </varlistentry>
@@ -448,6 +458,36 @@
                 </varlistentry>
 
                 <varlistentry>
+                    <term>ipa_deskprofile_refresh (integer)</term>
+                    <listitem>
+                        <para>
+                            The amount of time between lookups of the Desktop
+                            Profile rules against the IPA server. This will
+                            reduce the latency and load on the IPA server if
+                            there are many desktop profiles requests made in a
+                            short period.
+                        </para>
+                        <para>
+                            Default: 5 (seconds)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>ipa_deskprofile_request_interval (integer)</term>
+                    <listitem>
+                        <para>
+                            The amount of time between lookups of the Desktop
+                            Profile rules against the IPA server in case the
+                            last request did not return any rule.
+                        </para>
+                        <para>
+                            Default: 60 (minutes)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>ipa_hbac_refresh (integer)</term>
                     <listitem>
                         <para>
@@ -491,6 +531,29 @@
                             On an IPA server SSSD will lookup users and groups
                             from trusted domains directly while on a client
                             it will ask an IPA server.
+                        </para>
+                        <para>
+                            NOTE: There are currently some assumptions that
+                            must be met when SSSD is running on an IPA server.
+                            <itemizedlist>
+                                <listitem>
+                                    <para>
+                                        The <quote>ipa_server</quote> option
+                                        must be configured to point to the
+                                        IPA server itself. This is already
+                                        the default set by the IPA installer,
+                                        so no manual change is required.
+                                    </para>
+                                </listitem>
+                                <listitem>
+                                    <para>
+                                        The <quote>full_name_format</quote>
+                                        option must not be tweaked to only
+                                        print short names for users from
+                                        trusted domains.
+                                    </para>
+                                </listitem>
+                            </itemizedlist>
                         </para>
                         <para>
                             Default: false

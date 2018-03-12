@@ -50,6 +50,9 @@
 #include <systemd/sd-daemon.h>
 #endif
 
+#define SHELL_REALLOC_INCREMENT 5
+#define SHELL_REALLOC_MAX       50
+
 static errno_t set_close_on_exec(int fd)
 {
     int v;
@@ -1062,6 +1065,72 @@ done:
     return ret;
 }
 
+static errno_t sss_get_etc_shells(TALLOC_CTX *mem_ctx, char ***_shells)
+{
+    int i = 0;
+    char *sh;
+    char **shells = NULL;
+    TALLOC_CTX *tmp_ctx;
+    errno_t ret;
+    int size;
+
+    tmp_ctx = talloc_new(NULL);
+    if (!tmp_ctx) return ENOMEM;
+
+    shells = talloc_array(tmp_ctx, char *, SHELL_REALLOC_INCREMENT);
+    if (!shells) {
+        ret = ENOMEM;
+        goto done;
+    }
+    size = SHELL_REALLOC_INCREMENT;
+
+    setusershell();
+    while ((sh = getusershell())) {
+        shells[i] = talloc_strdup(shells, sh);
+        if (!shells[i]) {
+            endusershell();
+            ret = ENOMEM;
+            goto done;
+        }
+        DEBUG(SSSDBG_TRACE_FUNC, "Found shell %s in /etc/shells\n", shells[i]);
+        i++;
+
+        if (i == size) {
+            size += SHELL_REALLOC_INCREMENT;
+            if (size > SHELL_REALLOC_MAX) {
+                DEBUG(SSSDBG_FATAL_FAILURE,
+                      "Reached maximum number of shells [%d]. "
+                          "Users may be denied access. "
+                          "Please check /etc/shells for sanity\n",
+                          SHELL_REALLOC_MAX);
+                break;
+            }
+            shells = talloc_realloc(NULL, shells, char *,
+                                    size);
+            if (!shells) {
+                ret = ENOMEM;
+                goto done;
+            }
+        }
+    }
+    endusershell();
+
+    if (i + 1 < size) {
+        shells = talloc_realloc(NULL, shells, char *, i + 1);
+        if (!shells) {
+            ret = ENOMEM;
+            goto done;
+        }
+    }
+    shells[i] = NULL;
+
+    *_shells = talloc_move(mem_ctx, &shells);
+    ret = EOK;
+done:
+    talloc_zfree(tmp_ctx);
+    return ret;
+}
+
 int sss_process_init(TALLOC_CTX *mem_ctx,
                      struct tevent_context *ev,
                      struct confdb_ctx *cdb,
@@ -1142,7 +1211,7 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
                          GET_DOMAINS_DEFAULT_TIMEOUT, &rctx->domains_timeout);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE,
-              "Cannnot get the default domain timeout [%d]: %s\n",
+              "Cannot get the default domain timeout [%d]: %s\n",
                ret, strerror(ret));
         goto fail;
     }
@@ -1163,7 +1232,7 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
                             &rctx->default_domain);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE,
-              "Cannnot get the default domain [%d]: %s\n",
+              "Cannot get the default domain [%d]: %s\n",
                ret, strerror(ret));
         goto fail;
     }
@@ -1173,7 +1242,7 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
                             &tmp);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE,
-              "Cannnot get the space substitution character [%d]: %s\n",
+              "Cannot get the space substitution character [%d]: %s\n",
                ret, strerror(ret));
         goto fail;
     }
@@ -1199,6 +1268,46 @@ int sss_process_init(TALLOC_CTX *mem_ctx,
               "Cannot get the \"domain_resolution_order\" option.\n"
               "The set up lookup_order won't be followed [%d]: %s.\n",
               ret, sss_strerror(ret));
+    }
+
+    /* Read shell settings */
+    ret = confdb_get_string(cdb, rctx, CONFDB_NSS_CONF_ENTRY,
+                            CONFDB_NSS_OVERRIDE_SHELL, NULL,
+                            &rctx->override_shell);
+    if (ret != EOK && ret != ENOENT) goto fail;
+
+    ret = confdb_get_string_as_list(cdb, rctx, CONFDB_NSS_CONF_ENTRY,
+                                    CONFDB_NSS_ALLOWED_SHELL,
+                                    &rctx->allowed_shells);
+    if (ret != EOK && ret != ENOENT) goto fail;
+
+    ret = confdb_get_string_as_list(cdb, rctx, CONFDB_NSS_CONF_ENTRY,
+                                    CONFDB_NSS_VETOED_SHELL,
+                                    &rctx->vetoed_shells);
+    if (ret != EOK && ret != ENOENT) goto fail;
+
+    ret = sss_get_etc_shells(rctx, &rctx->etc_shells);
+    if (ret != EOK) goto fail;
+
+    ret = confdb_get_string(cdb, rctx, CONFDB_NSS_CONF_ENTRY,
+                            CONFDB_NSS_SHELL_FALLBACK,
+                            CONFDB_DEFAULT_SHELL_FALLBACK,
+                            &rctx->shell_fallback);
+    if (ret != EOK) goto fail;
+
+    ret = confdb_get_string(cdb, rctx, CONFDB_NSS_CONF_ENTRY,
+                            CONFDB_NSS_DEFAULT_SHELL,
+                            NULL,
+                            &rctx->default_shell);
+    if (ret != EOK) goto fail;
+
+    /* Read session_recording section */
+    ret = session_recording_conf_load(rctx, rctx->cdb, &rctx->sr_conf);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "Failed loading session recording configuration: %s\n",
+              strerror(ret));
+        goto fail;
     }
 
     ret = sss_monitor_init(rctx, rctx->ev, monitor_intf,
@@ -1476,7 +1585,7 @@ errno_t responder_setup_idle_timeout_config(struct resp_ctx *rctx)
         ret = setup_responder_idle_timer(rctx);
         if (ret != EOK) {
             DEBUG(SSSDBG_MINOR_FAILURE,
-                  "An error ocurrend when setting up the responder's idle "
+                  "An error occurred when setting up the responder's idle "
                   "timeout for the responder [%p]: %s [%d].\n"
                   "The responder won't be automatically shutdown after %d "
                   "seconds inactive. \n",
@@ -1706,7 +1815,7 @@ int sized_output_name(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    ret = sss_output_fqname(mem_ctx, name_dom, orig_name,
+    ret = sss_output_fqname(name, name_dom, orig_name,
                             rctx->override_space, &name_str);
     if (ret != EOK) {
         goto done;

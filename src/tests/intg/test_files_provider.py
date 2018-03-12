@@ -29,8 +29,10 @@ import pytest
 import ent
 import sssd_id
 from sssd_nss import NssReturnCode
-from sssd_passwd import call_sssd_getpwnam, call_sssd_enumeration
-from sssd_group import call_sssd_getgrnam
+from sssd_passwd import (call_sssd_getpwnam,
+                         call_sssd_enumeration,
+                         call_sssd_getpwuid)
+from sssd_group import call_sssd_getgrnam, call_sssd_getgrgid
 from files_ops import passwd_ops_setup, group_ops_setup
 from util import unindent
 
@@ -144,6 +146,26 @@ def files_domain_only(request):
 
 
 @pytest.fixture
+def proxy_to_files_domain_only(request):
+    conf = unindent("""\
+        [sssd]
+        domains             = proxy, local
+        services            = nss
+
+        [domain/local]
+        id_provider = local
+
+        [domain/proxy]
+        id_provider = proxy
+        proxy_lib_name = files
+        auth_provider = none
+    """).format(**locals())
+    create_conf_fixture(request, conf)
+    create_sssd_fixture(request)
+    return None
+
+
+@pytest.fixture
 def no_sssd_domain(request):
     conf = unindent("""\
         [sssd]
@@ -165,6 +187,9 @@ def no_files_domain(request):
 
         [domain/local]
         id_provider = local
+
+        [domain/disabled.files]
+        id_provider = files
     """).format(**locals())
     create_conf_fixture(request, conf)
     create_sssd_fixture(request)
@@ -258,12 +283,28 @@ def sssd_getpwnam_sync(name):
     return call_sssd_getpwnam(name)
 
 
+def sssd_getpwuid_sync(uid):
+    ret = poll_canary(call_sssd_getpwnam, CANARY["name"])
+    if ret is False:
+        return NssReturnCode.NOTFOUND, None
+
+    return call_sssd_getpwuid(uid)
+
+
 def sssd_getgrnam_sync(name):
     ret = poll_canary(call_sssd_getgrnam, CANARY_GR["name"])
     if ret is False:
         return NssReturnCode.NOTFOUND, None
 
     return call_sssd_getgrnam(name)
+
+
+def sssd_getgrgid_sync(name):
+    ret = poll_canary(call_sssd_getgrnam, CANARY_GR["name"])
+    if ret is False:
+        return NssReturnCode.NOTFOUND, None
+
+    return call_sssd_getgrgid(name)
 
 
 def sssd_id_sync(name):
@@ -303,6 +344,15 @@ def check_group(exp_group, delay=1.0):
         time.sleep(delay)
 
     res, found_group = sssd_getgrnam_sync(exp_group["name"])
+    assert res == NssReturnCode.SUCCESS
+    assert found_group == exp_group
+
+
+def check_group_by_gid(exp_group, delay=1.0):
+    if delay > 0:
+        time.sleep(delay)
+
+    res, found_group = sssd_getgrgid_sync(exp_group["gid"])
     assert res == NssReturnCode.SUCCESS
     assert found_group == exp_group
 
@@ -349,6 +399,16 @@ def test_getpwnam_after_start(add_user_with_canary, files_domain_only):
     assert user == USER1
 
 
+def test_getpwuid_after_start(add_user_with_canary, files_domain_only):
+    """
+    Test that after startup without any additional operations, a user
+    can be resolved through sssd
+    """
+    res, user = sssd_getpwuid_sync(USER1["uid"])
+    assert res == NssReturnCode.SUCCESS
+    assert user == USER1
+
+
 def test_user_overriden(add_user_with_canary, files_domain_only):
     """
     Test that user override works with files domain only
@@ -373,8 +433,8 @@ def test_group_overriden(add_group_with_canary, files_domain_only):
     """
     # Override
     subprocess.check_call(["sss_override", "group-add", GROUP1["name"],
-                          "-n", OV_GROUP1["name"],
-                          "-g", str(OV_GROUP1["gid"])])
+                           "-n", OV_GROUP1["name"],
+                           "-g", str(OV_GROUP1["gid"])])
 
     restart_sssd()
 
@@ -383,9 +443,17 @@ def test_group_overriden(add_group_with_canary, files_domain_only):
 
 def test_getpwnam_neg(files_domain_only):
     """
-    Test that a nonexistant user cannot be resolved
+    Test that a nonexistent user cannot be resolved by name
     """
     res, _ = call_sssd_getpwnam("nosuchuser")
+    assert res == NssReturnCode.NOTFOUND
+
+
+def test_getpwuid_neg(files_domain_only):
+    """
+    Test that a nonexistent user cannot be resolved by UID
+    """
+    res, _ = call_sssd_getpwuid(12345)
     assert res == NssReturnCode.NOTFOUND
 
 
@@ -398,6 +466,18 @@ def test_root_does_not_resolve(files_domain_only):
     assert nss_root is not None
 
     res, _ = call_sssd_getpwnam("root")
+    assert res == NssReturnCode.NOTFOUND
+
+
+def test_uid_zero_does_not_resolve(files_domain_only):
+    """
+    SSSD currently does not resolve the UID 0 even though it can
+    be resolved through the NSS interface
+    """
+    nss_root = pwd.getpwuid(0)
+    assert nss_root is not None
+
+    res, _ = call_sssd_getpwuid(0)
     assert res == NssReturnCode.NOTFOUND
 
 
@@ -522,16 +602,32 @@ def test_incomplete_user_fail(setup_pw_with_canary, files_domain_only):
 def test_getgrnam_after_start(add_group_with_canary, files_domain_only):
     """
     Test that after startup without any additional operations, a group
-    can be resolved through sssd
+    can be resolved through sssd by name
     """
     check_group(GROUP1)
 
 
+def test_getgrgid_after_start(add_group_with_canary, files_domain_only):
+    """
+    Test that after startup without any additional operations, a group
+    can be resolved through sssd by GID
+    """
+    check_group_by_gid(GROUP1)
+
+
 def test_getgrnam_neg(files_domain_only):
     """
-    Test that a nonexistant group cannot be resolved
+    Test that a nonexistent group cannot be resolved
     """
     res, user = sssd_getgrnam_sync("nosuchgroup")
+    assert res == NssReturnCode.NOTFOUND
+
+
+def test_getgrgid_neg(files_domain_only):
+    """
+    Test that a nonexistent group cannot be resolved
+    """
+    res, user = sssd_getgrgid_sync(123456)
     assert res == NssReturnCode.NOTFOUND
 
 
@@ -544,6 +640,18 @@ def test_root_group_does_not_resolve(files_domain_only):
     assert nss_root is not None
 
     res, user = call_sssd_getgrnam("root")
+    assert res == NssReturnCode.NOTFOUND
+
+
+def test_gid_zero_does_not_resolve(files_domain_only):
+    """
+    SSSD currently does not resolve the group with GID 0 even though it
+    can be resolved through the NSS interface
+    """
+    nss_root = grp.getgrgid(0)
+    assert nss_root is not None
+
+    res, user = call_sssd_getgrgid(0)
     assert res == NssReturnCode.NOTFOUND
 
 
@@ -890,6 +998,26 @@ def test_no_sssd_domain(add_user_with_canary, no_sssd_domain):
     res, user = sssd_getpwnam_sync(USER1["name"])
     assert res == NssReturnCode.SUCCESS
     assert user == USER1
+
+
+def test_proxy_to_files_domain_only(add_user_with_canary,
+                                    proxy_to_files_domain_only):
+    """
+    Test that implicit_files domain is not started together with proxy to files
+    """
+    local_user1 = dict(name='user1', passwd='*', uid=10009, gid=10009,
+                       gecos='user1', dir='/home/user1', shell='/bin/bash')
+
+    # Add a user with a different UID than the one in files
+    subprocess.check_call(
+        ["sss_useradd", "-u", "10009", "-M", USER1["name"]])
+
+    res, user = call_sssd_getpwnam(USER1["name"])
+    assert res == NssReturnCode.SUCCESS
+    assert user == local_user1
+
+    res, _ = call_sssd_getpwnam("{0}@implicit_files".format(USER1["name"]))
+    assert res == NssReturnCode.NOTFOUND
 
 
 def test_no_files_domain(add_user_with_canary, no_files_domain):

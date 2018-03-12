@@ -61,13 +61,6 @@ static void sig_term_handler(int sig)
 static krb5_context krb5_error_ctx;
 #define LDAP_CHILD_DEBUG(level, error) KRB5_DEBUG(level, krb5_error_ctx, error)
 
-static const char *__ldap_child_krb5_error_msg;
-#define KRB5_SYSLOG(krb5_error) do { \
-    __ldap_child_krb5_error_msg = sss_krb5_get_error_message(krb5_error_ctx, krb5_error); \
-    sss_log(SSS_LOG_ERR, "%s", __ldap_child_krb5_error_msg); \
-    sss_krb5_free_error_message(krb5_error_ctx, __ldap_child_krb5_error_msg); \
-} while(0)
-
 struct input_buffer {
     const char *realm_str;
     const char *princ_str;
@@ -450,11 +443,6 @@ static krb5_error_code ldap_child_get_tgt_sync(TALLOC_CTX *memctx,
         DEBUG(SSSDBG_FATAL_FAILURE,
               "Failed to init credentials: %s\n",
                sss_krb5_get_error_message(context, krberr));
-        sss_log(SSS_LOG_ERR,
-                "Failed to initialize credentials using keytab [%s]: %s. "
-                "Unable to create GSSAPI-encrypted LDAP connection.",
-                KEYTAB_CLEAN_NAME,
-                sss_krb5_get_error_message(context, krberr));
         goto done;
     }
     DEBUG(SSSDBG_TRACE_INTERNAL, "credentials initialized\n");
@@ -527,7 +515,11 @@ done:
     if (krberr != 0) {
         const char *krb5_msg;
 
-        KRB5_SYSLOG(krberr);
+        sss_log(SSS_LOG_ERR,
+                "Failed to initialize credentials using keytab [%s]: %s. "
+                "Unable to create GSSAPI-encrypted LDAP connection.",
+                KEYTAB_CLEAN_NAME,
+                sss_krb5_get_error_message(context, krberr));
         krb5_msg = sss_krb5_get_error_message(context, krberr);
         *_krb5_msg = talloc_strdup(memctx, krb5_msg);
         sss_krb5_free_error_message(context, krb5_msg);
@@ -582,7 +574,7 @@ static krb5_error_code privileged_krb5_setup(struct input_buffer *ibuf)
     krb5_error_code kerr;
     char *keytab_name;
 
-    kerr = krb5_init_context(&ibuf->context);
+    kerr = sss_krb5_init_context(&ibuf->context);
     if (kerr != 0) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Failed to init kerberos context\n");
         return kerr;
@@ -607,6 +599,7 @@ int main(int argc, const char *argv[])
     int kerr;
     int opt;
     int debug_fd = -1;
+    const char *opt_logger = NULL;
     poptContext pc;
     TALLOC_CTX *main_ctx = NULL;
     uint8_t *buf = NULL;
@@ -630,6 +623,7 @@ int main(int argc, const char *argv[])
          _("An open file descriptor for the debug logs"), NULL},
         {"debug-to-stderr", 0, POPT_ARG_NONE | POPT_ARGFLAG_DOC_HIDDEN, &debug_to_stderr, 0, \
          _("Send the debug output to stderr directly."), NULL }, \
+        SSSD_LOGGER_OPTS
         POPT_TABLEEND
     };
 
@@ -663,7 +657,10 @@ int main(int argc, const char *argv[])
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, "set_debug_file_from_fd failed.\n");
         }
+        opt_logger = sss_logger_str[FILES_LOGGER];
     }
+
+    sss_set_logger(opt_logger);
 
     BlockSignals(false, SIGTERM);
     CatchSignal(SIGTERM, sig_term_handler);

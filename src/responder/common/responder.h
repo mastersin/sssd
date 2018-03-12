@@ -38,6 +38,7 @@
 #include "responder/common/negcache.h"
 #include "sss_client/sss_cli.h"
 #include "responder/common/cache_req/cache_req_domain.h"
+#include "util/session_recording.h"
 
 extern hash_table_t *dp_requests;
 
@@ -139,6 +140,15 @@ struct resp_ctx {
     char *default_domain;
     char override_space;
 
+    char **allowed_shells;
+    char *override_shell;
+    char **vetoed_shells;
+    char **etc_shells;
+    char *shell_fallback;
+    char *default_shell;
+
+    struct session_recording_conf sr_conf;
+
     uint32_t cache_req_num;
 
     void *pvt_ctx;
@@ -147,6 +157,7 @@ struct resp_ctx {
     bool socket_activated;
     bool dbus_activated;
     bool cache_first;
+    bool enumeration_warn_logged;
 };
 
 struct cli_creds;
@@ -364,6 +375,42 @@ struct tevent_req *sss_dp_get_domains_send(TALLOC_CTX *mem_ctx,
 
 errno_t sss_dp_get_domains_recv(struct tevent_req *req);
 
+/*
+ * Call a getAccountDomain request
+ *
+ * Only requests by ID are supported.
+ *
+ * @param   mem_ctx     Parent memory context
+ * @param   rctx        Responder context
+ * @param   domain      The SSSD domain we're querying. The response can
+ *                      be either NULL or come from any of domain's subdomains
+ *                      or domain itself
+ * @param   type        Either SSS_DP_USER or SSS_DP_GROUP, other types
+ *                      are not supported at the moment
+ * @param   opt_id      The ID number we're trying to locate
+ *
+ * @return  A tevent request or NULL if allocating the request fails.
+ */
+struct tevent_req *sss_dp_get_account_domain_send(TALLOC_CTX *mem_ctx,
+                                                  struct resp_ctx *rctx,
+                                                  struct sss_domain_info *domain,
+                                                  enum sss_dp_acct_type type,
+                                                  uint32_t opt_id);
+
+/* Receive a getAccountDomain request result
+ *
+ * @param   mem_ctx     The memory context that will own the contents of _domain
+ * @param   req         The request that had finished
+ * @para    _domain     Either NULL (the request did not match any domain) or
+ *                      a string that corresponds to either the input domain
+ *                      or any of its subdomains
+ *
+ * @return EOK on success, errno otherwise
+ */
+errno_t sss_dp_get_account_domain_recv(TALLOC_CTX *mem_ctx,
+                                       struct tevent_req *req,
+                                       char **_domain);
+
 errno_t schedule_get_domains_task(TALLOC_CTX *mem_ctx,
                                   struct tevent_context *ev,
                                   struct resp_ctx *rctx,
@@ -396,6 +443,11 @@ char *sss_resp_create_fqname(TALLOC_CTX *mem_ctx,
                              const char *orig_name);
 
 errno_t sss_resp_populate_cr_domains(struct resp_ctx *rctx);
+
+const char *
+sss_resp_get_shell_override(struct ldb_message *msg,
+                            struct resp_ctx *rctx,
+                            struct sss_domain_info *domain);
 
 /**
  * Helper functions to format output names

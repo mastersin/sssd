@@ -39,7 +39,7 @@
 
 
 /* The following two functions are copied from NSS's lib/certdb/secname.c
- * becasue CERT_AddAVA is not exported. I just renamed it and made it static
+ * because CERT_AddAVA is not exported. I just renamed it and made it static
  * to avoid issues if the call gets exported some time in future. */
 
 static void **
@@ -127,7 +127,7 @@ static int get_extended_key_usage_oids(TALLOC_CTX *mem_ctx,
 
     for (c = 0; (oids != NULL && oids[c] != NULL); c++) {
         tmp_str = CERT_GetOidString(oids[c]);
-        /* is it expexted that NSS OID strings start with "OID." but we
+        /* it is expected that NSS OID strings start with "OID." but we
          * prefer the plain dotted-decimal version so the prefix is skipped */
         if (tmp_str == NULL || strncmp(tmp_str, "OID.", 4) != 0) {
             PR_smprintf_free(tmp_str);
@@ -176,7 +176,7 @@ static int get_rdn_str(TALLOC_CTX *mem_ctx, CERTAVA **avas,
     }
 
 
-    /* Multiple AVAs should be avoided becasue there is no general ordering
+    /* Multiple AVAs should be avoided because there is no general ordering
      * rule and the RDN strings are not reproducible */
     for (c = 0; avas[c] != NULL; c++) {
         rv = sss_CERT_AddAVA(arena, &rdn, avas[c]);
@@ -278,38 +278,6 @@ enum san_opt nss_name_type_to_san_opt(CERTGeneralNameType type)
     }
 }
 
-static int add_to_san_list(TALLOC_CTX *mem_ctx, bool is_bin,
-                           enum san_opt san_opt, uint8_t *data, size_t len,
-                           struct san_list **item)
-{
-    struct san_list *i;
-
-    if (data == NULL || len == 0 || san_opt == SAN_INVALID) {
-        return EINVAL;
-    }
-
-    i = talloc_zero(mem_ctx, struct san_list);
-    if (i == NULL) {
-        return ENOMEM;
-    }
-
-    i->san_opt = san_opt;
-    if (is_bin) {
-        i->bin_val = talloc_memdup(i, data, len);
-        i->bin_val_len = len;
-    } else {
-        i->val = talloc_strndup(i, (char *) data, len);
-    }
-    if (i->val == NULL) {
-        talloc_free(i);
-        return ENOMEM;
-    }
-
-    *item = i;
-
-    return 0;
-}
-
 /* taken from pkinit_crypto_nss.c of MIT Kerberos */
 /* KerberosString: RFC 4120, 5.2.1. */
 static const SEC_ASN1Template kerberos_string_template[] = {
@@ -397,9 +365,6 @@ static const SEC_ASN1Template kerberos_principal_name_template[] = {
     {0, 0, NULL, 0}
 };
 
-#define PKINIT_OID "1.3.6.1.5.2.2"
-#define NT_PRINCIPAL_OID "1.3.6.1.4.1.311.20.2.3"
-
 static int add_string_other_name_to_san_list(TALLOC_CTX *mem_ctx,
                                              enum san_opt san_opt,
                                              CERTGeneralName *current,
@@ -410,7 +375,7 @@ static int add_string_other_name_to_san_list(TALLOC_CTX *mem_ctx,
     char *tmp_str;
 
     tmp_str = CERT_GetOidString(&(current->name.OthName.oid));
-    /* is it expexted that NSS OID strings start with "OID." but we
+    /* it is expected that NSS OID strings start with "OID." but we
      * prefer the plain dotted-decimal version so the prefix is skipped */
     if (tmp_str == NULL || strncmp(tmp_str, "OID.", 4) != 0) {
         PR_smprintf_free(tmp_str);
@@ -449,31 +414,6 @@ done:
     }
 
     return ret;
-}
-
-static int get_short_name(TALLOC_CTX *mem_ctx, const char *full_name,
-                          char delim, char **short_name)
-{
-    char *at;
-    char *s;
-
-    if (full_name == NULL || delim == '\0' || short_name == NULL) {
-        return EINVAL;
-    }
-
-    at = strchr(full_name, delim);
-    if (at != NULL) {
-        s = talloc_strndup(mem_ctx, full_name, (at - full_name));
-    } else {
-        s = talloc_strdup(mem_ctx, full_name);
-    }
-    if (s == NULL) {
-        return ENOMEM;
-    }
-
-    *short_name = s;
-
-    return 0;
 }
 
 static int add_nt_princ_to_san_list(TALLOC_CTX *mem_ctx,
@@ -532,9 +472,15 @@ static int add_pkinit_princ_to_san_list(TALLOC_CTX *mem_ctx,
 {
     struct san_list *i = NULL;
     SECStatus rv;
+    /* To avoid 'Wmissing-braces' warnings with older versions of
+     * gcc kerberos_principal_name cannot be initialized with { 0 }
+     * but must be initialized with memset().
+     */
     struct kerberos_principal_name kname;
     int ret;
     size_t c;
+
+    memset(&kname, 0, sizeof(kname));
 
     rv = SEC_ASN1DecodeItem(pool, &kname,
                             kerberos_principal_name_template,
@@ -571,9 +517,9 @@ static int add_pkinit_princ_to_san_list(TALLOC_CTX *mem_ctx,
                 goto done;
             }
         }
-        i->val = talloc_strndup_append(i->val,
-                                             (char *) kname.realm.data,
-                                             kname.realm.len);
+        i->val = talloc_asprintf_append(i->val, "@%.*s",
+                                             kname.realm.len,
+                                             (char *) kname.realm.data);
         if (i->val == NULL) {
             ret = ENOMEM;
             goto done;
@@ -606,7 +552,7 @@ static int add_oid_to_san_list(TALLOC_CTX *mem_ctx,
     char *tmp_str;
 
     tmp_str = CERT_GetOidString(&oid);
-    /* is it expexted that NSS OID strings start with "OID." but we
+    /* it is expected that NSS OID strings start with "OID." but we
      * prefer the plain dotted-decimal version so the prefix is skipped */
     if (tmp_str == NULL || strncmp(tmp_str, "OID.", 4) != 0) {
         PR_smprintf_free(tmp_str);
@@ -705,42 +651,6 @@ static int add_ip_to_san_list(TALLOC_CTX *mem_ctx, enum san_opt san_opt,
 
     *item = i;
     return 0;
-}
-static int add_principal_to_san_list(TALLOC_CTX *mem_ctx,
-                                     enum san_opt san_opt,
-                                     const char *princ,
-                                     struct san_list **item)
-{
-    struct san_list *i = NULL;
-    int ret;
-
-    i = talloc_zero(mem_ctx, struct san_list);
-    if (i == NULL) {
-        return ENOMEM;
-    }
-    i->san_opt = san_opt;
-
-    i->val = talloc_strdup(i, princ);
-    if (i->val == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
-
-    ret = get_short_name(i, i->val, '@', &(i->short_name));
-    if (ret != 0) {
-        goto done;
-    }
-
-    ret = 0;
-
-done:
-    if (ret == 0) {
-        *item = i;
-    } else {
-        talloc_free(i);
-    }
-
-    return ret;
 }
 
 static int get_san(TALLOC_CTX *mem_ctx, CERTCertificate *cert,
@@ -887,6 +797,7 @@ static int get_san(TALLOC_CTX *mem_ctx, CERTCertificate *cert,
             break;
         default:
             ret = EINVAL;
+            goto done;
         }
 
         current = CERT_GetNextGeneralName(current);

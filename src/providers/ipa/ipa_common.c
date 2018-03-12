@@ -134,9 +134,6 @@ static errno_t ipa_parse_search_base(TALLOC_CTX *mem_ctx,
     case IPA_HBAC_SEARCH_BASE:
         class_name = "IPA_HBAC";
         break;
-    case IPA_HOST_SEARCH_BASE:
-        class_name = "IPA_HOST";
-        break;
     case IPA_SELINUX_SEARCH_BASE:
         class_name = "IPA_SELINUX";
         break;
@@ -151,6 +148,9 @@ static errno_t ipa_parse_search_base(TALLOC_CTX *mem_ctx,
         break;
     case IPA_VIEWS_SEARCH_BASE:
         class_name = "IPA_VIEWS";
+        break;
+    case IPA_DESKPROFILE_SEARCH_BASE:
+        class_name = "IPA_DESKPROFILE";
         break;
     default:
         DEBUG(SSSDBG_CONF_SETTINGS,
@@ -333,23 +333,27 @@ int ipa_get_id_options(struct ipa_options *ipa_opts,
                                  &ipa_opts->id->sdom->netgroup_search_bases);
     if (ret != EOK) goto done;
 
-    if (NULL == dp_opt_get_string(ipa_opts->basic,
-                                  IPA_HOST_SEARCH_BASE)) {
-        ret = dp_opt_set_string(ipa_opts->basic, IPA_HOST_SEARCH_BASE,
-                                dp_opt_get_string(ipa_opts->id->basic,
-                                                  SDAP_SEARCH_BASE));
+    if (NULL == dp_opt_get_string(ipa_opts->id->basic,
+                                  SDAP_HOST_SEARCH_BASE)) {
+
+        value = dp_opt_get_string(ipa_opts->basic, IPA_HOST_SEARCH_BASE);
+        if (!value) {
+            value = dp_opt_get_string(ipa_opts->id->basic, SDAP_SEARCH_BASE);
+        }
+
+        ret = dp_opt_set_string(ipa_opts->id->basic, SDAP_HOST_SEARCH_BASE,
+                                value);
         if (ret != EOK) {
             goto done;
         }
 
         DEBUG(SSSDBG_CONF_SETTINGS, "Option %s set to %s\n",
-                  ipa_opts->basic[IPA_HOST_SEARCH_BASE].opt_name,
-                  dp_opt_get_string(ipa_opts->basic,
-                                    IPA_HOST_SEARCH_BASE));
+              ipa_opts->id->basic[SDAP_HOST_SEARCH_BASE].opt_name,
+              value);
     }
-    ret = ipa_parse_search_base(ipa_opts->basic, ipa_opts->basic,
-                                IPA_HOST_SEARCH_BASE,
-                                &ipa_opts->host_search_bases);
+    ret = sdap_parse_search_base(ipa_opts->id->basic, ipa_opts->id->basic,
+                                 SDAP_HOST_SEARCH_BASE,
+                                 &ipa_opts->id->sdom->host_search_bases);
     if (ret != EOK) goto done;
 
     if (NULL == dp_opt_get_string(ipa_opts->basic,
@@ -396,6 +400,29 @@ int ipa_get_id_options(struct ipa_options *ipa_opts,
     ret = ipa_parse_search_base(ipa_opts->basic, ipa_opts->basic,
                                 IPA_SELINUX_SEARCH_BASE,
                                 &ipa_opts->selinux_search_bases);
+    if (ret != EOK) goto done;
+
+    if (NULL == dp_opt_get_string(ipa_opts->basic,
+                                  IPA_DESKPROFILE_SEARCH_BASE)) {
+        value = talloc_asprintf(tmpctx, "cn=desktop-profile,%s", basedn);
+        if (!value) {
+            ret = ENOMEM;
+            goto done;
+        }
+
+        ret = dp_opt_set_string(ipa_opts->basic, IPA_DESKPROFILE_SEARCH_BASE, value);
+        if (ret != EOK) {
+            goto done;
+        }
+
+        DEBUG(SSSDBG_TRACE_FUNC, "Option %s set to %s\n",
+                  ipa_opts->basic[IPA_DESKPROFILE_SEARCH_BASE].opt_name,
+                  dp_opt_get_string(ipa_opts->basic,
+                                    IPA_DESKPROFILE_SEARCH_BASE));
+    }
+    ret = ipa_parse_search_base(ipa_opts->basic, ipa_opts->basic,
+                                IPA_DESKPROFILE_SEARCH_BASE,
+                                &ipa_opts->deskprofile_search_bases);
     if (ret != EOK) goto done;
 
     value = dp_opt_get_string(ipa_opts->id->basic, SDAP_DEREF);
@@ -566,8 +593,8 @@ int ipa_get_id_options(struct ipa_options *ipa_opts,
     ret = sdap_get_map(ipa_opts->id,
                        cdb, conf_path,
                        ipa_host_map,
-                       IPA_OPTS_HOST,
-                       &ipa_opts->host_map);
+                       SDAP_OPTS_HOST,
+                       &ipa_opts->id->host_map);
     if (ret != EOK) {
         goto done;
     }
@@ -1193,4 +1220,47 @@ errno_t ipa_get_dyndns_options(struct be_ctx *be_ctx,
     }
 
     return EOK;
+}
+
+errno_t ipa_get_host_attrs(struct dp_option *ipa_options,
+                           size_t host_count,
+                           struct sysdb_attrs **hosts,
+                           struct sysdb_attrs **_ipa_host)
+{
+    const char *ipa_hostname;
+    const char *hostname;
+    errno_t ret;
+
+    *_ipa_host = NULL;
+    ipa_hostname = dp_opt_get_cstring(ipa_options, IPA_HOSTNAME);
+    if (ipa_hostname == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Missing ipa_hostname, this should never happen.\n");
+        ret = EINVAL;
+        goto done;
+    }
+
+    for (size_t i = 0; i < host_count; i++) {
+        ret = sysdb_attrs_get_string(hosts[i], SYSDB_FQDN, &hostname);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Could not locate IPA host\n");
+            goto done;
+        }
+
+        if (strcasecmp(hostname, ipa_hostname) == 0) {
+            *_ipa_host = hosts[i];
+            break;
+        }
+    }
+
+    if (*_ipa_host == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Could not locate IPA host\n");
+        ret = EINVAL;
+        goto done;
+    }
+
+    ret = EOK;
+
+done:
+    return ret;
 }

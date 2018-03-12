@@ -86,7 +86,7 @@ memcache_delete_entry_by_id(struct nss_ctx *nss_ctx,
     return ret;
 }
 
-static errno_t
+errno_t
 memcache_delete_entry(struct nss_ctx *nss_ctx,
                       struct resp_ctx *rctx,
                       struct sss_domain_info *domain,
@@ -125,6 +125,12 @@ memcache_delete_entry(struct nss_ctx *nss_ctx,
                       name, dom->name);
                 continue;
             }
+        } else if (id == 0) {
+            /*
+             * As "root" is not handled by SSSD, let's just return EOK here
+             * instead of erroring out.
+             */
+            return EOK;
         } else if (id != 0) {
             ret = memcache_delete_entry_by_id(nss_ctx, id, type);
             if (ret != EOK) {

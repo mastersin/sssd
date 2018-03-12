@@ -34,7 +34,7 @@
 
 #include "util/util.h"
 #include "util/sss_utf8.h"
-#include "util/murmurhash3.h"
+#include "shared/murmurhash3.h"
 #include "tests/common_check.h"
 
 #define FILENAME_TEMPLATE "tests-atomicio-XXXXXX"
@@ -1208,7 +1208,7 @@ int main(int argc, const char *argv[])
         POPT_TABLEEND
     };
 
-    /* Set debug level to invalid value so we can deside if -d 0 was used. */
+    /* Set debug level to invalid value so we can decide if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
 
     pc = poptGetContext(argv[0], argc, argv, long_options, 0);

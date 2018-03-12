@@ -24,6 +24,25 @@ static int invoke_ss_method(struct sbus_request *dbus_req, void *function_ptr);
 /* invokes a handler with a 'ssu' DBus signature */
 static int invoke_ssu_method(struct sbus_request *dbus_req, void *function_ptr);
 
+/* arguments for org.freedesktop.sssd.infopipe.Ping */
+const struct sbus_arg_meta iface_ifp_Ping__in[] = {
+    { "ping", "s" },
+    { NULL, }
+};
+
+/* arguments for org.freedesktop.sssd.infopipe.Ping */
+const struct sbus_arg_meta iface_ifp_Ping__out[] = {
+    { "pong", "s" },
+    { NULL, }
+};
+
+int iface_ifp_Ping_finish(struct sbus_request *req, const char *arg_pong)
+{
+   return sbus_request_return_and_finish(req,
+                                         DBUS_TYPE_STRING, &arg_pong,
+                                         DBUS_TYPE_INVALID);
+}
+
 /* arguments for org.freedesktop.sssd.infopipe.ListComponents */
 const struct sbus_arg_meta iface_ifp_ListComponents__out[] = {
     { "components", "ao" },
@@ -182,10 +201,10 @@ int iface_ifp_ListDomains_finish(struct sbus_request *req, const char *arg_domai
 const struct sbus_method_meta iface_ifp__methods[] = {
     {
         "Ping", /* name */
-        NULL, /* no in_args */
-        NULL, /* no out_args */
+        iface_ifp_Ping__in,
+        iface_ifp_Ping__out,
         offsetof(struct iface_ifp, Ping),
-        NULL, /* no invoker */
+        invoke_s_method,
     },
     {
         "ListComponents", /* name */
@@ -533,6 +552,12 @@ int iface_ifp_domains_domain_ListServers_finish(struct sbus_request *req, const 
                                          DBUS_TYPE_INVALID);
 }
 
+int iface_ifp_domains_domain_RefreshAccessRules_finish(struct sbus_request *req)
+{
+   return sbus_request_return_and_finish(req,
+                                         DBUS_TYPE_INVALID);
+}
+
 /* methods for org.freedesktop.sssd.infopipe.Domains.Domain */
 const struct sbus_method_meta iface_ifp_domains_domain__methods[] = {
     {
@@ -562,6 +587,13 @@ const struct sbus_method_meta iface_ifp_domains_domain__methods[] = {
         iface_ifp_domains_domain_ListServers__out,
         offsetof(struct iface_ifp_domains_domain, ListServers),
         invoke_s_method,
+    },
+    {
+        "RefreshAccessRules", /* name */
+        NULL, /* no in_args */
+        NULL, /* no out_args */
+        offsetof(struct iface_ifp_domains_domain, RefreshAccessRules),
+        NULL, /* no invoker */
     },
     { NULL, }
 };

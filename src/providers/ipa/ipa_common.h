@@ -42,7 +42,7 @@ enum ipa_basic_opt {
     IPA_BACKUP_SERVER,
     IPA_HOSTNAME,
     IPA_HBAC_SEARCH_BASE,
-    IPA_HOST_SEARCH_BASE,
+    IPA_HOST_SEARCH_BASE, /* only used if ldap_host_search_base is not set */
     IPA_SELINUX_SEARCH_BASE,
     IPA_SUBDOMAINS_SEARCH_BASE,
     IPA_MASTER_DOMAIN_SEARCH_BASE,
@@ -56,6 +56,9 @@ enum ipa_basic_opt {
     IPA_SERVER_MODE,
     IPA_VIEWS_SEARCH_BASE,
     IPA_KRB5_CONFD_PATH,
+    IPA_DESKPROFILE_SEARCH_BASE,
+    IPA_DESKPROFILE_REFRESH,
+    IPA_DESKPROFILE_REQUEST_INTERVAL,
 
     IPA_OPTS_BASIC /* opts counter */
 };
@@ -72,18 +75,6 @@ enum ipa_netgroup_attrs {
     IPA_AT_NETGROUP_UUID,
 
     IPA_OPTS_NETGROUP /* attrs counter */
-};
-
-enum ipa_host_attrs {
-    IPA_OC_HOST = 0,
-    IPA_AT_HOST_NAME,
-    IPA_AT_HOST_FQDN,
-    IPA_AT_HOST_SERVERHOSTNAME,
-    IPA_AT_HOST_MEMBER_OF,
-    IPA_AT_HOST_SSH_PUBLIC_KEY,
-    IPA_AT_HOST_UUID,
-
-    IPA_OPTS_HOST /* attrs counter */
 };
 
 enum ipa_hostgroup_attrs {
@@ -205,19 +196,18 @@ struct ipa_id_ctx {
 struct ipa_options {
     struct dp_option *basic;
 
-    struct sdap_attr_map *host_map;
     struct sdap_attr_map *hostgroup_map;
     struct sdap_attr_map *selinuxuser_map;
     struct sdap_attr_map *view_map;
     struct sdap_attr_map *override_map;
 
-    struct sdap_search_base **host_search_bases;
     struct sdap_search_base **hbac_search_bases;
     struct sdap_search_base **selinux_search_bases;
     struct sdap_search_base **subdomains_search_bases;
     struct sdap_search_base **master_domain_search_bases;
     struct sdap_search_base **ranges_search_bases;
     struct sdap_search_base **views_search_bases;
+    struct sdap_search_base **deskprofile_search_bases;
     struct ipa_service *service;
 
     /* id provider */
@@ -260,6 +250,11 @@ int ipa_get_autofs_options(struct ipa_options *ipa_opts,
 errno_t ipa_get_dyndns_options(struct be_ctx *be_ctx,
                                struct ipa_options *ctx);
 
+errno_t ipa_hostid_init(TALLOC_CTX *mem_ctx,
+                        struct be_ctx *be_ctx,
+                        struct ipa_id_ctx *id_ctx,
+                        struct dp_method *dp_methods);
+
 errno_t ipa_autofs_init(TALLOC_CTX *mem_ctx,
                         struct be_ctx *be_ctx,
                         struct ipa_id_ctx *id_ctx,
@@ -292,4 +287,10 @@ errno_t ipa_idmap_init(TALLOC_CTX *mem_ctx,
 
 
 struct krb5_ctx *ipa_init_get_krb5_auth_ctx(void *data);
+
+errno_t ipa_get_host_attrs(struct dp_option *ipa_options,
+                           size_t host_count,
+                           struct sysdb_attrs **hosts,
+                           struct sysdb_attrs **_ipa_host);
+
 #endif /* _IPA_COMMON_H_ */

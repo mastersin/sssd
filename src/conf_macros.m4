@@ -155,7 +155,7 @@ AC_DEFUN([WITH_SYSLOG],
      test x"$with_syslog" = xjournald; then
         syslog=$with_syslog
   else
-      AC_MSG_ERROR([Uknown syslog type, supported types are syslog and journald])
+      AC_MSG_ERROR([Unknown syslog type, supported types are syslog and journald])
   fi
 
   AM_CONDITIONAL([WITH_JOURNALD], [test x"$syslog" = xjournald])
@@ -263,7 +263,7 @@ AC_DEFUN([WITH_XML_CATALOG],
 AC_DEFUN([WITH_KRB5_PLUGIN_PATH],
   [ AC_ARG_WITH([krb5-plugin-path],
                 [AC_HELP_STRING([--with-krb5-plugin-path=PATH],
-                                [Path to kerberos plugin store [/usr/lib/krb5/plugins/libkrb5]]
+                                [Path to Kerberos plugin store [/usr/lib/krb5/plugins/libkrb5]]
                                )
                 ]
                )
@@ -350,7 +350,7 @@ AC_DEFUN([WITH_DEFAULT_CCNAME_TEMPLATE],
 AC_DEFUN([WITH_KRB5AUTHDATA_PLUGIN_PATH],
   [ AC_ARG_WITH([krb5authdata-plugin-path],
                 [AC_HELP_STRING([--with-krb5authdata-plugin-path=PATH],
-                                [Path to kerberos authdata plugin store [/usr/lib/krb5/plugins/authdata]]
+                                [Path to Kerberos authdata plugin store [/usr/lib/krb5/plugins/authdata]]
                                )
                 ]
                )
@@ -592,6 +592,22 @@ AC_DEFUN([WITH_NOLOGIN_SHELL],
     AC_DEFINE_UNQUOTED(NOLOGIN_SHELL, "$nologin_shell", [The shell used to deny access to users])
   ])
 
+AC_DEFUN([WITH_SESSION_RECORDING_SHELL],
+  [ AC_ARG_WITH([session-recording-shell],
+                [AC_HELP_STRING([--with-session-recording-shell=PATH],
+                                [The shell used to record user sessions [/usr/bin/tlog-rec-session]]
+                               )
+                ]
+               )
+    session_recording_shell="/usr/bin/tlog-rec-session"
+    if test x"$with_session_recording_shell" != x; then
+        session_recording_shell=$with_session_recording_shell
+    fi
+    AC_SUBST(session_recording_shell)
+    AC_DEFINE_UNQUOTED(SESSION_RECORDING_SHELL, "$session_recording_shell",
+                       [The shell used to record user sessions])
+  ])
+
 AC_ARG_ENABLE([all-experimental-features],
               [AS_HELP_STRING([--enable-all-experimental-features],
                               [build all experimental features])],
@@ -602,7 +618,7 @@ AC_ARG_ENABLE([all-experimental-features],
 AC_DEFUN([WITH_UNICODE_LIB],
   [ AC_ARG_WITH([unicode-lib],
                 [AC_HELP_STRING([--with-unicode-lib=<library>],
-                                [Which library to use for unicode processing (libunistring, glib2) [glib2]]
+                                [Which library to use for Unicode processing (libunistring, glib2) [glib2]]
                                )
                 ]
                )
@@ -612,7 +628,7 @@ AC_DEFUN([WITH_UNICODE_LIB],
     fi
 
     if test x"$unicode_lib" != x"libunistring" -a x"$unicode_lib" != x"glib2"; then
-		AC_MSG_ERROR([Unsupported unicode library])
+		AC_MSG_ERROR([Unsupported Unicode library])
     fi
 
     AM_CONDITIONAL([WITH_LIBUNISTRING], test x"$unicode_lib" = x"libunistring")
@@ -727,10 +743,10 @@ AC_DEFUN([WITH_LIBWBCLIENT],
     if test x"$with_libwbclient" = xyes; then
         AC_DEFINE(BUILD_LIBWBCLIENT, 1, [whether to build SSSD implementation of libwbclient])
 
-        libwbclient_version="0.13"
+        libwbclient_version="0.14"
         AC_SUBST(libwbclient_version)
 
-        libwbclient_version_info="13:0:13"
+        libwbclient_version_info="14:0:14"
         AC_SUBST(libwbclient_version_info)
     fi
     AM_CONDITIONAL([BUILD_LIBWBCLIENT], [test x"$with_libwbclient" = xyes])
@@ -791,7 +807,7 @@ AC_DEFUN([WITH_NFS],
 AC_DEFUN([WITH_NFS_LIB_PATH],
   [ AC_ARG_WITH([nfs-lib-path],
                 [AC_HELP_STRING([--with-nfs-lib-path=<path>],
-                                [Path to the nfs library [${libdir}]]
+                                [Path to the NFS library [${libdir}]]
                                )
                 ]
                )

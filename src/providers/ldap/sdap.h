@@ -162,6 +162,7 @@ enum sdap_basic_opt {
     SDAP_GROUP_SEARCH_BASE,
     SDAP_GROUP_SEARCH_SCOPE,
     SDAP_GROUP_SEARCH_FILTER,
+    SDAP_HOST_SEARCH_BASE,
     SDAP_SERVICE_SEARCH_BASE,
     SDAP_SUDO_SEARCH_BASE,
     SDAP_SUDO_FULL_REFRESH_INTERVAL,
@@ -279,6 +280,7 @@ enum sdap_user_attrs {
     SDAP_AT_AD_USER_ACCOUNT_CONTROL,
     SDAP_AT_NS_ACCOUNT_LOCK,
     SDAP_AT_AUTHORIZED_HOST,
+    SDAP_AT_AUTHORIZED_RHOST,
     SDAP_AT_NDS_LOGIN_DISABLED,
     SDAP_AT_NDS_LOGIN_EXPIRATION_TIME,
     SDAP_AT_NDS_LOGIN_ALLOWED_TIME_MAP,
@@ -337,6 +339,18 @@ enum sdap_sudorule_attrs {
     SDAP_AT_SUDO_USN,
 
     SDAP_OPTS_SUDO  /* attrs counter */
+};
+
+enum sdap_host_attrs {
+    SDAP_OC_HOST = 0,
+    SDAP_AT_HOST_NAME,
+    SDAP_AT_HOST_FQDN,
+    SDAP_AT_HOST_SERVERHOSTNAME,
+    SDAP_AT_HOST_MEMBER_OF,
+    SDAP_AT_HOST_SSH_PUBLIC_KEY,
+    SDAP_AT_HOST_UUID,
+
+    SDAP_OPTS_HOST /* attrs counter */
 };
 
 enum sdap_service_attrs {
@@ -406,6 +420,7 @@ struct sdap_domain {
     struct sdap_search_base **user_search_bases;
     struct sdap_search_base **group_search_bases;
     struct sdap_search_base **netgroup_search_bases;
+    struct sdap_search_base **host_search_bases;
     struct sdap_search_base **sudo_search_bases;
     struct sdap_search_base **service_search_bases;
     struct sdap_search_base **autofs_search_bases;
@@ -446,6 +461,8 @@ struct sdap_ext_member_ctx {
     ext_member_recv_fn_t ext_member_resolve_recv;
 };
 
+struct sdap_certmap_ctx;
+
 struct sdap_options {
     struct dp_option *basic;
     struct sdap_attr_map *gen_map;
@@ -453,6 +470,7 @@ struct sdap_options {
     size_t user_map_cnt;
     struct sdap_attr_map *group_map;
     struct sdap_attr_map *netgroup_map;
+    struct sdap_attr_map *host_map;
     struct sdap_attr_map *service_map;
 
     /* ID-mapping support */
@@ -481,7 +499,7 @@ struct sdap_options {
     enum dc_functional_level dc_functional_level;
 
     /* Certificate mapping support */
-    struct sss_certmap_ctx *certmap_ctx;
+    struct sdap_certmap_ctx *sdap_certmap_ctx;
 };
 
 struct sdap_server_opts {
@@ -640,6 +658,10 @@ size_t sdap_steal_objects_in_dom(struct sdap_options *opts,
                                  struct sysdb_attrs **all_objects,
                                  size_t count,
                                  bool filter);
+
+struct sss_domain_info *sdap_get_object_domain(struct sdap_options *opts,
+                                               struct sysdb_attrs *obj,
+                                               struct sss_domain_info *dom);
 
 bool sdap_object_in_domain(struct sdap_options *opts,
                            struct sysdb_attrs *obj,

@@ -22,8 +22,9 @@
 #include "config.h"
 
 #include <stdio.h>
-#ifdef HAVE_SEMANAGE
+#if defined(HAVE_SEMANAGE) && defined(HAVE_SELINUX)
 #include <semanage/semanage.h>
+#include <selinux/selinux.h>
 #endif
 
 #include "util/util.h"
@@ -32,7 +33,7 @@
 #define DEFAULT_SERANGE "s0"
 #endif
 
-#ifdef HAVE_SEMANAGE
+#if defined(HAVE_SEMANAGE) && defined(HAVE_SELINUX)
 /* turn libselinux messages into SSSD DEBUG() calls */
 static void sss_semanage_error_callback(void *varg,
                                         semanage_handle_t *handle,
@@ -73,6 +74,26 @@ static void sss_semanage_close(semanage_handle_t *handle)
     semanage_handle_destroy(handle);
 }
 
+static int sss_is_selinux_managed(semanage_handle_t *handle)
+{
+    int ret;
+
+    if (handle == NULL) {
+        return EINVAL;
+    }
+
+    ret = semanage_is_managed(handle);
+    if (ret == 0) {
+        DEBUG(SSSDBG_TRACE_FUNC, "SELinux policy not managed via libsemanage\n");
+        return ERR_SELINUX_NOT_MANAGED;
+    } else if (ret == -1) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Call to semanage_is_managed failed\n");
+        return EIO;
+    }
+
+    return EOK;
+}
+
 static int sss_semanage_init(semanage_handle_t **_handle)
 {
     int ret;
@@ -89,14 +110,8 @@ static int sss_semanage_init(semanage_handle_t **_handle)
                               sss_semanage_error_callback,
                               NULL);
 
-    ret = semanage_is_managed(handle);
-    if (ret == 0) {
-        DEBUG(SSSDBG_TRACE_FUNC, "SELinux policy not managed via libsemanage\n");
-        ret = ERR_SELINUX_NOT_MANAGED;
-        goto done;
-    } else if (ret == -1) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Call to semanage_is_managed failed\n");
-        ret = EIO;
+    ret = sss_is_selinux_managed(handle);
+    if (ret != EOK) {
         goto done;
     }
 
@@ -229,8 +244,36 @@ done:
     return ret;
 }
 
-int set_seuser(const char *login_name, const char *seuser_name,
-               const char *mls)
+int sss_get_seuser(const char *linuxuser,
+                   char **selinuxuser,
+                   char **level)
+{
+    int ret;
+    semanage_handle_t *handle;
+
+    handle = semanage_handle_create();
+    if (handle == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Cannot create SELinux management handle\n");
+        return EIO;
+    }
+
+    semanage_msg_set_callback(handle,
+                              sss_semanage_error_callback,
+                              NULL);
+
+    /* We only needed the handle for this call. Close the handle right
+     * after it */
+    ret = sss_is_selinux_managed(handle);
+    sss_semanage_close(handle);
+    if (ret != EOK) {
+        return ret;
+    }
+
+    return getseuserbyname(linuxuser, selinuxuser, level);
+}
+
+int sss_set_seuser(const char *login_name, const char *seuser_name,
+                   const char *mls)
 {
     semanage_handle_t *handle = NULL;
     semanage_seuser_key_t *key = NULL;
@@ -303,7 +346,7 @@ done:
     return ret;
 }
 
-int del_seuser(const char *login_name)
+int sss_del_seuser(const char *login_name)
 {
     semanage_handle_t *handle = NULL;
     semanage_seuser_key_t *key = NULL;
@@ -382,87 +425,21 @@ done:
     sss_semanage_close(handle);
     return ret;
 }
-
-int get_seuser(TALLOC_CTX *mem_ctx, const char *login_name,
-               char **_seuser, char **_mls_range)
-{
-    errno_t ret;
-    const char *seuser;
-    const char *mls_range;
-    semanage_handle_t *sm_handle = NULL;
-    semanage_seuser_t *sm_user = NULL;
-    semanage_seuser_key_t *sm_key = NULL;
-
-    ret = sss_semanage_init(&sm_handle);
-    if (ret == ERR_SELINUX_NOT_MANAGED) {
-        goto done;
-    } else if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Cannot create SELinux handle\n");
-        goto done;
-    }
-
-    ret = semanage_seuser_key_create(sm_handle, login_name, &sm_key);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Cannot create key for %s\n", login_name);
-        ret = EIO;
-        goto done;
-    }
-
-    ret = semanage_seuser_query(sm_handle, sm_key, &sm_user);
-    if (ret < 0) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Cannot query for %s\n", login_name);
-        ret = EIO;
-        goto done;
-    }
-
-    seuser = semanage_seuser_get_sename(sm_user);
-    if (seuser != NULL) {
-        *_seuser = talloc_strdup(mem_ctx, seuser);
-        if (*_seuser == NULL) {
-            ret = ENOMEM;
-            goto done;
-        }
-        DEBUG(SSSDBG_OP_FAILURE,
-              "SELinux user for %s: %s\n", login_name, *_seuser);
-    } else {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Cannot get sename for %s\n", login_name);
-    }
-
-    mls_range = semanage_seuser_get_mlsrange(sm_user);
-    if (mls_range != NULL) {
-        *_mls_range = talloc_strdup(mem_ctx, mls_range);
-        if (*_mls_range == NULL) {
-            ret = ENOMEM;
-            goto done;
-        }
-        DEBUG(SSSDBG_OP_FAILURE,
-              "SELinux range for %s: %s\n", login_name, *_mls_range);
-    } else {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Cannot get mlsrange for %s\n", login_name);
-    }
-
-    ret = EOK;
-done:
-    semanage_seuser_key_free(sm_key);
-    semanage_seuser_free(sm_user);
-    sss_semanage_close(sm_handle);
-    return ret;
-}
-
-#else /* HAVE_SEMANAGE */
-int set_seuser(const char *login_name, const char *seuser_name,
-               const char *mls)
+#else /* HAVE_SEMANAGE && HAVE_SELINUX */
+int sss_set_seuser(const char *login_name, const char *seuser_name,
+                   const char *mls)
 {
     return EOK;
 }
 
-int del_seuser(const char *login_name)
+int sss_del_seuser(const char *login_name)
 {
     return EOK;
 }
 
-int get_seuser(TALLOC_CTX *mem_ctx, const char *login_name,
-               char **_seuser, char **_mls_range)
+int sss_get_seuser(const char *linuxuser,
+                   char **selinuxuser,
+                   char **level)
 {
     return EOK;
 }

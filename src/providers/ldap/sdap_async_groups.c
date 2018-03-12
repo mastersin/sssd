@@ -39,7 +39,7 @@ static int sdap_find_entry_by_origDN(TALLOC_CTX *memctx,
                                      bool *_is_group)
 {
     TALLOC_CTX *tmpctx;
-    const char *attrs[] = {SYSDB_OBJECTCLASS,  NULL};
+    const char *attrs[] = {SYSDB_OBJECTCLASS, SYSDB_OBJECTCATEGORY, NULL};
     struct ldb_dn *base_dn;
     char *filter;
     struct ldb_message **msgs;
@@ -90,11 +90,11 @@ static int sdap_find_entry_by_origDN(TALLOC_CTX *memctx,
     }
 
     if (_is_group != NULL) {
-        objectclass = ldb_msg_find_attr_as_string(msgs[0], SYSDB_OBJECTCLASS,
+        objectclass = ldb_msg_find_attr_as_string(msgs[0], SYSDB_OBJECTCATEGORY,
                                                   NULL);
         if (objectclass == NULL) {
-            DEBUG(SSSDBG_OP_FAILURE, "An antry without a %s?\n",
-                  SYSDB_OBJECTCLASS);
+            DEBUG(SSSDBG_OP_FAILURE, "An entry without a %s?\n",
+                  SYSDB_OBJECTCATEGORY);
             ret = EINVAL;
             goto done;
         }
@@ -122,7 +122,7 @@ sdap_get_members_with_primary_gid(TALLOC_CTX *mem_ctx,
     errno_t ret;
     char **localdn;
 
-    /* Don't search if the group is non-posix */
+    /* Don't search if the group is non-POSIX */
     if (!gid) return EOK;
 
     filter = talloc_asprintf(mem_ctx, "(%s=%llu)", SYSDB_GIDNUM,
@@ -177,7 +177,7 @@ sdap_dn_by_primary_gid(TALLOC_CTX *mem_ctx, struct sysdb_attrs *ldap_attrs,
                                    opts->group_map[SDAP_AT_GROUP_GID].sys_name,
                                    &gid);
     if (ret == ENOENT) {
-        /* Non-posix AD group. Skip. */
+        /* Non-POSIX AD group. Skip. */
         *_dn_list = NULL;
         *_count = 0;
         return EOK;
@@ -200,7 +200,7 @@ static bool has_member(struct ldb_message_element *member_el,
     val.data = (uint8_t *) member;
     val.length = strlen(member);
 
-    /* This is bad complexity, but the this loop should only be invoked in
+    /* This is bad complexity, but this loop should only be invoked in
      * the very rare scenario of AD POSIX group that is primary group of
      * some users but has user member attributes at the same time
      */
@@ -352,7 +352,7 @@ sdap_store_group_with_gid(struct sss_domain_info *domain,
 {
     errno_t ret;
 
-    /* make sure that non-posix (empty or explicit gid=0) groups have the
+    /* make sure that non-POSIX (empty or explicit gid=0) groups have the
      * gidNumber set to zero even if updating existing group */
     if (!posix_group) {
         ret = sysdb_attrs_add_uint32(group_attrs, SYSDB_GIDNUM, 0);
@@ -592,7 +592,7 @@ static int sdap_save_group(TALLOC_CTX *memctx,
         ret = sysdb_attrs_add_bool(group_attrs, SYSDB_POSIX, false);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE,
-                  "Error: Failed to mark group as non-posix!\n");
+                  "Error: Failed to mark group as non-POSIX!\n");
             goto done;
         }
     }
@@ -857,9 +857,9 @@ done:
     return ret;
 }
 
-/* ==Save-Group-Memebrs=================================================== */
+/* ==Save-Group-Members=================================================== */
 
-    /* FIXME: support non legacy */
+    /* FIXME: support non-legacy */
     /* FIXME: support storing additional attributes */
 
 static int sdap_save_grpmem(TALLOC_CTX *memctx,
@@ -880,6 +880,8 @@ static int sdap_save_grpmem(TALLOC_CTX *memctx,
     int ret;
     const char *remove_attrs[] = {SYSDB_MEMBER, SYSDB_ORIG_MEMBER, SYSDB_GHOST,
                                   NULL};
+    const char *check_dom;
+    const char *check_name;
 
     if (dom->ignore_group_members) {
         DEBUG(SSSDBG_CRIT_FAILURE,
@@ -905,6 +907,15 @@ static int sdap_save_grpmem(TALLOC_CTX *memctx,
         group_dom = sss_get_domain_by_sid_ldap_fallback(get_domains_head(dom),
                                                         group_sid);
         if (group_dom == NULL) {
+            ret = well_known_sid_to_name(group_sid, &check_dom, &check_name);
+            if (ret == EOK) {
+                DEBUG(SSSDBG_TRACE_FUNC,
+                      "Skipping group with SID [%s][%s\\%s] which is "
+                      "currently not handled by SSSD.\n",
+                      group_sid, check_dom, check_name);
+                return EOK;
+            }
+
             DEBUG(SSSDBG_TRACE_FUNC, "SID [%s] does not belong to any known "
                                      "domain, using [%s].\n", group_sid,
                                                               dom->name);
@@ -1597,7 +1608,7 @@ sdap_process_group_members_2307(struct sdap_process_group_state *state,
         if (member_attr_val[0] == '\0') continue;
 
         /* RFC2307 stores members as plain usernames in the member attribute.
-         * Internally, we use fqdns in the cache..
+         * Internally, we use FQDNs in the cache.
          */
         member_name = sss_create_internal_fqname(state, member_attr_val,
                                                  state->dom->name);
@@ -1715,7 +1726,7 @@ next:
                ret, strerror(ret));
         state->count--;
     }
-    /* Are there more searches for uncached users to submit ? */
+    /* Are there more searches for uncached users to submit? */
     if (state->queued_members && state->queued_members[state->queue_idx]) {
         subreq = sdap_get_generic_send(state,
                                        state->ev, state->opts, state->sh,
@@ -2498,14 +2509,12 @@ static errno_t sdap_nested_group_populate_users(TALLOC_CTX *mem_ctx,
     errno_t ret, sret;
     struct ldb_message_element *el;
     const char *username;
-    char *clean_orig_dn;
     const char *original_dn;
     struct sss_domain_info *user_dom;
     struct sdap_domain *sdap_dom;
 
     TALLOC_CTX *tmp_ctx;
     struct ldb_message **msgs;
-    char *filter;
     const char *sysdb_name;
     struct sysdb_attrs *attrs;
     static const char *search_attrs[] = { SYSDB_NAME, NULL };
@@ -2553,14 +2562,6 @@ static errno_t sdap_nested_group_populate_users(TALLOC_CTX *mem_ctx,
         }
         original_dn = (const char *) el->values[0].data;
 
-        ret = sss_filter_sanitize(tmp_ctx, original_dn,
-                                  &clean_orig_dn);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "Cannot sanitize originalDN [%s]\n", original_dn);
-            goto done;
-        }
-
         sdap_dom = sdap_domain_get_by_dn(opts, original_dn);
         user_dom = sdap_dom == NULL ? domain : sdap_dom->dom;
 
@@ -2573,19 +2574,10 @@ static errno_t sdap_nested_group_populate_users(TALLOC_CTX *mem_ctx,
         }
 
         /* Check for the specified origDN in the sysdb */
-        filter = talloc_asprintf(tmp_ctx, "(%s=%s)",
-                                 SYSDB_ORIG_DN,
-                                 clean_orig_dn);
-        if (!filter) {
-            ret = ENOMEM;
-            goto done;
-        }
         PROBE(SDAP_NESTED_GROUP_POPULATE_SEARCH_USERS_PRE);
-        ret = sysdb_search_users(tmp_ctx, user_dom, filter,
-                                 search_attrs, &count, &msgs);
+        ret = sysdb_search_users_by_orig_dn(tmp_ctx, user_dom, original_dn,
+                                            search_attrs, &count, &msgs);
         PROBE(SDAP_NESTED_GROUP_POPULATE_SEARCH_USERS_POST);
-        talloc_zfree(filter);
-        talloc_zfree(clean_orig_dn);
         if (ret != EOK && ret != ENOENT) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Error checking cache for user entry\n");
             goto done;

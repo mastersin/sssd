@@ -148,7 +148,7 @@ bool sssctl_start_sssd(bool force)
     enum sssctl_prompt_result prompt;
     errno_t ret;
 
-    if (sss_deamon_running()) {
+    if (sss_daemon_running()) {
         return true;
     }
 
@@ -187,7 +187,7 @@ bool sssctl_stop_sssd(bool force)
     enum sssctl_prompt_result prompt;
     errno_t ret;
 
-    if (!sss_deamon_running()) {
+    if (!sss_daemon_running()) {
         return true;
     }
 
@@ -264,6 +264,7 @@ int main(int argc, const char **argv)
         SSS_TOOL_COMMAND("domain-list", "List available domains", 0, sssctl_domain_list),
         SSS_TOOL_COMMAND("domain-status", "Print information about domain", 0, sssctl_domain_status),
         SSS_TOOL_COMMAND("user-checks", "Print information about a user and check authentication", 0, sssctl_user_checks),
+        SSS_TOOL_COMMAND("access-report", "Generate access report for a domain", 0, sssctl_access_report),
         SSS_TOOL_DELIMITER("Information about cached content:"),
         SSS_TOOL_COMMAND("user-show", "Information about cached user", 0, sssctl_user_show),
         SSS_TOOL_COMMAND("group-show", "Information about cached group", 0, sssctl_group_show),
@@ -273,9 +274,11 @@ int main(int argc, const char **argv)
         SSS_TOOL_COMMAND("client-data-restore", "Restore local data from backup", 0, sssctl_client_data_restore),
         SSS_TOOL_COMMAND("cache-remove", "Backup local data and remove cached content", 0, sssctl_cache_remove),
         SSS_TOOL_COMMAND("cache-upgrade", "Perform cache upgrade", ERR_SYSDB_VERSION_TOO_OLD, sssctl_cache_upgrade),
+        SSS_TOOL_COMMAND("cache-expire", "Invalidate cached objects", 0, sssctl_cache_expire),
         SSS_TOOL_DELIMITER("Log files tools:"),
         SSS_TOOL_COMMAND("logs-remove", "Remove existing SSSD log files", 0, sssctl_logs_remove),
         SSS_TOOL_COMMAND("logs-fetch", "Archive SSSD log files in tarball", 0, sssctl_logs_fetch),
+        SSS_TOOL_COMMAND("debug-level", "Change SSSD debug level", 0, sssctl_debug_level),
 #ifdef HAVE_LIBINI_CONFIG_V1_3
         SSS_TOOL_DELIMITER("Configuration files tools:"),
         SSS_TOOL_COMMAND_FLAGS("config-check", "Perform static analysis of SSSD configuration", 0, sssctl_config_check, SSS_TOOL_FLAG_SKIP_CMD_INIT),

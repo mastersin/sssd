@@ -676,7 +676,7 @@ static void test_get_next_domain_flags(void **state)
     dom = get_next_domain(dom, gnd_flags);
     assert_null(dom);
 
-    /* Descend flag onlyl; all doms enabled  */
+    /* Descend flag only; all doms enabled */
     gnd_flags = SSS_GND_DESCEND;
 
     dom = get_next_domain(test_ctx->dom_list, gnd_flags);
@@ -708,7 +708,7 @@ static void test_get_next_domain_flags(void **state)
     dom = get_next_domain(dom, gnd_flags);
     assert_null(dom);
 
-    /* Descend and inculude disabled; all doms enabled */
+    /* Descend and include disabled; all doms enabled */
     gnd_flags = SSS_GND_DESCEND | SSS_GND_INCLUDE_DISABLED;
 
     dom = get_next_domain(test_ctx->dom_list, gnd_flags);
@@ -745,7 +745,7 @@ static void test_get_next_domain_flags(void **state)
     dom = get_next_domain(test_ctx->dom_list, gnd_flags);
     assert_null(dom);
 
-    /* Descend flag onlyl; dom2 and sub2a disabled  */
+    /* Descend flag only; dom2 and sub2a disabled */
     gnd_flags = SSS_GND_DESCEND;
 
     dom = get_next_domain(test_ctx->dom_list, gnd_flags);
@@ -769,7 +769,7 @@ static void test_get_next_domain_flags(void **state)
     dom = get_next_domain(dom, gnd_flags);
     assert_null(dom);
 
-    /* Descend and inculude disabled; dom2 and sub2a disabled */
+    /* Descend and include disabled; dom2 and sub2a disabled */
     gnd_flags = SSS_GND_DESCEND | SSS_GND_INCLUDE_DISABLED;
 
     dom = get_next_domain(test_ctx->dom_list, gnd_flags);
@@ -1350,16 +1350,16 @@ void test_sss_write_krb5_conf_snippet(void **state)
     char *file;
     char *file_krb5_libdefaults;
 
-    ret = sss_write_krb5_conf_snippet(NULL, false);
+    ret = sss_write_krb5_conf_snippet(NULL, false, false);
     assert_int_equal(ret, EINVAL);
 
-    ret = sss_write_krb5_conf_snippet("abc", false);
+    ret = sss_write_krb5_conf_snippet("abc", false, false);
     assert_int_equal(ret, EINVAL);
 
-    ret = sss_write_krb5_conf_snippet("", false);
+    ret = sss_write_krb5_conf_snippet("", false, false);
     assert_int_equal(ret, EOK);
 
-    ret = sss_write_krb5_conf_snippet("none", false);
+    ret = sss_write_krb5_conf_snippet("none", false, false);
     assert_int_equal(ret, EOK);
 
     cwd = getcwd(buf, PATH_MAX);
@@ -1375,11 +1375,11 @@ void test_sss_write_krb5_conf_snippet(void **state)
                    "%s/%s/krb5_libdefaults", cwd, TESTS_PATH);
     assert_true(ret > 0);
 
-    ret = sss_write_krb5_conf_snippet(path, true);
+    ret = sss_write_krb5_conf_snippet(path, true, true);
     assert_int_equal(ret, EOK);
 
     /* Check if writing a second time will work as well */
-    ret = sss_write_krb5_conf_snippet(path, true);
+    ret = sss_write_krb5_conf_snippet(path, true, true);
     assert_int_equal(ret, EOK);
 
 #ifdef HAVE_KRB5_LOCALAUTH_PLUGIN
@@ -1968,7 +1968,7 @@ int main(int argc, const char *argv[])
                                         teardown_dom_list),
     };
 
-    /* Set debug level to invalid value so we can deside if -d 0 was used. */
+    /* Set debug level to invalid value so we can decide if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
 
     pc = poptGetContext(argv[0], argc, argv, long_options, 0);
@@ -1986,7 +1986,7 @@ int main(int argc, const char *argv[])
     DEBUG_CLI_INIT(debug_level);
 
     /* Even though normally the tests should clean up after themselves
-     * they might not after a failed run. Remove the old db to be sure */
+     * they might not after a failed run. Remove the old DB to be sure */
     tests_set_cwd();
     test_dom_suite_cleanup(TESTS_PATH, TEST_CONF_DB, TEST_DOM_NAME);
     test_dom_suite_setup(TESTS_PATH);

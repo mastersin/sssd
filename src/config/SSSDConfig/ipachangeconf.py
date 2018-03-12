@@ -50,7 +50,7 @@ def openLocked(filename, perms, create = True):
     #TODO: put section delimiters as separating element of the list
     #      so that we can process multiple sections in one go
     #TODO: add a comment all but provided options as a section option
-class IPAChangeConf:
+class IPAChangeConf(object):
 
     def __init__(self, name):
         self.progname = name
@@ -340,7 +340,7 @@ class IPAChangeConf:
         #First we create a new opts tree from oldopts removing/commenting
         #  the options as indicated by the contents of newopts
         #Second we fill in the new opts tree with options as indicated
-        #  in the newopts tree (this is becaus eentire (sub)sections may
+        #  in the newopts tree (this is because entire (sub)sections may
         #  exist in the newopts that do not exist in oldopts)
 
         opts = self.mergeOld(oldopts, newopts)
@@ -456,7 +456,7 @@ class IPAChangeConf:
 
             f = openLocked(file, 0o644)
 
-            # Trunkate
+            # Truncate
             f.seek(0)
             f.truncate(0)
 
@@ -471,14 +471,14 @@ class IPAChangeConf:
                 pass
         return True
 
-# A SSSD-specific subclass of IPAChangeConf
+# An SSSD-specific subclass of IPAChangeConf
 class SSSDChangeConf(IPAChangeConf):
     OPTCRE = re.compile(
             r'(?P<option>[^:=\s][^:=]*)'          # very permissive!
             r'\s*=\s*'                            # any number of space/tab,
                                                   # followed by separator
                                                   # followed by any # space/tab
-            r'(?P<value>.*)$'                     # everything up to eol
+            r'(?P<value>.*)$'                     # everything up to EOL
             )
 
     def __init__(self):
@@ -489,7 +489,7 @@ class SSSDChangeConf(IPAChangeConf):
 
     def parseLine(self, line):
         """
-        Overrides IPAChangeConf parseLine so that lines are splitted
+        Overrides IPAChangeConf parseLine so that lines are split
         using any separator in self.assign, not just the default one
         """
 
