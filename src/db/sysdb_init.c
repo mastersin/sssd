@@ -992,7 +992,8 @@ int sysdb_init_ext(TALLOC_CTX *mem_ctx,
 
     if (upgrade_ctx != NULL) {
         /* check if we have an old sssd.ldb to upgrade */
-        ret = sysdb_check_upgrade_02(domains, DB_PATH);
+        ret = sysdb_check_upgrade_02(domains, DB_PATH,
+			             chown_dbfile, uid, gid);
         if (ret != EOK) {
             return ret;
         }
