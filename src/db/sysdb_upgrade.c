@@ -262,7 +262,10 @@ done:
 }
 
 int sysdb_check_upgrade_02(struct sss_domain_info *domains,
-                           const char *db_path)
+                           const char *db_path,
+                           bool chown_local_dbfile,
+                           uid_t uid,
+                           gid_t gid)
 {
     TALLOC_CTX *tmp_ctx = NULL;
     struct ldb_context *ldb;
@@ -294,6 +297,17 @@ int sysdb_check_upgrade_02(struct sss_domain_info *domains,
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "sysdb_ldb_connect failed.\n");
         return ret;
+    }
+
+    if (chown_local_dbfile) {
+        ret = chown(ldb_file, uid, gid);
+        if (ret != 0) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "Cannot set ownership of %s to %"SPRIuid":%"SPRIgid"\n",
+                  ldb_file, uid, gid);
+            ret = errno;
+            goto exit;
+	}
     }
 
     verdn = ldb_dn_new(tmp_ctx, ldb, SYSDB_BASE);

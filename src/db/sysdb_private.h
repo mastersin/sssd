@@ -149,7 +149,9 @@ int sysdb_domain_init_internal(TALLOC_CTX *mem_ctx,
 /* Upgrade routines */
 int sysdb_upgrade_01(struct ldb_context *ldb, const char **ver);
 int sysdb_check_upgrade_02(struct sss_domain_info *domains,
-                           const char *db_path);
+                           const char *db_path,
+                           bool chown_local_dbfile,
+                           uid_t uid, gid_t gid);
 int sysdb_upgrade_03(struct sysdb_ctx *sysdb, const char **ver);
 int sysdb_upgrade_04(struct sysdb_ctx *sysdb, const char **ver);
 int sysdb_upgrade_05(struct sysdb_ctx *sysdb, const char **ver);
