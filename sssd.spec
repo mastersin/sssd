@@ -17,7 +17,7 @@
 
 Name: sssd
 Version: 1.16.1
-Release: alt6%ubt
+Release: alt7%ubt
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -31,7 +31,6 @@ Patch: %name-%version-alt.patch
 
 # Determine the location of the LDB modules directory
 %define ldb_modulesdir %(pkg-config --variable=modulesdir ldb)
-%define ldb_version 1.3.2
 
 %define _localstatedir /var
 %define _libexecdir /usr/libexec
@@ -50,7 +49,6 @@ Patch: %name-%version-alt.patch
 
 Requires: %name-client = %version-%release
 Requires: libsss_idmap = %version-%release
-Requires: libldb = %ldb_version
 
 %if_branch_ge M80C
 Requires: libkrb5 >= 1.14.4-alt2
@@ -64,7 +62,7 @@ BuildRequires: libpopt-devel
 BuildRequires: libtalloc-devel
 BuildRequires: libtevent-devel
 BuildRequires: libtdb-devel >= 1.1.3
-BuildRequires: libldb-devel = %ldb_version
+BuildRequires: libldb-devel >= 1.3.3
 BuildRequires: libdhash-devel >= 0.4.2
 BuildRequires: libcollection-devel >= 0.5.1
 BuildRequires: libini_config-devel >= 1.3.0
@@ -461,7 +459,6 @@ UIDs/GIDs to names and vice versa. It can be also used for mapping principal
     --with-krb5-rcache-dir=%_localstatedir/cache/krb5rcache \
     --enable-nsslibdir=/%_lib \
     --enable-pammoddir=/%_lib/security \
-    --enable-ldb-version-check \
 %if_branch_le M80P
     --enable-nfsidmaplibdir=%nfsidmapdir \
 %endif
@@ -837,6 +834,10 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %nfsidmapdir/sss.so
 
 %changelog
+* Fri Jun 08 2018 Evgeny Sinelnikov <sin@altlinux.org> 1.16.1-alt7%ubt
+- Rebuild with latest version on libldb-1.3.3
+- Disable strict requirement to version of libldb
+
 * Fri May 25 2018 Alexey Sheplyakov <asheplyakov@altlinux.org> 1.16.1-alt6%ubt
 - Applied patches fixing AD and generic issues from Fedora 1.16.2 pre-release
   (https://src.fedoraproject.org/rpms/sssd/tree/5f75f7e4f25f4844)
