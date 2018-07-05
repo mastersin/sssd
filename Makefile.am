@@ -987,6 +987,7 @@ libsss_cert_la_LIBADD = \
     libsss_child.la \
     libsss_debug.la \
     libsss_certmap.la \
+    libsss_child.la \
     $(NULL)
 libsss_cert_la_LDFLAGS = \
     -avoid-version \
