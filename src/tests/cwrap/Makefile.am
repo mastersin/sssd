@@ -10,6 +10,7 @@ AM_CPPFLAGS = \
     -DSYSCONFDIR=\"$(sysconfdir)\" \
     $(DBUS_CFLAGS) \
     $(GLIB2_CFLAGS) \
+    $(PCRE_CFLAGS) \
     $(NULL)
 
 TESTS_ENVIRONMENT = \
