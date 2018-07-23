@@ -33,7 +33,9 @@ void test_become_user(void **state)
     errno_t ret;
     pid_t pid, wpid;
     int status;
-
+    gid_t *group;
+    int nogroups;
+    long ngroups_max;
     /* Must root as root, real or fake */
     assert_int_equal(geteuid(), 0);
 
@@ -58,7 +60,14 @@ void test_become_user(void **state)
         ret = become_user(sssd->pw_uid, sssd->pw_gid);
         assert_int_equal(ret, EOK);
 
-        assert_int_equal(getgroups(0, NULL), 0);
+        ngroups_max = sysconf(_SC_NGROUPS_MAX) + 1;
+        group = (gid_t *)malloc(ngroups_max *sizeof(gid_t));
+        nogroups = getgroups(ngroups_max, group);
+
+        assert_int_equal(nogroups, 1);
+        assert_int_equal(group[0], sssd->pw_gid);
+
+        free(group);
         exit(0);
     }
 
