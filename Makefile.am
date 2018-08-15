@@ -1106,6 +1106,7 @@ libsss_sbus_la_LIBADD = \
     $(TALLOC_LIBS) \
     $(TEVENT_LIBS) \
     $(DBUS_LIBS) \
+    $(UNICODE_LIBS) \
     $(NULL)
 libsss_sbus_la_CFLAGS = \
     $(AM_CFLAGS) \
@@ -1147,6 +1148,7 @@ libsss_sbus_sync_la_CFLAGS = \
     $(AM_CFLAGS) \
     $(TALLOC_CFLAGS) \
     $(DBUS_CFLAGS) \
+    $(UNICODE_LIBS) \
     $(NULL)
 libsss_sbus_sync_la_LDFLAGS = \
     -avoid-version \
