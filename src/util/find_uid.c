@@ -96,13 +96,6 @@ static errno_t get_uid_from_pid(const pid_t pid, uid_t *uid)
                       path);
             return EOK;
         }
-        // case of hidepid mount option for /proc
-        if (error == EPERM) {
-            DEBUG(SSSDBG_TRACE_LIBS,
-                  "Proc file [%s] is not permissible, continuing.\n",
-                      path);
-            return EOK;
-        }
         DEBUG(SSSDBG_CRIT_FAILURE,
               "open failed [%s][%d][%s].\n", path, error, strerror(error));
         return error;
