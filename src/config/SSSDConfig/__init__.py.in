@@ -103,6 +103,7 @@ option_strings = {
     'pam_cert_db_path' : _('Path to certificate database with PKCS#11 modules.'),
     'p11_child_timeout' : _('How many seconds will pam_sss wait for p11_child to finish'),
     'pam_app_services' : _('Which PAM services are permitted to contact application domains'),
+    'pam_p11_allowed_services' : _('Allowed services for using smartcards'),
 
     # [sudo]
     'sudo_timed' : _('Whether to evaluate the time-based attributes in sudo rules'),
@@ -163,7 +164,6 @@ option_strings = {
     'max_id' : _('Maximum user ID'),
     'enumerate' : _('Enable enumerating all users/groups'),
     'cache_credentials' : _('Cache credentials for offline login'),
-    'store_legacy_passwords' : _('Store password hashes'),
     'use_fully_qualified_names' : _('Display users/groups in fully-qualified form'),
     'ignore_group_members' : _('Don\'t include group members in group lookups'),
     'entry_cache_timeout' : _('Entry cache timeout length (seconds)'),
@@ -405,8 +405,6 @@ option_strings = {
     'ldap_idmap_default_domain_sid' : _('SID of the default domain for ID-mapping'),
     'ldap_idmap_helper_table_size' : _('Number of secondary slices'),
 
-    'ldap_groups_use_matching_rule_in_chain' : _('Use LDAP_MATCHING_RULE_IN_CHAIN for group lookups'),
-    'ldap_initgroups_use_matching_rule_in_chain' : _('Use LDAP_MATCHING_RULE_IN_CHAIN for initgroup lookups'),
     'ldap_use_tokengroups' : _('Whether to use Token-Groups'),
     'ldap_min_id' : _('Set lower boundary for allowed IDs from the LDAP server'),
     'ldap_max_id' : _('Set upper boundary for allowed IDs from the LDAP server'),

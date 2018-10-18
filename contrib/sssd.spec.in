@@ -118,11 +118,8 @@
     %global enable_systemtap_opt --enable-systemtap
 %endif
 
-%if (0%{?fedora} || 0%{?rhel} >= 7)
-    %global with_secrets 1
-%else
-    %global with_secret_responder --without-secrets
-%endif
+%global with_secrets 0
+%global with_secret_responder --without-secrets
 
 %if (0%{?fedora} >= 23 || 0%{?rhel} >= 7)
     %global with_kcm 1
@@ -143,6 +140,12 @@
     %global detect_idmap_version 1
 %else
     %global with_idmap_version --with-smb-idmap-interface-version=5
+%endif
+
+%global with_local_provider 0
+%if (0%{?fedora} <= 28 || 0%{?rhel <= 7})
+    %global with_local_provider 1
+    %global enable_local_provider --enable-local-provider
 %endif
 
 Name: @PACKAGE_NAME@
@@ -278,13 +281,13 @@ BuildRequires: systemtap-sdt-devel
 %endif
 %if (0%{?with_secrets} == 1)
 BuildRequires: http-parser-devel
+BuildRequires: libcurl-devel
 %endif
 %if (0%{?with_kcm} == 1)
 BuildRequires: libuuid-devel
 %endif
 %if (0%{?with_secrets} == 1 || 0%{?with_kcm} == 1)
 BuildRequires: jansson-devel
-BuildRequires: libcurl-devel
 %endif
 %if (0%{?with_gdm_pam_extensions} == 1)
 BuildRequires: gdm-pam-extensions-devel
@@ -809,6 +812,7 @@ autoreconf -ivf
     %{?with_secret_responder} \
     %{?with_kcm_option} \
     %{?with_idmap_version} \
+    %{?enable_local_provider} \
     %{?experimental}
 
 make %{?_smp_mflags} all
@@ -1015,6 +1019,15 @@ done
 %{_libdir}/%{name}/libsss_ldap_common.so
 %{_libdir}/%{name}/libsss_util.so
 %{_libdir}/%{name}/libsss_semanage.so
+%{_libdir}/%{name}/libsss_sbus.so
+%{_libdir}/%{name}/libsss_sbus_sync.so
+%{_libdir}/%{name}/libsss_iface.so
+%{_libdir}/%{name}/libsss_iface_sync.so
+%{_libdir}/%{name}/libifp_iface.so
+%{_libdir}/%{name}/libifp_iface_sync.so
+%if (0%{?with_secrets} == 1 || 0%{?with_kcm} == 1)
+%{_libdir}/%{name}/libsss_secrets.so
+%endif
 
 %{ldb_modulesdir}/memberof.so
 %{_bindir}/sss_ssh_authorizedkeys
@@ -1181,6 +1194,7 @@ done
 %files tools -f sssd_tools.lang
 %defattr(-,root,root,-)
 %license COPYING
+%if (0%{with_local_provider} == 1)
 %{_sbindir}/sss_useradd
 %{_sbindir}/sss_userdel
 %{_sbindir}/sss_usermod
@@ -1188,11 +1202,13 @@ done
 %{_sbindir}/sss_groupdel
 %{_sbindir}/sss_groupmod
 %{_sbindir}/sss_groupshow
+%endif
 %{_sbindir}/sss_obfuscate
 %{_sbindir}/sss_override
 %{_sbindir}/sss_debuglevel
 %{_sbindir}/sss_seed
 %{_sbindir}/sssctl
+%if (0%{with_local_provider} == 1)
 %{_mandir}/man8/sss_groupadd.8*
 %{_mandir}/man8/sss_groupdel.8*
 %{_mandir}/man8/sss_groupmod.8*
@@ -1200,6 +1216,7 @@ done
 %{_mandir}/man8/sss_useradd.8*
 %{_mandir}/man8/sss_userdel.8*
 %{_mandir}/man8/sss_usermod.8*
+%endif
 %{_mandir}/man8/sss_obfuscate.8*
 %{_mandir}/man8/sss_override.8*
 %{_mandir}/man8/sss_debuglevel.8*
@@ -1342,9 +1359,7 @@ done
 
 %if (0%{?with_kcm} == 1)
 %files kcm -f sssd_kcm.lang
-%if (0%{?with_secrets} == 1)
 %attr(700,root,root) %dir %{secdbpath}
-%endif
 %{_libexecdir}/%{servicename}/sssd_kcm
 %if (0%{?with_secrets} == 1)
 %{_libexecdir}/%{servicename}/sssd_secrets
@@ -1353,10 +1368,10 @@ done
 %{_datadir}/sssd-kcm/kcm_default_ccache
 %{_unitdir}/sssd-kcm.socket
 %{_unitdir}/sssd-kcm.service
-%{_unitdir}/sssd-secrets.socket
-%{_unitdir}/sssd-secrets.service
 %{_mandir}/man8/sssd-kcm.8*
 %if (0%{?with_secrets} == 1)
+%{_unitdir}/sssd-secrets.socket
+%{_unitdir}/sssd-secrets.service
 %{_mandir}/man5/sssd-secrets.5*
 %endif
 %endif
@@ -1374,7 +1389,6 @@ getent passwd sssd >/dev/null || useradd -r -g sssd -d / -s /sbin/nologin -c "Us
 %systemd_post sssd-pac.socket
 %systemd_post sssd-pam.socket
 %systemd_post sssd-pam-priv.socket
-%systemd_post sssd-secrets.socket
 %systemd_post sssd-ssh.socket
 %systemd_post sssd-sudo.socket
 
@@ -1385,7 +1399,6 @@ getent passwd sssd >/dev/null || useradd -r -g sssd -d / -s /sbin/nologin -c "Us
 %systemd_preun sssd-pac.socket
 %systemd_preun sssd-pam.socket
 %systemd_preun sssd-pam-priv.socket
-%systemd_preun sssd-secrets.socket
 %systemd_preun sssd-ssh.socket
 %systemd_preun sssd-sudo.socket
 
@@ -1400,8 +1413,6 @@ getent passwd sssd >/dev/null || useradd -r -g sssd -d / -s /sbin/nologin -c "Us
 %systemd_postun_with_restart sssd-pam.socket
 %systemd_postun_with_restart sssd-pam-priv.socket
 %systemd_postun_with_restart sssd-pam.service
-%systemd_postun_with_restart sssd-secrets.socket
-%systemd_postun_with_restart sssd-secrets.service
 %systemd_postun_with_restart sssd-ssh.socket
 %systemd_postun_with_restart sssd-ssh.service
 %systemd_postun_with_restart sssd-sudo.socket
@@ -1426,6 +1437,18 @@ getent passwd sssd >/dev/null || useradd -r -g sssd -d / -s /sbin/nologin -c "Us
 %postun kcm
 %systemd_postun_with_restart sssd-kcm.socket
 %systemd_postun_with_restart sssd-kcm.service
+%endif
+
+%if (0%{?with_secrets} == 1)
+%post secrets
+%systemd_postun_with_restart sssd-secrets.socket
+
+%preun secrets
+%systemd_preun_with_restart sssd-secrets.socket
+
+%postun secrets
+%systemd_postun_with_restart sssd-secrets.socket
+%systemd_postun_with_restart sssd-secrets.service
 %endif
 
 %else

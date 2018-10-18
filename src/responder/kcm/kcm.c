@@ -57,7 +57,7 @@ static errno_t kcm_get_ccdb_be(struct kcm_ctx *kctx)
                             kctx->rctx,
                             kctx->rctx->confdb_service_path,
                             CONFDB_KCM_DB,
-                            "secrets",
+                            "secdb",
                             &str_db);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE,
@@ -69,6 +69,9 @@ static errno_t kcm_get_ccdb_be(struct kcm_ctx *kctx)
     DEBUG(SSSDBG_CONF_SETTINGS, "KCM database type: %s\n", str_db);
     if (strcasecmp(str_db, "memory") == 0) {
         kctx->cc_be = CCDB_BE_MEMORY;
+        return EOK;
+    } else if (strcasecmp(str_db, "secdb") == 0) {
+        kctx->cc_be = CCDB_BE_SECDB;
         return EOK;
     } else if (strcasecmp(str_db, "secrets") == 0) {
         kctx->cc_be = CCDB_BE_SECRETS;
@@ -134,7 +137,7 @@ static int kcm_get_config(struct kcm_ctx *kctx)
         goto done;
     }
 
-    if (kctx->cc_be == CCDB_BE_SECRETS) {
+    if (kctx->cc_be == CCDB_BE_SECRETS || kctx->cc_be == CCDB_BE_SECDB) {
         ret = responder_setup_idle_timeout_config(kctx->rctx);
         if (ret != EOK) {
             DEBUG(SSSDBG_MINOR_FAILURE,

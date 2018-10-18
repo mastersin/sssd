@@ -47,6 +47,9 @@ struct so {
     { "libnss_sss.so", { LIBPFX"libnss_sss.so", NULL } },
     { "libsss_certmap.so", { LIBPFX"libsss_certmap.so", NULL } },
     { "pam_sss.so", { LIBPFX"pam_sss.so", NULL } },
+#ifdef BUILD_WITH_LIBSECRET
+    { "libsss_secrets.so", { LIBPFX"libsss_secrets.so", NULL } },
+#endif /* BUILD_WITH_LIBSECRET */
 #ifdef BUILD_LIBWBCLIENT
     { "libwbclient.so", { LIBPFX"libwbclient.so", NULL } },
 #endif /* BUILD_LIBWBCLIENT */
@@ -80,6 +83,12 @@ struct so {
     { "libsss_cert.so", { LIBPFX"libsss_util.so",
                           LIBPFX"libsss_cert.so", NULL } },
     { "libsss_util.so", { LIBPFX"libsss_util.so", NULL } },
+    { "libsss_sbus.so", {NULL} },
+    { "libsss_sbus_sync.so", {NULL} },
+    { "libsss_iface.so", {NULL} },
+    { "libsss_iface_sync.so", {NULL} },
+    { "libifp_iface.so", {NULL} },
+    { "libifp_iface_sync.so", {NULL} },
     { "libsss_simple.so", { LIBPFX"libdlopen_test_providers.so",
                             LIBPFX"libsss_simple.so", NULL } },
     { "libsss_files.so", { LIBPFX"libdlopen_test_providers.so",

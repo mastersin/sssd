@@ -768,13 +768,6 @@ AC_DEFUN([WITH_SAMBA],
     AM_CONDITIONAL([BUILD_SAMBA], [test x"$with_samba" = xyes])
   ])
 
-AC_ARG_ENABLE([dbus-tests],
-              [AS_HELP_STRING([--enable-dbus-tests],
-                              [enable running tests using a dbus server instance [default=yes]])],
-              [build_dbus_tests=$enableval],
-              [build_dbus_tests=yes])
-AM_CONDITIONAL([BUILD_DBUS_TESTS], [test x$build_dbus_tests = xyes])
-
 AC_ARG_ENABLE([sss-default-nss-plugin],
               [AS_HELP_STRING([--enable-sss-default-nss-plugin],
                               [This option change standard behaviour of sss nss
@@ -890,11 +883,11 @@ AC_DEFUN([SSSD_RUNSTATEDIR],
 AC_DEFUN([WITH_SECRETS],
   [ AC_ARG_WITH([secrets],
                 [AC_HELP_STRING([--with-secrets],
-                                [Whether to build with secrets support [yes]]
+                                [Whether to build with secrets support [no]]
                                )
                 ],
                 [with_secrets=$withval],
-                with_secrets=yes
+                with_secrets=no
                )
 
     if test x"$with_secrets" = xyes; then
@@ -948,3 +941,15 @@ AS_IF([test x$enable_files_domain = xyes],
       AC_DEFINE_UNQUOTED([ADD_FILES_DOMAIN], [1],
           [whether to build unconditionally enable files domain]))
 AM_CONDITIONAL([ADD_FILES_DOMAIN], [test x$enable_files_domain = xyes])
+
+AC_ARG_ENABLE([local-provider],
+              [AS_HELP_STRING([--enable-local-provider],
+                              [If this feature is enabled, then local-provider
+                               will be built by default.
+                              [default=no]])],
+              [enable_local_provider=$enableval],
+              [enable_local_provider=no])
+AS_IF([test x$enable_local_provider = xyes],
+      AC_DEFINE_UNQUOTED([BUILD_LOCAL_PROVIDER], [1],
+          [whether to build unconditionally enable local provider]))
+AM_CONDITIONAL([BUILD_LOCAL_PROVIDER], [test x$enable_local_provider = xyes])

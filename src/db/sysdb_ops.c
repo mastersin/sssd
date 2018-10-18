@@ -419,6 +419,7 @@ static errno_t cleanup_dn_filter(TALLOC_CTX *mem_ctx,
 {
     TALLOC_CTX *tmp_ctx;
     char *dn_filter;
+    char *sanitized_linearized_dn = NULL;
     errno_t ret;
 
     if (ts_res->count == 0) {
@@ -438,11 +439,20 @@ static errno_t cleanup_dn_filter(TALLOC_CTX *mem_ctx,
     }
 
     for (size_t i = 0; i < ts_res->count; i++) {
+        ret = sss_filter_sanitize(tmp_ctx,
+                                  ldb_dn_get_linearized(ts_res->msgs[i]->dn),
+                                  &sanitized_linearized_dn);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "sss_filter_sanitize() failed: (%s) [%d]\n",
+                  sss_strerror(ret), ret);
+            goto done;
+        }
         dn_filter = talloc_asprintf_append(
                                     dn_filter,
                                     "(%s=%s)",
                                     SYSDB_DN,
-                                    ldb_dn_get_linearized(ts_res->msgs[i]->dn));
+                                    sanitized_linearized_dn);
         if (dn_filter == NULL) {
             ret = ENOMEM;
             goto done;
@@ -494,7 +504,9 @@ static int sysdb_search_by_name(TALLOC_CTX *mem_ctx,
         break;
     case SYSDB_GROUP:
         def_attrs[1] = SYSDB_GIDNUM;
-        if (domain->mpg && strcasecmp(domain->provider, "local") != 0) {
+        if (domain->mpg &&
+                (!local_provider_is_built()
+                 || strcasecmp(domain->provider, "local") != 0)) {
             /* When searching a group by name in a MPG domain, we also
              * need to search the user space in order to be able to match
              * a user private group/
@@ -1530,7 +1542,8 @@ int sysdb_get_new_id(struct sss_domain_info *domain,
         return ENOMEM;
     }
 
-    if (strcasecmp(domain->provider, "local") != 0) {
+    if (!local_provider_is_built()
+            || strcasecmp(domain->provider, "local") != 0) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Generating new ID is only supported in the local domain!\n");
         return ENOTSUP;
@@ -2025,7 +2038,8 @@ int sysdb_add_user(struct sss_domain_info *domain,
             goto done;
         }
 
-        if (strcasecmp(domain->provider, "local") != 0) {
+        if (!local_provider_is_built()
+                || strcasecmp(domain->provider, "local") != 0) {
             ret = sysdb_search_group_by_gid(tmp_ctx, domain, uid, NULL, &msg);
             if (ret != ENOENT) {
                 if (ret == EOK) {
@@ -2245,7 +2259,8 @@ int sysdb_add_group(struct sss_domain_info *domain,
             goto done;
         }
 
-        if (strcasecmp(domain->provider, "local") != 0) {
+        if (!local_provider_is_built()
+                || strcasecmp(domain->provider, "local") != 0) {
             ret = sysdb_search_user_by_uid(tmp_ctx, domain, gid, NULL, &msg);
             if (ret != ENOENT) {
                 if (ret == EOK) {
@@ -2710,7 +2725,7 @@ int sysdb_store_user(struct sss_domain_info *domain,
         }
     }
 
-    if (pwd && (domain->legacy_passwords || !*pwd)) {
+    if (pwd && !*pwd) {
         ret = sysdb_attrs_add_string(attrs, SYSDB_PWD, pwd);
         if (ret) goto done;
     }
@@ -2764,6 +2779,8 @@ done:
 
     if (ret) {
         DEBUG(SSSDBG_TRACE_FUNC, "Error: %d (%s)\n", ret, strerror(ret));
+    } else {
+        DEBUG(SSSDBG_TRACE_FUNC, "User \"%s\" has been stored\n", name);
     }
     talloc_zfree(tmp_ctx);
     return ret;
@@ -2993,6 +3010,8 @@ done:
 
     if (ret) {
         DEBUG(SSSDBG_TRACE_FUNC, "Error: %d (%s)\n", ret, strerror(ret));
+    } else {
+        DEBUG(SSSDBG_TRACE_FUNC, "Group \"%s\" has been stored\n", name);
     }
     talloc_zfree(tmp_ctx);
     return ret;
@@ -3746,6 +3765,7 @@ int sysdb_search_users(TALLOC_CTX *mem_ctx,
 int sysdb_search_users_by_timestamp(TALLOC_CTX *mem_ctx,
                                     struct sss_domain_info *domain,
                                     const char *sub_filter,
+                                    const char *ts_sub_filter,
                                     const char **attrs,
                                     size_t *_msgs_count,
                                     struct ldb_message ***_msgs)
@@ -3763,10 +3783,10 @@ int sysdb_search_users_by_timestamp(TALLOC_CTX *mem_ctx,
         return ENOMEM;
     }
 
-    ret = sysdb_search_ts_users(tmp_ctx, domain, sub_filter, NULL, &ts_res);
+    ret = sysdb_search_ts_users(tmp_ctx, domain, ts_sub_filter, NULL, &ts_res);
     if (ret == ERR_NO_TS) {
         ret = sysdb_cache_search_users(tmp_ctx, domain, domain->sysdb->ldb,
-                                       sub_filter, attrs, &msgs_count, &msgs);
+                                       ts_sub_filter, attrs, &msgs_count, &msgs);
         if (ret != EOK) {
             goto done;
         }
@@ -4026,6 +4046,7 @@ int sysdb_search_groups(TALLOC_CTX *mem_ctx,
 int sysdb_search_groups_by_timestamp(TALLOC_CTX *mem_ctx,
                                      struct sss_domain_info *domain,
                                      const char *sub_filter,
+                                     const char *ts_sub_filter,
                                      const char **attrs,
                                      size_t *_msgs_count,
                                      struct ldb_message ***_msgs)
@@ -4043,10 +4064,10 @@ int sysdb_search_groups_by_timestamp(TALLOC_CTX *mem_ctx,
         return ENOMEM;
     }
 
-    ret = sysdb_search_ts_groups(tmp_ctx, domain, sub_filter, NULL, &ts_res);
+    ret = sysdb_search_ts_groups(tmp_ctx, domain, ts_sub_filter, NULL, &ts_res);
     if (ret == ERR_NO_TS) {
         ret = sysdb_cache_search_groups(tmp_ctx, domain, domain->sysdb->ldb,
-                                        sub_filter, attrs, &msgs_count, &msgs);
+                                        ts_sub_filter, attrs, &msgs_count, &msgs);
         if (ret != EOK) {
             goto done;
         }

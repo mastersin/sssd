@@ -3,14 +3,15 @@
 #
 # Copyright (c) 2016 Red Hat, Inc.
 #
-# This is free software; you can redistribute it and/or modify it
-# under the terms of the GNU General Public License as published by
-# the Free Software Foundation; version 2 only
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
 #
-# This program is distributed in the hope that it will be useful, but
-# WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
-# General Public License for more details.
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
@@ -23,6 +24,7 @@ import pytest
 import socket
 import time
 import signal
+import sys
 from requests import HTTPError
 
 import kdc
@@ -108,6 +110,11 @@ def create_sssd_kcm_fixture(sock_path, request):
         if kcm_pid == 0:
             return
         os.kill(kcm_pid, signal.SIGTERM)
+        try:
+            os.unlink(os.path.join(config.SECDB_PATH, "secrets.ldb"))
+        except OSError as osex:
+            if osex.errno == 2:
+                pass
 
     request.addfinalizer(kcm_teardown)
     return kcm_pid
@@ -160,7 +167,10 @@ def setup_for_kcm_mem(request, kdc_instance):
 
 @pytest.fixture
 def setup_secrets(request):
-    create_sssd_secrets_fixture(request)
+    kcm_env = dict(os.environ)
+    # Tell sssd-secrets it's root talking
+    kcm_env['SSSD_INTG_SECRETS_PEER'] = '0'
+    create_sssd_secrets_fixture(request, env=kcm_env)
 
 
 @pytest.fixture
@@ -169,8 +179,24 @@ def setup_for_kcm_sec(request, kdc_instance):
     Just set up the local provider for tests and enable the KCM
     responder
     """
+    sec_resp_path = os.path.join(config.LIBEXEC_PATH, "sssd", "sssd_secrets")
+    if not os.access(sec_resp_path, os.X_OK):
+        # It would be cleaner to use pytest.mark.skipif on the package level
+        # but upstream insists on supporting RHEL-6.
+        pytest.skip("No Secrets responder, skipping")
+
     kcm_path = os.path.join(config.RUNSTATEDIR, "kcm.socket")
     sssd_conf = create_sssd_conf(kcm_path, "secrets")
+    return common_setup_for_kcm_mem(request, kdc_instance, kcm_path, sssd_conf)
+
+
+@pytest.fixture
+def setup_for_kcm_secdb(request, kdc_instance):
+    """
+    Set up the KCM responder backed by libsss_secrets
+    """
+    kcm_path = os.path.join(config.RUNSTATEDIR, "kcm.socket")
+    sssd_conf = create_sssd_conf(kcm_path, "secdb")
     return common_setup_for_kcm_mem(request, kdc_instance, kcm_path, sssd_conf)
 
 
@@ -214,6 +240,11 @@ def test_kcm_sec_init_list_destroy(setup_for_kcm_sec,
     kcm_init_list_destroy(testenv)
 
 
+def test_kcm_secdb_init_list_destroy(setup_for_kcm_secdb):
+    testenv = setup_for_kcm_secdb
+    kcm_init_list_destroy(testenv)
+
+
 def kcm_overwrite(testenv):
     """
     Test that reusing a ccache reinitializes the cache and doesn't
@@ -241,6 +272,11 @@ def test_kcm_mem_overwrite(setup_for_kcm_mem):
 def test_kcm_sec_overwrite(setup_for_kcm_sec,
                            setup_secrets):
     testenv = setup_for_kcm_sec
+    kcm_overwrite(testenv)
+
+
+def test_kcm_secdb_overwrite(setup_for_kcm_secdb):
+    testenv = setup_for_kcm_secdb
     kcm_overwrite(testenv)
 
 
@@ -315,6 +351,11 @@ def test_kcm_sec_collection_init_list_destroy(setup_for_kcm_sec,
     collection_init_list_destroy(testenv)
 
 
+def test_kcm_secdb_collection_init_list_destroy(setup_for_kcm_secdb):
+    testenv = setup_for_kcm_secdb
+    collection_init_list_destroy(testenv)
+
+
 def exercise_kswitch(testenv):
     """
     Test switching between principals
@@ -368,6 +409,11 @@ def test_kcm_mem_kswitch(setup_for_kcm_mem):
 def test_kcm_sec_kswitch(setup_for_kcm_sec,
                          setup_secrets):
     testenv = setup_for_kcm_sec
+    exercise_kswitch(testenv)
+
+
+def test_kcm_secdb_kswitch(setup_for_kcm_secdb):
+    testenv = setup_for_kcm_secdb
     exercise_kswitch(testenv)
 
 
@@ -426,6 +472,11 @@ def test_kcm_sec_subsidiaries(setup_for_kcm_sec,
     exercise_subsidiaries(testenv)
 
 
+def test_kcm_secdb_subsidiaries(setup_for_kcm_secdb):
+    testenv = setup_for_kcm_secdb
+    exercise_subsidiaries(testenv)
+
+
 def kdestroy_nocache(testenv):
     """
     Destroying a non-existing ccache should not throw an error
@@ -448,6 +499,11 @@ def test_kcm_mem_kdestroy_nocache(setup_for_kcm_mem):
 def test_kcm_sec_kdestroy_nocache(setup_for_kcm_sec,
                                   setup_secrets):
     testenv = setup_for_kcm_sec
+    exercise_subsidiaries(testenv)
+
+
+def test_kcm_secdb_kdestroy_nocache(setup_for_kcm_secdb):
+    testenv = setup_for_kcm_secdb
     exercise_subsidiaries(testenv)
 
 

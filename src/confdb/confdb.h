@@ -131,6 +131,7 @@
 #define CONFDB_PAM_CERT_DB_PATH "pam_cert_db_path"
 #define CONFDB_PAM_P11_CHILD_TIMEOUT "p11_child_timeout"
 #define CONFDB_PAM_APP_SERVICES "pam_app_services"
+#define CONFDB_PAM_P11_ALLOWED_SERVICES "pam_p11_allowed_services"
 
 /* SUDO */
 #define CONFDB_SUDO_CONF_ENTRY "config/sudo"
@@ -203,7 +204,6 @@
 #define CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH \
                                  "cache_credentials_minimal_first_factor_length"
 #define CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH 8
-#define CONFDB_DOMAIN_LEGACY_PASS "store_legacy_passwords"
 #define CONFDB_DOMAIN_AUTO_UPG "auto_private_groups"
 #define CONFDB_DOMAIN_FQ "use_fully_qualified_names"
 #define CONFDB_DOMAIN_ENTRY_CACHE_TIMEOUT "entry_cache_timeout"
@@ -321,7 +321,6 @@ struct sss_domain_info {
 
     bool cache_credentials;
     uint32_t cache_credentials_min_ff_length;
-    bool legacy_passwords;
     bool case_sensitive;
     bool case_preserve;
 
