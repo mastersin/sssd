@@ -7,14 +7,12 @@
 %define if_branch_eq() %if "%(rpmvercmp '%ubt_id' '%1')" == "0"
 %define if_branch_ge() %if "%(rpmvercmp '%ubt_id' '%1')" >= "0"
 
-%if_branch_eq N.M80P
-%define nfsidmapdir /%_lib/libnfsidmap
-%else
+%define nfsidmapdir %_libdir/libnfsidmap
 %if_branch_le M80P
 %define nfsidmapdir /%_lib/libnfsidmap
-%else
-%define nfsidmapdir %_libdir/libnfsidmap
 %endif
+%if_branch_eq N.M80P
+%define nfsidmapdir /%_lib/libnfsidmap
 %endif
 
 Name: sssd
@@ -529,15 +527,7 @@ Provides python3 module for calculating the murmur hash version 3
     --with-krb5-rcache-dir=%_localstatedir/cache/krb5rcache \
     --enable-nsslibdir=/%_lib \
     --enable-pammoddir=/%_lib/security \
-%if_branch_le M80P
     --enable-nfsidmaplibdir=%nfsidmapdir \
-%endif
-%if_branch_eq N.M80P
-    --enable-nfsidmaplibdir=%nfsidmapdir \
-%endif
-%if_branch_ge M80P
-    --enable-nfsidmaplibdir=%nfsidmapdir \
-%endif
     --with-syslog=journald \
     --with-test-dir=/dev/shm \
     --enable-krb5-locator-plugin \
