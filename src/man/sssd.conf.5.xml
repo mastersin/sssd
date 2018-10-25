@@ -479,8 +479,8 @@
                                         be replaced with the URL of the OCSP
                                         default responder e.g.
                                         http://example.com:80/ocsp.</para>
-                                        <para>This option must be used together
-                                        with
+                                        <para>(NSS Version) This option must be
+                                        used together with
                                         ocsp_default_responder_signing_cert.
                                         </para>
                                     </listitem>
@@ -489,16 +489,52 @@
                                     <term>
                                     ocsp_default_responder_signing_cert=NAME</term>
                                     <listitem>
-                                        <para>The nickname of the cert to trust
-                                        (expected) to sign the OCSP responses.
-                                        The certificate with the given nickname
-                                        must be available in the systems NSS
-                                        database.</para>
+                                        <para>(NSS Version) The nickname of the
+                                        cert to trust (expected) to sign the
+                                        OCSP responses.  The certificate with
+                                        the given nickname must be available in
+                                        the systems NSS database.</para>
                                         <para>This option must be used together
                                         with ocsp_default_responder.</para>
+                                        <para>(OpenSSL version) This option is
+                                        currently ignored. All needed
+                                        certificates must be available in the
+                                        PEM file given by
+                                        pam_cert_db_path.</para>
+                                    </listitem>
+                                </varlistentry>
+                                <varlistentry>
+                                    <term>crl_file=/PATH/TO/CRL/FILE</term>
+                                    <listitem>
+                                        <para>(NSS Version) This option is
+                                        ignored, please see
+                                            <citerefentry>
+                                                <refentrytitle>crlutil</refentrytitle>
+                                                <manvolnum>1</manvolnum>
+                                            </citerefentry>
+                                        how to import a Certificate Revocation
+                                        List (CRL) into a NSS database.</para>
+
+                                        <para>(OpenSSL Version) Use the
+                                        Certificate Revocation List (CRL) from
+                                        the given file during the verification
+                                        of the certificate. The CRL must be
+                                        given in PEM format, see
+                                            <citerefentry>
+                                                <refentrytitle>crl</refentrytitle>
+                                                <manvolnum>1ssl</manvolnum>
+                                            </citerefentry>
+                                        for details.</para>
                                     </listitem>
                                 </varlistentry>
                                 </variablelist>
+                            </para>
+                            <para condition="with_nss">
+                                This man page was generated for the NSS version.
+                            </para>
+                            <para condition="with_openssl">
+                                This man page was generated for the OpenSSL
+                                version.
                             </para>
                             <para>
                                 Unknown options are reported but ignored.
@@ -1464,6 +1500,53 @@ pam_p11_allowed_services = +my_pam_service, -login
                         </para>
                     </listitem>
                 </varlistentry>
+                <varlistentry>
+                    <term>p11_wait_for_card_timeout (integer)</term>
+                    <listitem>
+                        <para>
+                            If Smartcard authentication is required how many
+                            extra seconds in addition to p11_child_timeout
+                            should the PAM responder wait until a Smartcard is
+                            inserted.
+                        </para>
+                        <para>
+                            Default: 60
+                        </para>
+                    </listitem>
+                </varlistentry>
+                <varlistentry>
+                    <term>p11_uri (string)</term>
+                    <listitem>
+                        <para>
+                            PKCS#11 URI (see RFC-7512 for details) which can be
+                            used to restrict the selection of devices used for
+                            Smartcard authentication. By default SSSD's
+                            p11_child will search for a PKCS#11 slot (reader)
+                            where the 'removable' flags is set and read the
+                            certificates from the inserted token from the first
+                            slot found. If multiple readers are connected
+                            p11_uri can be use to tell p11_child to use a
+                            specific reader.
+                        </para>
+                        <para>
+                            Example:
+                            <programlisting>
+p11_uri = slot-description=My%20Smartcar%20Reader
+                            </programlisting>
+                            or
+                            <programlisting>
+p11_uri = library-description=OpenSC%20smartcard%20framework;slot-id=2
+                            </programlisting>
+                            To find suitable URI please check the debug output
+                            of p11_child. As an alternative the GnuTLS utility
+                            'p11tool' with e.g. the '--list-all' will show
+                            PKCS#11 URIs as well.
+                        </para>
+                        <para>
+                            Default: none
+                        </para>
+                    </listitem>
+                </varlistentry>
             </variablelist>
         </refsect2>
 
@@ -2179,7 +2262,7 @@ pam_p11_allowed_services = +my_pam_service, -login
                         <para>
                             <quote>proxy</quote>: Support a legacy NSS provider.
                         </para>
-                        <para>
+                        <para condition="enable_local_provider">
                             <quote>local</quote>: SSSD internal provider for
                             local users (DEPRECATED).
                         </para>
@@ -2324,7 +2407,7 @@ pam_p11_allowed_services = +my_pam_service, -login
                         <para>
                             <quote>proxy</quote> for relaying authentication to some other PAM target.
                         </para>
-                        <para>
+                        <para condition="enable_local_provider">
                             <quote>local</quote>: SSSD internal provider for
                             local users
                         </para>
@@ -2836,9 +2919,12 @@ pam_p11_allowed_services = +my_pam_service, -login
                     <term>case_sensitive (string)</term>
                     <listitem>
                         <para>
-                            Treat user and group names as case sensitive. At
-                            the moment, this option is not supported in
-                            the local provider. Possible option values are:
+                            Treat user and group names as case sensitive.
+                            <phrase condition="enable_local_provider">
+                                At the moment, this option is not supported in
+                                the local provider.
+                            </phrase>
+                            Possible option values are:
                         <variablelist>
                             <varlistentry>
                                 <term>True</term>
@@ -3148,7 +3234,7 @@ ldap_user_extra_attrs = phone:telephoneNumber
 </programlisting>
         </refsect2>
 
-        <refsect2 id='local_domain'>
+        <refsect2 id='local_domain' condition="enable_local_provider">
             <title>The local domain section</title>
             <para>
                 This section contains settings for domain that stores users and
@@ -3299,6 +3385,135 @@ ldap_user_extra_attrs = phone:telephoneNumber
         </para>
     </refsect1>
 
+    <refsect1 id='certmap'>
+        <title>CERTIFICATE MAPPING SECTION</title>
+        <para>
+            To allow authentication with Smartcards and certificates SSSD must
+            be able to map certificates to users. This can be done by adding the
+            full certificate to the LDAP object of the user or to a local
+            override. While using the full certificate is required to use the
+            Smartcard authentication feature of SSH (see
+                <citerefentry>
+                    <refentrytitle>sss_ssh_authorizedkeys</refentrytitle>
+                    <manvolnum>8</manvolnum>
+                </citerefentry>
+            for details) it might be cumbersome or not even possible to do this
+            for the general case where local services use PAM for
+            authentication.
+        </para>
+        <para>
+            To make the mapping more flexible mapping and matching rules were
+            added to SSSD (see
+                <citerefentry>
+                    <refentrytitle>sss-certmap</refentrytitle>
+                    <manvolnum>5</manvolnum>
+                </citerefentry>
+            for details).
+        </para>
+        <para>
+            A mapping and matching rule can be added to the SSSD configuration
+            in a section on its own with a name like
+            <quote>[certmap/<replaceable>DOMAIN_NAME</replaceable>/<replaceable>RULE_NAME</replaceable>]</quote>.
+            In this section the following options are allowed:
+        </para>
+        <variablelist>
+            <varlistentry>
+                <term>matchrule (string)</term>
+                <listitem>
+                    <para>
+                        Only certificates from the Smartcard which matches this
+                        rule will be processed, all others are ignored.
+                    </para>
+                    <para>
+                        Default: KRB5:&lt;EKU&gt;clientAuth, i.e. only
+                        certificates which have the Extended Key Usage
+                        <quote>clientAuth</quote>
+                    </para>
+                </listitem>
+            </varlistentry>
+            <varlistentry>
+                <term>maprule (string)</term>
+                <listitem>
+                    <para>
+                        Defines how the user is found for a given certificate.
+                    </para>
+                    <para>
+                        Default:
+                        <itemizedlist>
+                            <listitem>
+                                <para>LDAP:(userCertificate;binary={cert!bin})
+                                for LDAP based providers like
+                                <quote>ldap</quote>, <quote>AD</quote> or
+                                <quote>ipa</quote>.</para>
+                            </listitem>
+                            <listitem>
+                                <para>The RULE_NAME for the <quote>files</quote>
+                                provider which tries to find a user with the
+                                same name.</para>
+                            </listitem>
+                        </itemizedlist>
+                    </para>
+                </listitem>
+            </varlistentry>
+            <varlistentry>
+                <term>domains (string)</term>
+                <listitem>
+                    <para>
+                        Comma separated list of domain names the rule should be
+                        applied. By default a rule is only valid in the domain
+                        configured in sssd.conf. If the provider supports
+                        subdomains this option can be used to add the rule to
+                        subdomains as well.
+                    </para>
+                    <para>
+                        Default: the configured domain in sssd.conf
+                    </para>
+                </listitem>
+            </varlistentry>
+            <varlistentry>
+                <term>priority (integer)</term>
+                <listitem>
+                    <para>
+                        Unsigned integer value defining the priority of the
+                        rule. The higher the number the lower the priority.
+                        <quote>0</quote> stands for the highest priority while
+                        <quote>4294967295</quote> is the lowest.
+                    </para>
+                    <para>
+                        Default: the lowest priority
+                    </para>
+                </listitem>
+            </varlistentry>
+        </variablelist>
+        <para>
+            To make the configuration simple and reduce the amount of
+            configuration options the <quote>files</quote> provider has some
+            special properties:
+            <itemizedlist>
+                <listitem>
+                    <para>
+                        if maprule is not set the RULE_NAME name is assumed to
+                        be the name of the matching user
+                    </para>
+                </listitem>
+                <listitem>
+                    <para>
+                        if a maprule is used both a single user name or a
+                        template like
+                        <quote>{subject_rfc822_name.short_name}</quote> must
+                        be in braces like e.g. <quote>(username)</quote> or
+                        <quote>({subject_rfc822_name.short_name})</quote>
+                    </para>
+                </listitem>
+                <listitem>
+                    <para>
+                        the <quote>domains</quote> option is ignored
+                    </para>
+                </listitem>
+            </itemizedlist>
+        </para>
+    </refsect1>
+
     <refsect1 id='example'>
         <title>EXAMPLES</title>
         <para>
@@ -3341,6 +3556,26 @@ enumerate = False
 <programlisting>
 [domain/ipa.com/child.ad.com]
 use_fully_qualified_names = false
+</programlisting>
+        </para>
+        <para>
+            3. The following example shows the configuration for two certificate
+            mapping rules. The first is valid for the configured domain
+            <quote>my.domain</quote> and additionally for the subdomains
+            <quote>your.domain</quote> and uses the full certificate in the
+            search filter. The second example is valid for the domain
+            <quote>files</quote> where it is assumed the files provider is used
+            for this domain and contains a matching rule for the local user
+            <quote>myname</quote>.
+<programlisting>
+[certmap/my.domain/rule_name]
+matchrule = &lt;ISSUER&gt;^CN=My-CA,DC=MY,DC=DOMAIN$
+maprule = (userCertificate;binary={cert!bin})
+domains = my.domain, your.domain
+priority = 10
+
+[certmap/files/myname]
+matchrule = &lt;ISSUER&gt;^CN=My-CA,DC=MY,DC=DOMAIN$&lt;SUBJECT&gt;^CN=User.Name,DC=MY,DC=DOMAIN$
 </programlisting>
         </para>
     </refsect1>

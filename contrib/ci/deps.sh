@@ -46,6 +46,7 @@ if [[ "$DISTRO_BRANCH" == -redhat-* ]]; then
         pyldb
         rpm-build
         uid_wrapper
+        pam_wrapper
         python-requests
         curl-devel
         krb5-server
@@ -53,6 +54,13 @@ if [[ "$DISTRO_BRANCH" == -redhat-* ]]; then
         dbus-python
         python-pep8
     )
+
+    if [[ "$DISTRO_BRANCH" == -redhat-fedora-* ]]; then
+        DEPS_LIST+=(
+            http-parser-devel
+        )
+    fi
+
     _DEPS_LIST_SPEC=`
         sed -e 's/@PACKAGE_VERSION@/0/g' \
             -e 's/@PACKAGE_NAME@/package-name/g' \
@@ -117,6 +125,7 @@ if [[ "$DISTRO_BRANCH" == -debian-* ]]; then
         fakeroot
         libnss-wrapper
         libuid-wrapper
+        libpam-wrapper
         python-pytest
         python-ldap
         python-ldb

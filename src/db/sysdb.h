@@ -454,9 +454,6 @@ errno_t sysdb_get_highest_usn(TALLOC_CTX *mem_ctx,
                               size_t num_attrs,
                               char **_usn);
 
-/* convert an ldb error into an errno error */
-int sysdb_error_to_errno(int ldberr);
-
 /* DNs related helper functions */
 errno_t sysdb_get_rdn(struct sysdb_ctx *sysdb, TALLOC_CTX *mem_ctx,
                       const char *dn, char **_name, char **_val);
@@ -701,6 +698,11 @@ uint64_t sss_view_ldb_msg_find_attr_as_uint64(struct sss_domain_info *dom,
 errno_t sysdb_update_certmap(struct sysdb_ctx *sysdb,
                              struct certmap_info **certmaps,
                              bool user_name_hint);
+
+errno_t sysdb_ldb_msg_attr_to_certmap_info(TALLOC_CTX *mem_ctx,
+                                           struct ldb_message *msg,
+                                           const char **attr_map,
+                                           struct certmap_info **certmap);
 
 errno_t sysdb_get_certmap(TALLOC_CTX *mem_ctx, struct sysdb_ctx *sysdb,
                           struct certmap_info ***certmaps,
@@ -1428,5 +1430,8 @@ errno_t sysdb_handle_original_uuid(const char *orig_name,
                                    const char *src_name,
                                    struct sysdb_attrs *dest_attrs,
                                    const char *dest_name);
+
+/* define old name for backward compatibility */
+#define sysdb_error_to_errno(ldberr) sss_ldb_error_to_errno(ldberr)
 
 #endif /* __SYS_DB_H__ */

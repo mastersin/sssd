@@ -142,11 +142,14 @@ static void ext_debug(void *private, const char *file, long line,
 }
 
 errno_t p11_refresh_certmap_ctx(struct pam_ctx *pctx,
-                                struct certmap_info **certmap_list)
+                                struct sss_domain_info *domains)
 {
     int ret;
     struct sss_certmap_ctx *sss_certmap_ctx = NULL;
     size_t c;
+    struct sss_domain_info *dom;
+    bool certmap_found = false;
+    struct certmap_info **certmap_list;
 
     ret = sss_certmap_init(pctx, ext_debug, NULL, &sss_certmap_ctx);
     if (ret != EOK) {
@@ -154,7 +157,15 @@ errno_t p11_refresh_certmap_ctx(struct pam_ctx *pctx,
         goto done;
     }
 
-    if (certmap_list == NULL || *certmap_list == NULL) {
+    DLIST_FOR_EACH(dom, domains) {
+        certmap_list = dom->certmaps;
+        if (certmap_list != NULL && *certmap_list != NULL) {
+            certmap_found = true;
+            break;
+        }
+    }
+
+    if (!certmap_found) {
         /* Try to add default matching rule */
         ret = sss_certmap_add_rule(sss_certmap_ctx, SSS_CERTMAP_MIN_PRIO,
                                    CERT_AUTH_DEFAULT_MATCHING_RULE, NULL, NULL);
@@ -166,23 +177,31 @@ errno_t p11_refresh_certmap_ctx(struct pam_ctx *pctx,
         goto done;
     }
 
-    for (c = 0; certmap_list[c] != NULL; c++) {
-        DEBUG(SSSDBG_TRACE_ALL,
-              "Trying to add rule [%s][%d][%s][%s].\n",
-              certmap_list[c]->name, certmap_list[c]->priority,
-              certmap_list[c]->match_rule, certmap_list[c]->map_rule);
-
-        ret = sss_certmap_add_rule(sss_certmap_ctx, certmap_list[c]->priority,
-                                   certmap_list[c]->match_rule,
-                                   certmap_list[c]->map_rule,
-                                   certmap_list[c]->domains);
-        if (ret != 0) {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "sss_certmap_add_rule failed for rule [%s] "
-                  "with error [%d][%s], skipping. "
-                  "Please check for typos and if rule syntax is supported.\n",
-                  certmap_list[c]->name, ret, sss_strerror(ret));
+    DLIST_FOR_EACH(dom, domains) {
+        certmap_list = dom->certmaps;
+        if (certmap_list == NULL || *certmap_list == NULL) {
             continue;
+        }
+
+        for (c = 0; certmap_list[c] != NULL; c++) {
+            DEBUG(SSSDBG_TRACE_ALL,
+                  "Trying to add rule [%s][%d][%s][%s].\n",
+                  certmap_list[c]->name, certmap_list[c]->priority,
+                  certmap_list[c]->match_rule, certmap_list[c]->map_rule);
+
+            ret = sss_certmap_add_rule(sss_certmap_ctx,
+                                       certmap_list[c]->priority,
+                                       certmap_list[c]->match_rule,
+                                       certmap_list[c]->map_rule,
+                                       certmap_list[c]->domains);
+            if (ret != 0) {
+                DEBUG(SSSDBG_CRIT_FAILURE,
+                      "sss_certmap_add_rule failed for rule [%s] "
+                      "with error [%d][%s], skipping. "
+                      "Please check for typos and if rule syntax is supported.\n",
+                      certmap_list[c]->name, ret, sss_strerror(ret));
+                continue;
+            }
         }
     }
 
@@ -204,19 +223,21 @@ errno_t p11_child_init(struct pam_ctx *pctx)
     int ret;
     struct certmap_info **certmaps;
     bool user_name_hint;
-    struct sss_domain_info *dom = pctx->rctx->domains;
+    struct sss_domain_info *dom;
 
-    ret = sysdb_get_certmap(dom, dom->sysdb, &certmaps, &user_name_hint);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "sysdb_get_certmap failed.\n");
-        return ret;
+    DLIST_FOR_EACH(dom, pctx->rctx->domains) {
+        ret = sysdb_get_certmap(dom, dom->sysdb, &certmaps, &user_name_hint);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_get_certmap failed.\n");
+            return ret;
+        }
+
+        dom->user_name_hint = user_name_hint;
+        talloc_free(dom->certmaps);
+        dom->certmaps = certmaps;
     }
 
-    dom->user_name_hint = user_name_hint;
-    talloc_free(dom->certmaps);
-    dom->certmaps = certmaps;
-
-    ret = p11_refresh_certmap_ctx(pctx, dom->certmaps);
+    ret = p11_refresh_certmap_ctx(pctx, pctx->rctx->domains);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "p11_refresh_certmap_ctx failed.\n");
         return ret;
@@ -690,6 +711,7 @@ struct tevent_req *pam_check_cert_send(TALLOC_CTX *mem_ctx,
                                        time_t timeout,
                                        const char *verify_opts,
                                        struct sss_certmap_ctx *sss_certmap_ctx,
+                                       const char *uri,
                                        struct pam_data *pd)
 {
     errno_t ret;
@@ -700,7 +722,7 @@ struct tevent_req *pam_check_cert_send(TALLOC_CTX *mem_ctx,
     struct timeval tv;
     int pipefd_to_child[2] = PIPE_INIT;
     int pipefd_from_child[2] = PIPE_INIT;
-    const char *extra_args[13] = { NULL };
+    const char *extra_args[16] = { NULL };
     uint8_t *write_buf = NULL;
     size_t write_buf_len = 0;
     size_t arg_c;
@@ -727,6 +749,15 @@ struct tevent_req *pam_check_cert_send(TALLOC_CTX *mem_ctx,
 
     /* extra_args are added in revers order */
     arg_c = 0;
+    if (uri != NULL) {
+        DEBUG(SSSDBG_TRACE_ALL, "Adding PKCS#11 URI [%s].\n", uri);
+        extra_args[arg_c++] = uri;
+        extra_args[arg_c++] = "--uri";
+    }
+
+    if ((pd->cli_flags & PAM_CLI_FLAGS_REQUIRE_CERT_AUTH) && pd->priv == 1) {
+        extra_args[arg_c++] = "--wait_for_card";
+    }
     extra_args[arg_c++] = nss_db;
     extra_args[arg_c++] = "--nssdb";
     if (verify_opts != NULL) {
@@ -1114,7 +1145,8 @@ static errno_t pack_cert_data(TALLOC_CTX *mem_ctx, const char *sysdb_username,
  * used when running gdm-password. */
 #define PKCS11_LOGIN_TOKEN_ENV_NAME "PKCS11_LOGIN_TOKEN_NAME"
 
-errno_t add_pam_cert_response(struct pam_data *pd, const char *sysdb_username,
+errno_t add_pam_cert_response(struct pam_data *pd, struct sss_domain_info *dom,
+                              const char *sysdb_username,
                               struct cert_auth_info *cert_info,
                               enum response_type type)
 {
@@ -1122,6 +1154,10 @@ errno_t add_pam_cert_response(struct pam_data *pd, const char *sysdb_username,
     char *env = NULL;
     size_t msg_len;
     int ret;
+    char *short_name = NULL;
+    char *domain_name = NULL;
+    const char *cert_info_name = sysdb_username;
+
 
     if (type != SSS_PAM_CERT_INFO && type != SSS_PAM_CERT_INFO_WITH_HINT) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Invalid response type [%d].\n", type);
@@ -1143,9 +1179,30 @@ errno_t add_pam_cert_response(struct pam_data *pd, const char *sysdb_username,
      * Smartcard. If this type of name is irritating at the PIN prompt or the
      * re_expression config option was set in a way that user@domain cannot be
      * handled anymore some more logic has to be added here. But for the time
-     * being I think using sysdb_username is fine. */
+     * being I think using sysdb_username is fine.
+     * As special case is the files provider which handles local users which
+     * by definition only have a short name. To avoid confusion by other
+     * modules on the PAM stack the short name is returned in this case. */
 
-    ret = pack_cert_data(pd, sysdb_username, cert_info, &msg, &msg_len);
+    if (sysdb_username != NULL) {
+        ret = sss_parse_internal_fqname(pd, sysdb_username,
+                                        &short_name, &domain_name);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Unable to parse name '%s' [%d]: %s, "
+                                       "using full name.\n",
+                                        sysdb_username, ret, sss_strerror(ret));
+        } else {
+            if (domain_name != NULL
+                    &&  is_files_provider(find_domain_by_name(dom, domain_name,
+                                                              false))) {
+                cert_info_name = short_name;
+            }
+        }
+    }
+
+    ret = pack_cert_data(pd, cert_info_name, cert_info, &msg, &msg_len);
+    talloc_free(short_name);
+    talloc_free(domain_name);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "pack_cert_data failed.\n");
         return ret;

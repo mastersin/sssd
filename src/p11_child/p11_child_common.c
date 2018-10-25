@@ -48,7 +48,7 @@ static const char *op_mode_str(enum op_mode mode)
         return "pre-auth";
         break;
     case OP_VERIFIY:
-        return "verifiy";
+        return "verify";
         break;
     default:
         return "unknown";
@@ -57,14 +57,15 @@ static const char *op_mode_str(enum op_mode mode)
 
 static int do_work(TALLOC_CTX *mem_ctx, enum op_mode mode, const char *ca_db,
                    struct cert_verify_opts *cert_verify_opts,
+                   bool wait_for_card,
                    const char *cert_b64, const char *pin,
                    const char *module_name, const char *token_name,
-                   const char *key_id, char **multi)
+                   const char *key_id, const char *uri, char **multi)
 {
     int ret;
     struct p11_ctx *p11_ctx;
 
-    ret = init_p11_ctx(mem_ctx, ca_db, &p11_ctx);
+    ret = init_p11_ctx(mem_ctx, ca_db, wait_for_card, &p11_ctx);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "init_p11_ctx failed.\n");
         return ret;
@@ -89,7 +90,7 @@ static int do_work(TALLOC_CTX *mem_ctx, enum op_mode mode, const char *ca_db,
         }
     } else {
         ret = do_card(mem_ctx, p11_ctx, mode, pin,
-                      module_name, token_name, key_id, multi);
+                      module_name, token_name, key_id, uri, multi);
     }
 
 done:
@@ -157,6 +158,8 @@ int main(int argc, const char *argv[])
     char *token_name = NULL;
     char *key_id = NULL;
     char *cert_b64 = NULL;
+    bool wait_for_card = false;
+    char *uri = NULL;
 
     struct poptOption long_options[] = {
         POPT_AUTOHELP
@@ -174,6 +177,7 @@ int main(int argc, const char *argv[])
         SSSD_LOGGER_OPTS
         {"auth", 0, POPT_ARG_NONE, NULL, 'a', _("Run in auth mode"), NULL},
         {"pre", 0, POPT_ARG_NONE, NULL, 'p', _("Run in pre-auth mode"), NULL},
+        {"wait_for_card", 0, POPT_ARG_NONE, NULL, 'w', _("Wait until card is available"), NULL},
         {"verification", 0, POPT_ARG_NONE, NULL, 'v', _("Run in verification mode"),
          NULL},
         {"pin", 0, POPT_ARG_NONE, NULL, 'i', _("Expect PIN on stdin"), NULL},
@@ -191,6 +195,8 @@ int main(int argc, const char *argv[])
          _("Key ID for authentication"), NULL},
         {"certificate", 0, POPT_ARG_STRING, &cert_b64, 0,
          _("certificate to verify, base64 encoded"), NULL},
+        {"uri", 0, POPT_ARG_STRING, &uri, 0,
+         _("PKCS#11 URI to restrict selection"), NULL},
         POPT_TABLEEND
     };
 
@@ -213,7 +219,7 @@ int main(int argc, const char *argv[])
         case 'a':
             if (mode != OP_NONE) {
                 fprintf(stderr,
-                        "\n--verifiy, --auth and --pre are mutually " \
+                        "\n--verify, --auth and --pre are mutually " \
                         "exclusive and should be only used once.\n\n");
                 poptPrintUsage(pc, stderr, 0);
                 _exit(-1);
@@ -223,7 +229,7 @@ int main(int argc, const char *argv[])
         case 'p':
             if (mode != OP_NONE) {
                 fprintf(stderr,
-                        "\n--verifiy, --auth and --pre are mutually " \
+                        "\n--verify, --auth and --pre are mutually " \
                         "exclusive and should be only used once.\n\n");
                 poptPrintUsage(pc, stderr, 0);
                 _exit(-1);
@@ -233,7 +239,7 @@ int main(int argc, const char *argv[])
         case 'v':
             if (mode != OP_NONE) {
                 fprintf(stderr,
-                        "\n--verifiy, --auth and --pre are mutually " \
+                        "\n--verify, --auth and --pre are mutually " \
                         "exclusive and should be only used once.\n\n");
                 poptPrintUsage(pc, stderr, 0);
                 _exit(-1);
@@ -258,6 +264,9 @@ int main(int argc, const char *argv[])
             }
             pin_mode = PIN_KEYPAD;
             break;
+        case 'w':
+            wait_for_card = true;
+            break;
         default:
             fprintf(stderr, "\nInvalid option %s: %s\n\n",
                   poptBadOption(pc, 0), poptStrerror(opt));
@@ -274,7 +283,7 @@ int main(int argc, const char *argv[])
 
     if (mode == OP_NONE) {
         fprintf(stderr, "\nMissing operation mode, either " \
-                        "--verifiy, --auth or --pre must be specified.\n\n");
+                        "--verify, --auth or --pre must be specified.\n\n");
         poptPrintUsage(pc, stderr, 0);
         _exit(-1);
     } else if (mode == OP_AUTH && pin_mode == PIN_NONE) {
@@ -341,7 +350,7 @@ int main(int argc, const char *argv[])
 
     ret = parse_cert_verify_opts(main_ctx, verify_opts, &cert_verify_opts);
     if (ret != EOK) {
-        DEBUG(SSSDBG_FATAL_FAILURE, "Failed to parse verifiy option.\n");
+        DEBUG(SSSDBG_FATAL_FAILURE, "Failed to parse verify option.\n");
         goto fail;
     }
 
@@ -360,8 +369,8 @@ int main(int argc, const char *argv[])
         }
     }
 
-    ret = do_work(main_ctx, mode, nss_db, cert_verify_opts, cert_b64,
-                 pin, module_name, token_name, key_id, &multi);
+    ret = do_work(main_ctx, mode, nss_db, cert_verify_opts, wait_for_card,
+                  cert_b64, pin, module_name, token_name, key_id, uri, &multi);
     if (ret != 0) {
         DEBUG(SSSDBG_OP_FAILURE, "do_work failed.\n");
         goto fail;

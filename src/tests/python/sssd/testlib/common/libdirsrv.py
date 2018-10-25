@@ -1,7 +1,10 @@
 """This module contains methods to create Directory Server Instance."""
 from __future__ import print_function
 import os
-import ConfigParser
+try:
+    import ConfigParser
+except ImportError:
+    import configparser as ConfigParser
 import tempfile
 import subprocess
 import socket
@@ -75,7 +78,7 @@ class DirSrv(object):
 
         (ds_config, ds_config_file_path) = tempfile.mkstemp(suffix='cfg')
         os.close(ds_config)
-        with open(ds_config_file_path, "wb") as outfile:
+        with open(ds_config_file_path, "w") as outfile:
             config.write(outfile)
         return ds_config_file_path
 
@@ -122,6 +125,50 @@ class DirSrv(object):
         except subprocess.CalledProcessError:
             raise
 
+    def _copy_pkcs12(self, ssl_dir):
+        """ Copy the pkcs12 files from ssl_dir to
+        DS instance directory """
+
+        nss_db_files = ['ca.p12', 'server.p12', 'pin.txt', 'pwfile']
+        for db_file in nss_db_files:
+            source = os.path.join(ssl_dir, db_file)
+            destination = os.path.join(self.dsinst_path, db_file)
+            self.multihost.transport.put_file(source, destination)
+        for db_file in nss_db_files:
+            ls_cmd = 'ls %s/%s' % (self.dsinst_path, db_file)
+            cmd = self.multihost.run_command(ls_cmd)
+            if cmd.returncode != 0:
+                return False
+        return True
+
+    def _import_certs(self, pkcs12_path, pwfile):
+        """ Import the certs from pkcs12 """
+        pk12_cmd = 'pk12util -i %s -d %s -k %s'\
+                   ' -w %s' % (pkcs12_path, self.dsinst_path, pwfile, pwfile)
+        cmd = self.multihost.run_command(pk12_cmd)
+        if cmd.returncode == 0:
+            return True
+
+    def _set_dsperms(self, file_path):
+        """ Set DSUSER permissions on files """
+        change_ownership = ['chown', DS_USER, file_path]
+        change_group = ['chgrp', DS_GROUP, file_path]
+        chmod_file = ['chmod', '600', file_path]
+        try:
+            self.multihost.run_command(change_ownership)
+        except subprocess.CalledProcessError:
+            raise DirSrvException(
+                'fail to user change ownership of pin.txt fail')
+        try:
+            self.multihost.run_command(change_group)
+        except subprocess.CalledProcessError:
+            raise DirSrvException(
+                'fail to change group ownership of pin.txt file')
+        try:
+            self.multihost.run_command(chmod_file)
+        except subprocess.CalledProcessError:
+            raise DirSrvException('fail to change permissions of pin.txt file')
+
     def setup_certs(self, ssl_dir):
         """copy CA and Server certs to all DS instances.
 
@@ -142,39 +189,35 @@ class DirSrv(object):
         try:
             self.multihost.run_command(stop_ds)
         except subprocess.CalledProcessError:
-            return True
+            raise DirSrvException("Unable to stop Directory Server instance")
         else:
             self.multihost.log.info('DS instance stopped successfully')
-        nss_db_files = ['cert8.db', 'key3.db', 'secmod.db', 'pin.txt']
-        dirsrv_cert_path = '/etc/dirsrv/' + self.ds_inst_name + '/cacert.pem'
+            self._copy_pkcs12(ssl_dir)
         cacert_file_path = '%s/cacert.pem' % ('/etc/openldap/cacerts')
-        for db_file in nss_db_files:
-            source = os.path.join(ssl_dir, db_file)
-            destination = os.path.join(self.dsinst_path, db_file)
-            self.multihost.transport.put_file(source, destination)
         target_pin_file = os.path.join(self.dsinst_path, 'pin.txt')
-        change_ownership = ['chown', DS_USER, target_pin_file]
-        change_group = ['chgrp', DS_GROUP, target_pin_file]
-        chmod_file = ['chmod', '600', target_pin_file]
-        # copy the cacert file to test_dir
+        pwfile = os.path.join(self.dsinst_path, 'pwfile')
+        ca_p12 = os.path.join(self.dsinst_path, 'ca.p12')
+        server_p12 = os.path.join(self.dsinst_path, 'server.p12')
+        # recreate the database
+        certutil_cmd = 'certutil -N -d %s -f %s' % (self.dsinst_path, pwfile)
+        self.multihost.run_command(certutil_cmd)
         create_cert_dir = 'mkdir -p /etc/openldap/cacerts'
+        # recreate the database
         self.multihost.run_command(create_cert_dir)
+        pkcs12_file = [ca_p12, server_p12]
+        for pkcs_file in pkcs12_file:
+            if not self._import_certs(pkcs_file, pwfile):
+                raise DirSrvException("importing certificates failed")
+        set_trust_cmd = 'certutil -M -d %s -n "ExampleCA"'\
+                        ' -t "CTu,u,u" -f %s' % (self.dsinst_path, pwfile)
+        self.multihost.run_command(create_cert_dir)
+        self.multihost.run_command(set_trust_cmd)
         self.multihost.transport.put_file(os.path.join(
             ssl_dir, 'cacert.pem'), cacert_file_path)
         try:
-            self.multihost.run_command(change_ownership)
-        except subprocess.CalledProcessError:
-            raise DirSrvException(
-                'fail to user change ownership of pin.txt fail')
-        try:
-            self.multihost.run_command(change_group)
-        except subprocess.CalledProcessError:
-            raise DirSrvException(
-                'fail to change group ownership of pin.txt file')
-        try:
-            self.multihost.run_command(chmod_file)
-        except subprocess.CalledProcessError:
-            raise DirSrvException('fail to change permissions of pin.txt file')
+            self._set_dsperms(target_pin_file)
+        except DirSrvException:
+            raise
         start_ds = ['systemctl', 'start', 'dirsrv@%s' % (self.instance_name)]
         try:
             self.multihost.run_command(start_ds)
@@ -182,8 +225,6 @@ class DirSrv(object):
             raise DirSrvException('Could not Start DS Instance')
         else:
             self.multihost.log.info('DS instance started successfully')
-            ca = self.multihost.get_file_contents(cacert_file_path)
-            self.multihost.transport.put_file_contents(dirsrv_cert_path, ca)
 
     def enable_ssl(self, binduri, tls_port):
         """sets TLS Port and enabled TLS on Directory Server.
@@ -202,31 +243,26 @@ class DirSrv(object):
                                   bindpw=self.dsrootdn_pwd)
         # Enable TLS
         mod_dn1 = 'cn=encryption,cn=config'
-        add_tls = [(ldap.MOD_ADD, 'nsTLS1', 'on')]
+        add_tls = [(ldap.MOD_ADD, 'nsTLS1', [b'on'])]
         (ret, return_value) = ldap_obj.modify_ldap(mod_dn1, add_tls)
         if not return_value:
             raise LdapException('fail to enable TLS, Error:%s' % (ret))
         else:
             print('Enabled nsTLS1=on')
-
-        entry1 = {
-            'objectClass': ['top', 'nsEncryptionModule'],
-            'cn': 'RSA',
-            'nsSSLtoken': 'internal (software)',
-            'nsSSLPersonalitySSL': 'Server-Cert-%s' % (self.dsinstance_host),
-            'nsSSLActivation': 'on'
-            }
-        dn1 = 'cn=RSA,cn=encryption,cn=config'
-        (ret, return_value) = ldap_obj.add_entry(entry1, dn1)
+        mod_dn2 = 'cn=RSA,cn=encryption,cn=config'
+        mod_security = [(ldap.MOD_REPLACE, 'nsSSLPersonalitySSL',
+                         [b'Server-Cert-%s' %
+                          ((self.dsinstance_host.encode()))])]
+        (ret, return_value) = ldap_obj.modify_ldap(mod_dn2, mod_security)
         if not return_value:
             raise LdapException('fail to set Server-Cert nick:%s' % (ret))
         else:
             print('Enabled Server-Cert nick')
 
         # Enable security
-        mod_dn2 = 'cn=config'
-        enable_security = [(ldap.MOD_REPLACE, 'nsslapd-security', 'on')]
-        (ret, return_value) = ldap_obj.modify_ldap(mod_dn2, enable_security)
+        mod_dn3 = 'cn=config'
+        enable_security = [(ldap.MOD_REPLACE, 'nsslapd-security', [b'on'])]
+        (ret, return_value) = ldap_obj.modify_ldap(mod_dn3, enable_security)
         if not return_value:
             raise LdapException(
                 'fail to enable nsslapd-security, Error:%s' % (ret))
@@ -234,10 +270,10 @@ class DirSrv(object):
             print('Enabled nsslapd-security')
 
         # set the appropriate TLS port
-        mod_dn3 = 'cn=config'
+        mod_dn4 = 'cn=config'
         enable_ssl_port = [(ldap.MOD_REPLACE, 'nsslapd-securePort',
-                            str(tls_port))]
-        (ret, return_value) = ldap_obj.modify_ldap(mod_dn3, enable_ssl_port)
+                            str(tls_port).encode())]
+        (ret, return_value) = ldap_obj.modify_ldap(mod_dn4, enable_ssl_port)
         if not return_value:
             raise LdapException(
                 'fail to set nsslapd-securePort, Error:%s' % (ret))
@@ -555,5 +591,4 @@ class DirSrvWrap(object):
                 del self.ds_used_ports[instance_name]
                 return True
         else:
-            raise DirSrvException('%s Instance could not found' %
-                                  (instance_name))
+            raise DirSrvException('%s Instance not found' % instance_name)

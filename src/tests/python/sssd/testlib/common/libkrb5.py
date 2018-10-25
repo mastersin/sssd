@@ -1,5 +1,9 @@
 from __future__ import print_function
-import ConfigParser
+
+try:
+    import ConfigParser
+except ImportError:
+    import configparser as ConfigParser
 import tempfile
 import os
 import subprocess
@@ -62,7 +66,7 @@ class krb5srv(object):
 
         (krb_config, krb_config_path) = tempfile.mkstemp(suffix='cfg')
         os.close(krb_config)
-        with open(krb_config_path, "wb") as outfile:
+        with open(krb_config_path, "w") as outfile:
             config.write(outfile)
         return krb_config_path
 
@@ -74,7 +78,7 @@ class krb5srv(object):
         acl = "*/%s@%s *" % ('admin', self.krb_realm)
         (acl_config, acl_config_path) = tempfile.mkstemp(suffix='cfg')
         os.close(acl_config)
-        with open(acl_config_path, "wb") as outfile:
+        with open(acl_config_path, "w") as outfile:
             outfile.write(acl)
         return acl_config_path
 
@@ -194,20 +198,14 @@ class krb5srv(object):
             :Exception: subprocess.CalledProcessError
         """
         # stop the Kerberos server
-        try:
-            self.multihost.run_command(['systemctl', 'stop', 'krb5kdc'])
-        except subprocess.CalledProcessError:
-            raise
-        else:
-            self.multihost.log.info("stopped krb5kdc service")
-
-        # stop kadmin service
-        try:
-            self.multihost.run_command(['systemctl', 'stop', 'krb5kdc'])
-        except subprocess.CalledProcessError:
-            raise
-        else:
-            self.multihost.log.info("stopped kadmin service")
+        for service in ('krb5kdc', 'kadmin'):
+            stop_cmd = 'systemctl stop %s' % service
+            try:
+                self.multihost.run_command(stop_cmd)
+            except subprocess.CalledProcessError:
+                raise
+            else:
+                self.multihost.log.info("stopped %s service ")
 
         # destroy Kerberos database
         try:

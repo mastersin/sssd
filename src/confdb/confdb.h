@@ -130,8 +130,10 @@
 #define CONFDB_PAM_CERT_AUTH "pam_cert_auth"
 #define CONFDB_PAM_CERT_DB_PATH "pam_cert_db_path"
 #define CONFDB_PAM_P11_CHILD_TIMEOUT "p11_child_timeout"
+#define CONFDB_PAM_WAIT_FOR_CARD_TIMEOUT "p11_wait_for_card_timeout"
 #define CONFDB_PAM_APP_SERVICES "pam_app_services"
 #define CONFDB_PAM_P11_ALLOWED_SERVICES "pam_p11_allowed_services"
+#define CONFDB_PAM_P11_URI "p11_uri"
 
 /* SUDO */
 #define CONFDB_SUDO_CONF_ENTRY "config/sudo"
@@ -264,6 +266,15 @@
 #define CONFDB_KCM_CONF_ENTRY "config/kcm"
 #define CONFDB_KCM_SOCKET "socket_path"
 #define CONFDB_KCM_DB "ccache_storage" /* Undocumented on purpose */
+
+/* Certificate mapping rules */
+#define CONFDB_CERTMAP_BASEDN "cn=certmap,cn=config"
+#define CONFDB_CERTMAP_NAME "cn"
+#define CONFDB_CERTMAP_MAPRULE "maprule"
+#define CONFDB_CERTMAP_MATCHRULE "matchrule"
+#define CONFDB_CERTMAP_DOMAINS "domains"
+#define CONFDB_CERTMAP_PRIORITY "priority"
+
 
 struct confdb_ctx;
 struct config_file_ctx;
@@ -662,6 +673,21 @@ int confdb_get_sub_sections(TALLOC_CTX *mem_ctx,
                             const char *section,
                             char ***sections,
                             int *num_sections);
+
+/**
+ * @brief Convenience function to write the certificate mapping and matching
+ * rules from the configuration database to the cache of a domain
+ *
+ * @param[in] cdb The connection object to the confdb
+ * @param[in] dom Target domain where to rules should be written to
+ *
+ * @return 0 - Successfully retrieved the entry (or used the default)
+ * @return ENOMEM - There was insufficient memory to complete the operation
+ * @return EINVAL - Typically internal processing error
+ */
+int confdb_certmap_to_sysdb(struct confdb_ctx *cdb,
+                            struct sss_domain_info *dom);
+
 /**
  * @}
  */

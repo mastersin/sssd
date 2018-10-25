@@ -371,6 +371,7 @@ struct cert_verify_opts {
     bool do_verification;
     char *ocsp_default_responder;
     char *ocsp_default_responder_signing_cert;
+    char *crl_file;
 };
 
 errno_t parse_cert_verify_opts(TALLOC_CTX *mem_ctx, const char *verify_opts,
@@ -663,6 +664,7 @@ int sss_del_seuser(const char *login_name);
 int sss_get_seuser(const char *linuxuser,
                    char **selinuxuser,
                    char **level);
+int sss_seuser_exists(const char *linuxuser);
 
 /* convert time from generalized form to unix time */
 errno_t sss_utc_to_time_t(const char *str, const char *format, time_t *unix_time);
@@ -723,6 +725,7 @@ errno_t create_preauth_indicator(void);
 #define P11_CHILD_LOG_FILE "p11_child"
 #define P11_CHILD_PATH SSSD_LIBEXEC_PATH"/p11_child"
 #define P11_CHILD_TIMEOUT_DEFAULT 10
+#define P11_WAIT_FOR_CARD_TIMEOUT_DEFAULT 60
 #endif  /* SSSD_LIBEXEC_PATH */
 
 #endif /* __SSSD_UTIL_H__ */

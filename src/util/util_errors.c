@@ -19,6 +19,7 @@
 */
 
 #include "util/util.h"
+#include <ldb.h>
 
 struct err_string {
     const char *msg;
@@ -75,6 +76,7 @@ struct err_string error_to_str[] = {
     { "LDAP search returned a referral" }, /* ERR_REFERRAL */
     { "Error setting SELinux user context" }, /* ERR_SELINUX_CONTEXT */
     { "SELinux is not managed by libsemanage" }, /* ERR_SELINUX_NOT_MANAGED */
+    { "SELinux user does not exist" }, /* ERR_SELINUX_USER_NOT_FOUND */
     { "Username format not allowed by re_expression" }, /* ERR_REGEX_NOMATCH */
     { "Time specification not supported" }, /* ERR_TIMESPEC_NOT_SUPPORTED */
     { "Invalid SSSD configuration detected" }, /* ERR_INVALID_CONFIG */
@@ -145,3 +147,27 @@ const char *sss_strerror(errno_t error)
     return strerror(error);
 }
 
+/* TODO: make a more complete and precise mapping */
+errno_t sss_ldb_error_to_errno(int ldberr)
+{
+    switch (ldberr) {
+    case LDB_SUCCESS:
+        return EOK;
+    case LDB_ERR_OPERATIONS_ERROR:
+        return EIO;
+    case LDB_ERR_NO_SUCH_OBJECT:
+        return ENOENT;
+    case LDB_ERR_BUSY:
+        return EBUSY;
+    case LDB_ERR_ATTRIBUTE_OR_VALUE_EXISTS:
+    case LDB_ERR_ENTRY_ALREADY_EXISTS:
+        return EEXIST;
+    case LDB_ERR_INVALID_ATTRIBUTE_SYNTAX:
+        return EINVAL;
+    default:
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "LDB returned unexpected error: [%i]\n",
+              ldberr);
+        return EFAULT;
+    }
+}

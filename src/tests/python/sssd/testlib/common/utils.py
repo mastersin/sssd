@@ -1,5 +1,6 @@
 """ This module defines classes regarding sssd tools,
 AD Operations and LDAP Operations"""
+
 from __future__ import print_function
 import os
 import tempfile
@@ -8,15 +9,23 @@ import array
 import random
 import socket
 import shlex
-import ConfigParser
+try:
+    import ConfigParser
+except ImportError:
+    import configparser as ConfigParser
 from subprocess import CalledProcessError
-from StringIO import StringIO
+try:
+    from StringIO import StringIO
+except ImportError:
+    from io import StringIO
 import ldap
 import ldif
 import paramiko
 from ldap import modlist
 from .authconfig import RedHatAuthConfig
 from .exceptions import PkiLibException
+from .exceptions import LdapException
+from .exceptions import SSSDException
 
 
 PARAMIKO_VERSION = (int(paramiko.__version__.split('.')[0]),
@@ -39,22 +48,20 @@ class sssdTools(object):
 
             :param str ip_addr: IP Address to be added in resolv.conf
             :return: None
-            :Exception: Raises exception of builtin type Exception
         """
         self.multihost.log.info("Taking backup of /etc/resolv.conf")
-        output = self.multihost.run_command(['cp', '-f', '/etc/resolv.conf',
-                                             '/etc/resolv.conf.backup'],
-                                            set_env=False, raiseonerr=False)
-        if output.returncode == 0:
-            self.multihost.log.info("/etc/resolv.conf successfully backed up")
-            self.multihost.log.info("Add ip addr %s in resolv.conf" % ip_addr)
-            nameserver = 'nameserver %s\n' % ip_addr
-            contents = self.multihost.get_file_contents('/etc/resolv.conf')
-            if not contents.startswith(nameserver):
-                contents = nameserver + contents.replace(nameserver, '')
-                self.multihost.put_file_contents('/etc/resolv.conf', contents)
+        bkup_cmd = 'cp -f /etc/resolv.conf /etc/resolv.conf.bkup'
+        self.multihost.run_command(bkup_cmd, raiseonerr=False)
+        self.multihost.log.info("/etc/resolv.conf successfully backed up")
+        self.multihost.log.info("Add ip addr %s in resolv.conf" % ip_addr)
+        nameserver = 'nameserver %s\n' % ip_addr
+        resolv_conf = self.multihost.get_file_contents('/etc/resolv.conf')
+        if isinstance(resolv_conf, bytes):
+            contents = resolv_conf.decode('utf-8')
         else:
-            raise Exception("Updating resolv.conf with ip %s failed" % ip_addr)
+            contents = resolv_conf
+        contents = nameserver + contents.replace(nameserver, '')
+        self.multihost.put_file_contents('/etc/resolv.conf', contents)
 
     def config_authconfig(self, hostname, domainname):
         """ Run authconfig to configure Kerberos and SSSD auth on remote host
@@ -99,7 +106,7 @@ class sssdTools(object):
         sambaconfig.set("global", "client signing", "yes")
         sambaconfig.set("global", "client use spnego", "yes")
         tmp_fd, tmp_file_path = tempfile.mkstemp(suffix='conf', prefix='smb')
-        with open(tmp_file_path, "wb") as outfile:
+        with open(tmp_file_path, "w") as outfile:
             sambaconfig.write(outfile)
         self.multihost.transport.put_file(tmp_file_path, '/etc/samba/smb.conf')
         os.close(tmp_fd)
@@ -114,9 +121,7 @@ class sssdTools(object):
             :param str client_software: client software to be used (sssd/samba)
             :param str server_software: server software (active-directory/ipa)
             :param str membership_software: membership software (samba/adcli)
-            :return bool: True if successfully joined to AD/IPA
-                          else raises Exception
-            :Exception: Raises exception(builtin)
+            :Exception: Raises SSSDException
         """
 
         cmd = self.multihost.run_command(['realm', 'join', domainname,
@@ -130,9 +135,7 @@ class sssdTools(object):
                                          raiseonerr=False)
 
         if cmd.returncode != 0:
-            raise Exception("Error: %s" % cmd.stderr_text)
-        else:
-            return True
+            raise SSSDException("Error: %s" % cmd.stderr_text)
 
     def realm_leave(self, domainname):
         """ Leave system from AD/IPA Domain
@@ -140,16 +143,14 @@ class sssdTools(object):
             :param str domainname: domain name of AD/IPA
             :return bool: True if successfully dis-joined to AD/IPA
              else raises Exception
-            :Exception: Raises exception(builtin)
+            :Exception: Raises SSSDException
         """
 
         cmd = self.multihost.run_command(['realm', 'leave',
                                           domainname, '-v'],
                                          raiseonerr=False)
         if cmd.returncode != 0:
-            raise Exception("Error: %s", cmd.stderr_text)
-        else:
-            return True
+            raise SSSDException("Error: %s", cmd.stderr_text)
 
     def export_nfs_fs(self, path_list, nfs_client):
         """ Add local file systems directories to /etc/exports
@@ -167,7 +168,7 @@ class sssdTools(object):
             cmd = self.multihost.run_command(['mkdir', '-p', local_dir],
                                              raiseonerr=False)
             if cmd.returncode != 0:
-                raise Exception("Unable to create %s directory" % local_dir)
+                raise SSSDException("fail to create %s directory" % local_dir)
             exp_share = '{}{}{}{}'.format(local_dir, ' ', nfs_client,
                                           '(rw,sync,fsid=0)')
 
@@ -194,10 +195,12 @@ class sssdTools(object):
                                                       relative_path],
                                                      raiseonerr=False)
                 if rm_file.returncode != 0:
-                    raise Exception("Error: %s", cmd.stderr_text)
+                    raise SSSDException("Error: %s", cmd.stderr_text)
                 else:
                     print("Successfully deleted %s" % (relative_path))
-                    return True
+        else:
+            raise SSSDException('%s path not found' % cache_path)
+        return True
 
     def domain_from_suffix(self, suffix):
         """ Domain name from the suffix
@@ -228,7 +231,7 @@ class sssdTools(object):
         path = ("/var/log/sssd/sssd_%s.log" % domainname)
         cmd = self.multihost.run_command(['rm', '-rf', path], raiseonerr=False)
         if cmd.returncode != 0:
-            raise Exception("Error: %s", cmd.stderr_text)
+            raise SSSDException("Error: %s", cmd.stderr_text)
         else:
             return True
 
@@ -245,7 +248,7 @@ class sssdTools(object):
         cmd = self.multihost.run_command(['net', 'ads', 'dn', user_dn],
                                          raiseonerr=False)
         if cmd.returncode != 0:
-            raise Exception("Error: %s", cmd.stderr_text)
+            raise SSSDException("Error: %s", cmd.stderr_text)
         else:
             return(True, cmd.stdout_text)
 
@@ -264,6 +267,7 @@ class sssdTools(object):
                         '-l ' + username + ' localhost whoami' + '\n'
         expect_script += 'expect "*assword: "\n'
         expect_script += 'send "' + password + '\r"\n'
+        expect_script += 'sleep 30 \n'
         expect_script += 'expect {\n'
         expect_script += '\ttimeout { set result_code 0 }\n'
         expect_script += '\t"' + username + '" { set result_code 3 }\n'
@@ -272,9 +276,9 @@ class sssdTools(object):
         expect_script += '}\n'
         expect_script += 'exit $result_code\n'
         print(expect_script)
-        rand_tag = ''.join(random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789')
-                           for _ in range(10))
-        exp_file = "/tmp/qe_pytest_expect_file" + rand_tag
+        randtag = ''.join(random.choice('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+                          for _ in range(10))
+        exp_file = "/tmp/qe_pytest_expect_file" + randtag
         self.multihost.put_file_contents(exp_file, expect_script)
         print(("remote side expect script filename: %s") % exp_file)
 
@@ -297,7 +301,7 @@ class sssdTools(object):
         if krb5_server is None:
             krb5_server = self.multihost.sys_hostname
         if realm is None:
-            raise Exception("Error: realm should be passed")
+            raise SSSDException("Error: realm should be passed")
         else:
             realm_def = ("{\n"
                          "kdc = %s\n"
@@ -315,7 +319,6 @@ class sssdTools(object):
             krb5config.set("libdefaults", "default_realm", realm.upper())
             krb5config.set("libdefaults", "dns_lookup_realm", "false")
             krb5config.set("libdefaults", "dns_lookup_kdc", "false")
-            krb5config.set("libdefaults", "allow_weak_crypto", "yes")
             krb5config.set("libdefaults", "forwardable", "true")
             krb5config.set("libdefaults", "rdns", "false")
             krb5config.add_section("realms")
@@ -335,7 +338,7 @@ class sssdTools(object):
             krb5config.set("pam", "forwardable", "true")
             temp_fd, temp_file_path = tempfile.mkstemp(suffix='conf',
                                                        prefix='krb5conf')
-            with open(temp_file_path, "wb") as outfile:
+            with open(temp_file_path, "w") as outfile:
                 krb5config.write(outfile)
             self.multihost.run_command(['cp', '-f', '/etc/krb5.conf',
                                         '/etc/krb5.conf.orig'])
@@ -346,19 +349,23 @@ class sssdTools(object):
         """ Enable kcm
             :param: None
             :Return: None
-            :Exception: Raise Exception("message")
+            :Exception: Raise SSSDException
         """
-        kcm_cache_file = '/etc/krb5.conf.d/kcm_default_ccache'
-        config = ConfigParser.SafeConfigParser()
-        config.optionxform = str
-        config.add_section('libdefaults')
-        config.set('libdefaults', 'default_ccache_name', "KCM:")
-        temp_fd, temp_file_path = tempfile.mkstemp(suffix='conf',
-                                                   prefix='krb5cc')
-        with open(temp_file_path, 'wb') as kcmfile:
-            config.write(kcmfile)
-        self.multihost.transport.put_file(temp_file_path, kcm_cache_file)
-        os.close(temp_fd)
+        self.multihost.transport.get_file('/etc/krb5.conf', '/tmp/krb5.conf')
+        str1 = 'includedir /var/lib/sss/pubconf/krb5.include.d/'
+        str2 = 'includedir /etc/krb5.conf.d/'
+        with open('/tmp/krb5.conf', 'r') as krb_org_file:
+            with open('/tmp/krb5.conf.kcm', 'w+') as krb_new_file:
+                krb_new_file.write(str1)
+                krb_new_file.write('\n')
+                krb_new_file.write(str2)
+                krb_new_file.write('\n')
+                krb_new_file.write('\n')
+                krb_new_file.write(krb_org_file.read())
+        backup_krb5_conf = 'cp -f /etc/krb5.conf /etc/krb5.conf.orig'
+        self.multihost.run_command(backup_krb5_conf)
+        self.multihost.transport.put_file('/tmp/krb5.conf.kcm',
+                                          '/etc/krb5.conf')
         enable_sssd_kcm_socket = 'systemctl enable sssd-kcm.socket'
         cmd = self.multihost.run_command(enable_sssd_kcm_socket,
                                          raiseonerr=False)
@@ -367,23 +374,23 @@ class sssdTools(object):
             self.multihost.run_command(['ls', '-l', symlink])
         except subprocess.CalledProcessError:
             self.multihost.log.info("kcm socket not enabled")
-            raise Exception("kcm socket not enabled")
+            raise SSSDException("kcm socket not enabled")
         start_ssd_kcm_socket = 'systemctl start sssd-kcm.socket'
         cmd = self.multihost.run_command(start_ssd_kcm_socket,
                                          raiseonerr=False)
         if cmd.returncode != 0:
-            raise Exception("sssd-kcm.socket service not started")
-        start_sssd_kcm_service = 'systemctl enable sssd-kcm.service'
-        cmd = self.multihost.run_command(start_sssd_kcm_service,
+            raise SSSDException("sssd-kcm.socket service not started")
+        enable_kcm_service = 'systemctl enable sssd-kcm.service'
+        cmd = self.multihost.run_command(enable_kcm_service,
                                          raiseonerr=False)
         symlink = '/etc/systemd/system/sockets.target.wants/sssd-kcm.socket'
         if cmd.returncode != 0:
-            raise Exception("sssd-kcm.service not enabled")
+            raise SSSDException("sssd-kcm.service not enabled")
         try:
             self.multihost.run_command(['ls', '-l', symlink])
         except subprocess.CalledProcessError:
             self.multihost.log.info("kcm socket not enabled")
-            raise Exception("kcm socket not enabled")
+            raise SSSDException("kcm socket not enabled")
 
 
 class LdapOperations(object):
@@ -398,14 +405,12 @@ class LdapOperations(object):
         conn: ldap bind object (already  initialized)
     """
 
-    def __init__(self, uri, binddn, bindpw):
-        self.uri = uri
+    def __init__(self, uri, binddn, bindpw, port=None):
+        self.uri = uri if not port else '%s:%s' % (uri, port)
         self.binddn = binddn
         self.bindpw = bindpw
         self.conn = ldap.initialize(uri)
         self.conn = self.bind()
-        if type(self.conn).__name__ != "instance":
-            raise self.conn[0]
 
     def bind(self):
         """ Bind to ldap server
@@ -495,7 +500,7 @@ class LdapOperations(object):
             :param str basedn: Base dn ('dc=example,dc=test')
             :param dict user_attr: Entry attributes
             :Return bool: Return True
-            :Exception: Raise Exception if unable to add user
+            :Exception: Raise SSSDException if unable to add user
         """
         common_name = user_attr['cn']
         uid = user_attr['uid']
@@ -531,40 +536,92 @@ class LdapOperations(object):
             location = 'US'
 
         attr = {
-            'objectClass': ['top', 'posixAccount', 'inetOrgPerson'],
-            'cn': common_name, 'uid': uid, 'sn': surname, 'loginShell': shell,
-            'homeDirectory': home_directory, 'uidNumber': uidnumber,
-            'gidNumber': gidnumber, 'userPassword': password,
-            'mail': mail, 'gecos': gecos, 'l': location}
+            'objectClass': [b'top', b'posixAccount', b'inetOrgPerson'],
+            'cn': common_name.encode('utf-8'), 'uid': uid.encode('utf-8'),
+            'sn': surname.encode('utf-8'), 'loginShell': shell.encode('utf-8'),
+            'homeDirectory': home_directory.encode('utf-8'),
+            'uidNumber': uidnumber.encode('utf-8'),
+            'gidNumber': gidnumber.encode('utf-8'),
+            'userPassword': password.encode('utf-8'),
+            'mail': mail.encode('utf-8'), 'gecos': gecos.encode('utf-8'),
+            'l': location.encode('utf-8')}
 
         user_dn = 'uid=%s,%s,%s' % (uid, org_unit, basedn)
         (ret, _) = self.add_entry(attr, user_dn)
         if ret == 'Success':
             return True
         else:
-            raise Exception('Unable to add User to ldap')
+            raise LdapException('Unable to add User to ldap')
 
-    def posix_group(self, org_unit, basedn, group_attr):
+    def posix_group(self, org_unit, basedn, group_attr, memberUid=False):
         """ Add POSIX group
             :param str ou: Organizational unit (ou=Groups)
             :param str basedn: Base dn ('dc=example,dc=test')
             :param dict group_attr: Entry attributes
+            :param memberUid: set by default to false, True when
+             posix group add with memberUid
             :Return bool: Return True
-            :Exception: Raise Exception if unable to add user
+            :Exception: Raise LdapException if unable to add user
         """
+        attr = {}
         group_cn = group_attr['cn']
         gidnumber = group_attr['gidNumber']
-        member_dn = group_attr['uniqueMember']
+        if memberUid:
+            member_uid = group_attr['memberUid']
+            objectClass = [b'posixGroup', b'top']
+            attr['memberUid'] = member_uid.encode('utf-8')
+        else:
+            member_dn = group_attr['uniqueMember']
+            objectClass = [b'posixGroup', b'top', b'groupOfUniqueNames']
+            attr['uniqueMember'] = member_dn.encode('utf-8')
         user_password = '{crypt}x'
-        attr = {
-            'objectClass': ['posixGroup', 'top', 'groupOfUniqueNames'],
-            'gidNumber': gidnumber, 'cn': group_cn,
-            'userPassword': user_password, 'uniqueMember': member_dn}
-
+        attr['objectClass'] = objectClass
+        attr['gidNumber'] = gidnumber.encode('utf-8')
+        attr['cn'] = group_cn.encode('utf-8')
+        attr['userPassword'] = user_password.encode('utf-8')
         group_dn = 'cn=%s,%s,%s' % (group_cn, org_unit, basedn)
         (ret, _) = self.add_entry(attr, group_dn)
         if ret != 'Success':
-            raise Exception('Unable to add group to ldap')
+            raise LdapException('Unable to add group to ldap')
+
+    def org_unit(self, org_unit, basedn):
+        """ Add Organizational Unit
+            :param str ou: Organizational unit name
+            :param str basedn: Base dn ('dc=example,dc=test')
+            :Exception: Raise LdapException if unable to organizational
+        """
+        attr = {
+            'objectClass': [b'top', b'organizationalUnit'],
+            'ou': org_unit.encode('utf-8')}
+        org_dn = 'ou=%s,%s' % (org_unit, basedn)
+        (ret, _) = self.add_entry(attr, org_dn)
+        if ret != 'Success':
+            raise LdapException('Unable to add organizational unit to ldap')
+
+    def add_sudo_rule(self, ruledn, sudoHost,
+                      sudoCommand, sudoUser, sudoOption=None):
+        """ Add Sudo rules in Directory Server
+            parm str ruledn: sudo rule DN
+            param str sudoHost: Host on which sudo command should run
+            param str sudoCommand: Command to run with sudo
+            param str sudoUser: Posix user name
+            param list sudoOption: options like requiretty,authenticate
+        """
+        rulename = ruledn.split(',')[0].split('=')[1]
+        sudo_attr = {
+            'objectClass': [b'top', b'sudoRole'],
+            'cn': rulename.encode('utf-8'),
+            'sudoHost': sudoHost.encode('utf-8'),
+            'sudoCommand': sudoCommand.encode('utf-8'),
+            'sudoUser': sudoUser.encode('utf-8')}
+        (ret, _) = self.add_entry(sudo_attr, ruledn)
+
+        if ret != 'Success':
+            raise LdapException("Unable to add sudo rule %s" % ruledn)
+        if sudoOption:
+            for option in sudoOption:
+                mod = [(ldap.MOD_ADD, 'sudoOption', option.encode('utf-8'))]
+                (_, _) = self.modify_ldap(ruledn, mod)
 
     def enable_autofs_schema(self, basedn):
         """ Enable autofs schema
@@ -676,7 +733,7 @@ class PkiTools(object):
         :param str cwd: Current working Directory
 
         :return stdout, stderr and returncode: if command return code is 0
-        :Exception: raises exception if raiseonerr is True
+        :Exception: raises subprocess.CalledProcessError Exception
         """
 
         p_in = None
@@ -704,7 +761,7 @@ class PkiTools(object):
                               serverlist,
                               ca_dn=None,
                               passphrase='Secret123',
-                              canickname='Example CA'):
+                              canickname='ExampleCA'):
         """
         Creates a NSS DB in /tmp/nssDirxxxx where self signed Root CA
         and Server Certs are created
@@ -713,14 +770,15 @@ class PkiTools(object):
         :param str Server_DN: Distinguished Name for Server Cert
         """
         if ca_dn is None:
-            ca_dn = 'CN=Example CA,O=Example,L=Raleigh,C=US'
+            ca_dn = 'CN=ExampleCA,O=Example,L=Raleigh,C=US'
         nss_passphrase = passphrase
         pin_filename = 'pin.txt'
         nss_dir = self.create_nssdb()
         pin_filepath = os.path.join(nss_dir, pin_filename)
-        ca_certpath = os.path.join(nss_dir, 'cacert.der')
         ca_pempath = os.path.join(nss_dir, 'cacert.pem')
         server_pempath = os.path.join(nss_dir, 'server.pem')
+        ca_p12_path = os.path.join(nss_dir, 'ca.p12')
+        server_p12_path = os.path.join(nss_dir, 'server.p12')
         with open(self.noisefilepath, 'w') as outfile:
             outfile.write(str(self.noise))
         ca_args = 'certutil -d %s -f %s -S -n "%s" -s %s' \
@@ -729,9 +787,8 @@ class PkiTools(object):
                                            self.noisefilepath)
 
         ca_pem = 'certutil -d %s -f %s -L -n "%s"' \
-                 '-a -o %s' % (nss_dir, self.pwdfilepath,
-                               canickname, ca_pempath)
-
+                 ' -a -o %s' % (nss_dir, self.pwdfilepath,
+                                canickname, ca_pempath)
         with open(pin_filepath, 'w') as outfile:
             outfile.write('Internal (Software) Token:%s' % nss_passphrase)
         _, _, return_code = self.execute(shlex.split(ca_args))
@@ -764,6 +821,17 @@ class PkiTools(object):
                 _, _, return_code = self.execute(shlex.split(server_pem))
                 if return_code != 0:
                     raise PkiLibException('Could not create Server pem file')
+                export_ca_p12 = 'pk12util -d %s -o %s -n "%s"'\
+                                ' -k %s -w %s' % (nss_dir, ca_p12_path,
+                                                  canickname, self.pwdfilepath,
+                                                  self.pwdfilepath)
+                _, _, return_code = self.execute(shlex.split(export_ca_p12))
+                export_svr_p12 = 'pk12util -d %s -o %s -n %s'\
+                                 ' -k %s -w %s' % (nss_dir, server_p12_path,
+                                                   server_nickname,
+                                                   self.pwdfilepath,
+                                                   self.pwdfilepath)
+                _, _, return_code = self.execute(shlex.split(export_svr_p12))
                 return nss_dir
 
 
@@ -772,6 +840,7 @@ class ADOperations(object):
     ADOperations class consists of methods related to managing AD User With
     Unix properties.
     """
+
     def __init__(self, ad_host):
         self.ad_host = ad_host
         self.ad_uri = 'ldap://%s' % ad_host.external_hostname
@@ -820,24 +889,26 @@ class ADOperations(object):
                                         user_dn])
         ad_conn_inst = self.ad_conn()
         if cmd.returncode == 0:
-            mod_dn = [(ldap.MOD_ADD, 'msSFU30NisDomain', self.ad_netbiosname)]
+            mod_dn = [(ldap.MOD_ADD, 'msSFU30NisDomain',
+                       self.ad_netbiosname.encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(user_dn, mod_dn)
-            mod_dn = [(ldap.MOD_ADD, 'uidNumber', str(uid))]
+            mod_dn = [(ldap.MOD_ADD, 'uidNumber', str(uid).encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(user_dn, mod_dn)
-            mod_dn = [(ldap.MOD_ADD, 'gidNumber', str(uid))]
+            mod_dn = [(ldap.MOD_ADD, 'gidNumber', str(uid).encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(user_dn, mod_dn)
             mod_dn = [(ldap.MOD_ADD, 'unixHomeDirectory',
-                       '/home/%s' % (username))]
+                       b'/home/%s' % (username))]
             (_, _) = ad_conn_inst.modify_ldap(user_dn, mod_dn)
             mod_dn = [(ldap.MOD_ADD, 'loginShell', '/bin/bash')]
             (_, _) = ad_conn_inst.modify_ldap(user_dn, mod_dn)
-            mod_dn = [(ldap.MOD_ADD, 'msSFU30Name', username)]
+            mod_dn = [(ldap.MOD_ADD, 'msSFU30Name', username.encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(user_dn, mod_dn)
-            mod_dn = [(ldap.MOD_ADD, 'msSFU30NisDomain', self.ad_netbiosname)]
+            mod_dn = [(ldap.MOD_ADD, 'msSFU30NisDomain',
+                       self.ad_netbiosname.encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(group_dn, mod_dn)
-            mod_dn = [(ldap.MOD_ADD, 'gidNumber', str(uid))]
+            mod_dn = [(ldap.MOD_ADD, 'gidNumber', str(uid).encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(group_dn, mod_dn)
-            mod_dn = [(ldap.MOD_ADD, 'msSFU30Name', groupname)]
+            mod_dn = [(ldap.MOD_ADD, 'msSFU30Name', groupname.encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(group_dn, mod_dn)
         else:
             return False
@@ -848,7 +919,7 @@ class ADOperations(object):
 
         :param str groupname: Windows AD Group name
         :Return bool : True if AD group was created with Unix Attributes
-        :Exceptions: None
+        :Exception: None
         """
 
         gid = random.randint(9999, 999999)
@@ -856,11 +927,12 @@ class ADOperations(object):
         cmd = self.ad_host.run_command(['dsadd.exe', 'group', group_dn])
         ad_conn_inst = self.ad_conn()
         if cmd.returncode == 0:
-            mod_dn = [(ldap.MOD_ADD, 'msSFU30NisDomain', self.ad_netbiosname)]
+            mod_dn = [(ldap.MOD_ADD, 'msSFU30NisDomain',
+                       self.ad_netbiosname.encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(group_dn, mod_dn)
-            mod_dn = [(ldap.MOD_ADD, 'gidNumber', str(gid))]
+            mod_dn = [(ldap.MOD_ADD, 'gidNumber', str(gid).encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(group_dn, mod_dn)
-            mod_dn = [(ldap.MOD_ADD, 'msSFU30Name', groupname)]
+            mod_dn = [(ldap.MOD_ADD, 'msSFU30Name', groupname.encode('utf-8'))]
             (_, _) = ad_conn_inst.modify_ldap(group_dn, mod_dn)
         else:
             return False
@@ -943,7 +1015,7 @@ class SSHClient(paramiko.SSHClient):
             self.connect(self.hostname, port=self.port,
                          username=self.username,
                          password=self.password,
-                         timeout=30)
+                         timeout=30, allow_agent=False, look_for_keys=False)
         except (paramiko.AuthenticationException,
                 paramiko.SSHException,
                 socket.error):

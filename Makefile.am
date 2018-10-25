@@ -270,6 +270,7 @@ if HAVE_CMOCKA
         test_copy_keytab \
         test_child_common \
         responder_cache_req-tests \
+        test_sbus_message \
         test_sbus_opath \
         test_fo_srv \
         pam-srv-tests \
@@ -1020,14 +1021,14 @@ libsss_cert_la_LDFLAGS = \
     $(NULL)
 
 generate-sbus-code:
-	$(srcdir)/sbus_generate.sh $(abs_srcdir)
+	$(builddir)/sbus_generate.sh $(abs_srcdir)
 
 .PHONY: generate-sbus-code
 
 BUILT_SOURCES += generate-sbus-code
 
 EXTRA_DIST += \
-    sbus_generate.sh \
+    sbus_generate.sh.in \
     src/sbus/codegen/dbus.xml \
     src/sbus/codegen/sbus_CodeGen.py \
     src/sbus/codegen/sbus_DataType.py \
@@ -2593,6 +2594,19 @@ test_ssh_client_CFLAGS = \
 test_ssh_client_LDADD = \
     $(SSSD_INTERNAL_LTLIBS) \
     $(SSSD_LIBS) \
+    $(NULL)
+
+test_sbus_message_SOURCES = \
+    src/tests/cmocka/sbus/test_sbus_message.c \
+    $(NULL)
+test_sbus_message_CFLAGS = \
+    $(AM_CFLAGS)
+test_sbus_message_LDADD = \
+    $(CMOCKA_LIBS) \
+    $(POPT_LIBS) \
+    libsss_debug.la \
+    libsss_test_common.la \
+    libsss_sbus.la \
     $(NULL)
 
 test_sbus_opath_SOURCES = \
@@ -4272,6 +4286,8 @@ libsss_proxy_la_LDFLAGS = \
 libsss_files_la_SOURCES = \
     src/providers/files/files_init.c \
     src/providers/files/files_id.c \
+    src/providers/files/files_auth.c \
+    src/providers/files/files_certmap.c \
     src/providers/files/files_ops.c \
     src/util/inotify.c \
     $(NULL)

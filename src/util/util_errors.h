@@ -97,6 +97,7 @@ enum sssd_errors {
     ERR_REFERRAL,
     ERR_SELINUX_CONTEXT,
     ERR_SELINUX_NOT_MANAGED,
+    ERR_SELINUX_USER_NOT_FOUND,
     ERR_REGEX_NOMATCH,
     ERR_TIMESPEC_NOT_SUPPORTED,
     ERR_INVALID_CONFIG,
@@ -176,5 +177,8 @@ enum sssd_errors {
  * @return A statically allocated string.
  */
 const char *sss_strerror(errno_t error);
+
+/* return ldb error converted to an errno */
+errno_t sss_ldb_error_to_errno(int ldberr);
 
 #endif /* __SSSD_UTIL_ERRORS_H__ */

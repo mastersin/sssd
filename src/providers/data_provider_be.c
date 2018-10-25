@@ -48,7 +48,7 @@
 #include "resolv/async_resolv.h"
 #include "sss_iface/sss_iface_async.h"
 
-/* org.freedesktop.sssd.service */
+/* sssd.service */
 static errno_t
 data_provider_res_init(TALLOC_CTX *mem_ctx,
                        struct sbus_request *sbus_req,
@@ -541,7 +541,7 @@ static void dp_initialized(struct tevent_req *req)
 
     be_ctx = tevent_req_callback_data(req, struct be_ctx);
 
-    ret = dp_init_recv(be_ctx, req, &be_ctx->provider, &be_ctx->sbus_name);
+    ret = dp_init_recv(be_ctx, req, &be_ctx->sbus_name);
     talloc_zfree(req);
     if (ret !=  EOK) {
         goto done;

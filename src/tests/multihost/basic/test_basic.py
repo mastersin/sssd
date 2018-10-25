@@ -1,14 +1,15 @@
+""" SSSD Sanity Test Cases """
+import time
 from sssd.testlib.common.utils import SSHClient
-import ConfigParser
+import configparser as ConfigParser
 import paramiko
 import pytest
-import time
 
 
-class Test_basic_sssd(object):
-
+class TestSanitySSSD(object):
+    """ Basic Sanity Test cases """
     def test_ssh_user_login(self, multihost):
-        """ Check ssh login as LDAP user with Kerberos credentials """
+        """Check ssh login as LDAP user with Kerberos credentials """
         try:
             ssh = SSHClient(multihost.master[0].sys_hostname,
                             username='foo1', password='Secret123')
@@ -35,27 +36,6 @@ class Test_basic_sssd(object):
                 assert exit_status == 0
                 ssh.close()
 
-    def test_kinit_kcm(self, multihost):
-        """ Run kinit with KRB5CCNAME=KCM: """
-        try:
-            ssh = SSHClient(multihost.master[0].sys_hostname,
-                            username='foo3', password='Secret123')
-        except paramiko.ssh_exception.AuthenticationException:
-            pytest.fail("Authentication Failed as user %s" % ('foo3'))
-        else:
-            (_, _, exit_status) = ssh.execute_cmd('KRB5CCNAME=KCM:; kinit',
-                                                  stdin='Secret123')
-            assert exit_status == 0
-            (stdout, _, _) = ssh.execute_cmd('KRB5CCNAME=KCM:;klist')
-            for line in stdout.readlines():
-                if 'Ticket cache: KCM:14583103' in str(line.strip()):
-                    assert True
-                    break
-                else:
-                    assert False
-            assert exit_status == 0
-            ssh.close()
-
     def test_offline_ssh_login(self, multihost):
         """ Test Offline ssh login """
         multihost.master[0].transport.get_file('/etc/sssd/sssd.conf',
@@ -68,7 +48,7 @@ class Test_basic_sssd(object):
             sssdconfig.set(domain_section, 'krb5_store_password_if_offline',
                            'True')
             sssdconfig.set('pam', 'offline_credentials_expiration', '0')
-            with open('/tmp/sssd.conf', "wb") as fd:
+            with open('/tmp/sssd.conf', "w") as fd:
                 sssdconfig.write(fd)
         else:
             print("Could not fetch sssd.conf")
@@ -84,10 +64,10 @@ class Test_basic_sssd(object):
             pytest.fail("Unable to authenticate as %s" % ('foo4'))
         else:
             ssh.close()
-            multihost.master[0].run_command(['systemctl',
-                                             'stop',
-                                             'dirsrv@example1'])
-            multihost.master[0].run_command(['systemctl', 'stop', 'krb5kdc'])
+            stop_dirsrv = 'systemctl stop dirsrv@example1'
+            stop_krb5kdc = 'systemctl stop krb5kdc'
+            multihost.master[0].run_command(stop_dirsrv)
+            multihost.master[0].run_command(stop_krb5kdc)
             try:
                 ssh = SSHClient(multihost.master[0].sys_hostname,
                                 username='foo4', password='Secret123')
@@ -95,3 +75,7 @@ class Test_basic_sssd(object):
                 pytest.fail("Unable to authenticate as %s" % ('foo4'))
             else:
                 ssh.close()
+                start_dirsrv = 'systemctl start dirsrv@example1'
+                start_krb5kdc = 'systemctl start krb5kdc'
+                multihost.master[0].run_command(start_dirsrv)
+                multihost.master[0].run_command(start_krb5kdc)
