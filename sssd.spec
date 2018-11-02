@@ -22,7 +22,7 @@
 
 Name: sssd
 Version: 2.0.0
-Release: alt1
+Release: alt2.gitf0603645f
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -931,6 +931,10 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %endif
 
 %changelog
+* Thu Oct 25 2018 Stanislav Levin <slev@altlinux.org> 2.0.0-alt2.gitf0603645f
+- Applied an upstream snapshot due to a huge amount of issues in 2.0.0.
+- Fixed start under a non-privileged user (Closes: #35545).
+
 * Fri Oct 19 2018 Alexey Shabalin <shaba@altlinux.org> 2.0.0-alt1
 - 2.0.0
 
