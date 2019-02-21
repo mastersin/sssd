@@ -21,7 +21,7 @@
 
 Name: sssd
 Version: 2.0.0
-Release: alt3.gitf0603645f
+Release: alt4.gitf0603645f
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -845,6 +845,10 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %python3_sitelibdir_noarch/SSSDConfig/__pycache__/*.py*
 
 %changelog
+* Thu Feb 21 2019 Stanislav Levin <slev@altlinux.org> 2.0.0-alt4.gitf0603645f
+- Fixed FleetCommander integration.
+- Stopped build Python2 bindings.
+
 * Fri Dec 07 2018 Evgeny Sinelnikov <sin@altlinux.org> 2.0.0-alt3.gitf0603645f
 - Remove build requires for selinux-policy-targeted
 
