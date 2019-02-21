@@ -694,7 +694,7 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %dir %_localstatedir/cache/krb5rcache
 %attr(700,%sssd_user,%sssd_user) %dir %dbpath
 %attr(755,%sssd_user,%sssd_user) %dir %mcpath
-%attr(751,%sssd_user,%sssd_user) %dir %deskprofilepath
+%attr(700,%sssd_user,%sssd_user) %dir %deskprofilepath
 %attr(700,root,root) %dir %secdbpath
 %ghost %attr(0644,%sssd_user,%sssd_user) %verify(not md5 size mtime) %mcpath/passwd
 %ghost %attr(0644,%sssd_user,%sssd_user) %verify(not md5 size mtime) %mcpath/group
