@@ -83,7 +83,6 @@ BuildRequires: libxml2-devel
 BuildRequires: docbook-dtds docbook-style-xsl xsltproc xml-utils
 BuildRequires: libkrb5-devel
 BuildRequires: libcares-devel
-BuildRequires: python-devel
 BuildRequires: python3-devel
 BuildRequires: libcheck-devel
 BuildRequires: doxygen
@@ -188,15 +187,6 @@ Also provides several other administrative tools:
     * sss_debuglevel to change the debug level on the fly
     * sss_seed which pre-creates a user entry for use in kickstarts
     * sss_obfuscate for generating an obfuscated LDAP password
-
-%package -n python-module-sssdconfig
-Summary: SSSD and IPA configuration file manipulation classes and functions
-Group: Development/Python
-License: GPLv3+
-BuildArch: noarch
-
-%description -n python-module-sssdconfig
-Provides python files for manipulation SSSD and IPA configuration files.
 
 %package ldap
 Summary: The LDAP back end of the SSSD
@@ -336,16 +326,6 @@ Requires: libipa_hbac = %version-%release
 %description -n libipa_hbac-devel
 Utility library to validate FreeIPA HBAC rules for authorization requests
 
-%package -n python-module-ipa_hbac
-Summary: Python bindings for the FreeIPA HBAC Evaluator library
-Group: Development/Python
-License: LGPLv3+
-Requires: libipa_hbac = %version-%release
-
-%description -n python-module-ipa_hbac
-The python-module-libipa_hbac contains the bindings so that libipa_hbac can be
-used by Python applications.
-
 %package -n libsss_nss_idmap
 Summary: Library for SID based lookups and certificate based lookups
 Group: System/Libraries
@@ -390,34 +370,6 @@ Requires: libsss_simpleifp = %version-%release
 
 %description -n libsss_simpleifp-devel
 Provides library that simplifies D-Bus API for the SSSD InfoPipe responder.
-
-%package -n python-module-sss_nss_idmap
-Summary: Python bindings for libsss_nss_idmap
-Group: Development/Python
-License: LGPLv3+
-Requires: libsss_nss_idmap = %version-%release
-
-%description -n python-module-sss_nss_idmap
-The python-module-libsss_nss_idmap contains the bindings so that libsss_nss_idmap can
-be used by Python applications.
-
-%package -n python-module-sss
-Summary: Python bindings for sss
-Group: Development/Python
-License: LGPLv3+
-Requires: %name = %version-%release
-
-%description -n python-module-sss
-The python-module-sss contains the bindings so that sss can
-be used by Python applications.
-
-%package -n python-module-sss-murmur
-Summary: Python bindings for murmur hash function
-Group: Development/Python
-License: LGPLv3+
-
-%description -n python-module-sss-murmur
-Provides python module for calculating the murmur hash version 3
 
 %package -n libwbclient-%name
 Summary: The SSSD libwbclient implementation
@@ -533,6 +485,7 @@ Provides python3 module for calculating the murmur hash version 3
     --disable-static \
     %{subst_with kcm} \
     %{subst_with secrets} \
+    --without-python2-bindings \
     #
 
 %make_build all
@@ -713,12 +666,6 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %_man8dir/sssd.8*
 %_man8dir/sss_cache.8*
 
-%files -n python-module-sss
-%python_sitelibdir/pysss.so
-
-%files -n python-module-sss-murmur
-%python_sitelibdir/pysss_murmur.so
-
 %files ldap
 %_libdir/%name/libsss_ldap.so
 %_man5dir/sssd-ldap*
@@ -787,11 +734,6 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %exclude %_sbindir/sss_cache
 %exclude %_man8dir/sss_cache*
 
-%files -n python-module-sssdconfig
-%dir %python_sitelibdir_noarch/SSSDConfig
-%python_sitelibdir_noarch/SSSDConfig*.egg-info
-%python_sitelibdir_noarch/SSSDConfig/*.py*
-
 %files -n libsss_idmap
 %_libdir/libsss_idmap.so.*
 
@@ -819,9 +761,6 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %_includedir/ipa_hbac.h
 %_libdir/libipa_hbac.so
 %_pkgconfigdir/ipa_hbac.pc
-
-%files -n python-module-ipa_hbac
-%python_sitelibdir/pyhbac.so
 
 %files -n libsss_nss_idmap
 %_libdir/libsss_nss_idmap.so.*
@@ -865,9 +804,6 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %_includedir/sss_sifp_dbus.h
 %_libdir/libsss_simpleifp.so
 %_pkgconfigdir/sss_simpleifp.pc
-
-%files -n python-module-sss_nss_idmap
-%python_sitelibdir/pysss_nss_idmap.so
 
 %files -n libwbclient-%name
 %_libdir/%name/modules/libwbclient.so.*
