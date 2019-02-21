@@ -3,7 +3,6 @@
 %def_with kcm
 %def_without secrets
 %def_disable local_provider
-%def_with python3
 %def_with check
 
 %define if_branch_le() %if "%(rpmvercmp '%ubt_id' '%1')" <= "0"
@@ -61,9 +60,7 @@ Requires: libkrb5 >= 1.14.4-alt2
 %endif
 
 BuildRequires(pre):rpm-build-ubt
-%if_with python3
 BuildRequires(pre): rpm-build-python3
-%endif
 
 ### Build Dependencies ###
 BuildRequires: libpopt-devel
@@ -87,9 +84,7 @@ BuildRequires: docbook-dtds docbook-style-xsl xsltproc xml-utils
 BuildRequires: libkrb5-devel
 BuildRequires: libcares-devel
 BuildRequires: python-devel
-%if_with python3
 BuildRequires: python3-devel
-%endif
 BuildRequires: libcheck-devel
 BuildRequires: doxygen
 BuildRequires: libselinux-devel
@@ -182,13 +177,8 @@ Summary: Userspace tools for use with the SSSD
 Group: System/Configuration/Networking
 License: GPLv3+
 Requires: %name = %version-%release
-%if_with python3
 Requires: python3-module-sss = %EVR
 Requires: python3-module-sssdconfig = %EVR
-%else
-Requires: python-module-sssdconfig = %version-%release
-Requires: python-module-sss = %version-%release
-%endif
 
 %description tools
 Provides userspace tools for manipulating users, groups, and nested groups in
@@ -466,7 +456,6 @@ The libnfsidmap sssd module provides a way for rpc.idmapd to call SSSD to map
 UIDs/GIDs to names and vice versa. It can be also used for mapping principal
 (user) name to IDs(UID or GID) or to obtain groups which user are member of.
 
-%if_with python3
 %package -n python3-module-sssdconfig
 Summary: SSSD and IPA configuration file manipulation classes and functions
 Group: Development/Python3
@@ -513,7 +502,6 @@ License: LGPLv3+
 
 %description -n python3-module-sss-murmur
 Provides python3 module for calculating the murmur hash version 3
-%endif
 
 %prep
 %setup
@@ -545,18 +533,13 @@ Provides python3 module for calculating the murmur hash version 3
     --disable-static \
     %{subst_with kcm} \
     %{subst_with secrets} \
-%if_without python3
-    --without-python3-bindings \
-%endif
     #
 
 %make_build all
 %make docs
 
 %install
-%if_with python3
 sed -i -e 's:/usr/bin/python:/usr/bin/python3:' src/tools/sss_obfuscate
-%endif
 
 %make install DESTDIR=%buildroot
 
@@ -906,8 +889,6 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %files nfs-idmap
 %nfsidmapdir/sss.so
 
-%if_with python3
-
 %files -n python3-module-sss
 %python3_sitelibdir/pysss.so
 
@@ -926,8 +907,6 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %python3_sitelibdir_noarch/SSSDConfig*.egg-info
 %dir %python3_sitelibdir_noarch/SSSDConfig/__pycache__
 %python3_sitelibdir_noarch/SSSDConfig/__pycache__/*.py*
-
-%endif
 
 %changelog
 * Fri Dec 07 2018 Evgeny Sinelnikov <sin@altlinux.org> 2.0.0-alt3.gitf0603645f
