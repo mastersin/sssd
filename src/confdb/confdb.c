@@ -1301,6 +1301,15 @@ static int confdb_get_domain_internal(struct confdb_ctx *cdb,
             ret = ENOMEM;
             goto done;
         }
+    } else {
+        if (strcasecmp(domain->provider, "ad") == 0) {
+            /* ad provider default */
+            domain->fallback_homedir = talloc_strdup(domain, "/home/%d/%u");
+            if (!domain->fallback_homedir) {
+                ret = ENOMEM;
+                goto done;
+            }
+        }
     }
 
     tmp = ldb_msg_find_attr_as_string(res->msgs[0],
@@ -1496,7 +1505,7 @@ int confdb_get_domains(struct confdb_ctx *cdb,
                                     CONFDB_MONITOR_ACTIVE_DOMAINS,
                                     &domlist);
     if (ret == ENOENT) {
-        DEBUG(SSSDBG_FATAL_FAILURE, "No domains configured, fatal error!\n");
+        DEBUG(SSSDBG_MINOR_FAILURE, "No domains configured, fatal error!\n");
         goto done;
     }
     if (ret != EOK ) {

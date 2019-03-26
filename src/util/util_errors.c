@@ -88,6 +88,7 @@ struct err_string error_to_str[] = {
     { "Retrieving keytab failed" }, /* ERR_IPA_GETKEYTAB_FAILED */
     { "Trusted forest root unknown" }, /* ERR_TRUST_FOREST_UNKNOWN */
     { "p11_child failed" }, /* ERR_P11_CHILD */
+    { "p11_child timeout" }, /* ERR_P11_CHILD_TIMEOUT */
     { "Address family not supported" }, /* ERR_ADDR_FAMILY_NOT_SUPPORTED */
     { "Message sender is the bus" }, /* ERR_SBUS_SENDER_BUS */
     { "Subdomain is inactive" }, /* ERR_SUBDOM_INACTIVE */
@@ -105,7 +106,7 @@ struct err_string error_to_str[] = {
     { "No proxy server for secrets available"}, /* ERR_SEC_NO_PROXY */
     { "The maximum number of stored secrets has been reached" }, /* ERR_SEC_INVALID_TOO_MANY_SECRETS */
     { "The secret payload size is too large" }, /* ERR_SEC_PAYLOAD_SIZE_IS_TOO_LARGE */
-    { "No authentication methode available" }, /* ERR_NO_AUTH_METHOD_AVAILABLE */
+    { "No authentication method available" }, /* ERR_NO_AUTH_METHOD_AVAILABLE */
     { "Smartcard authentication not supported" }, /* ERR_SC_AUTH_NOT_SUPPORTED */
     { "Malformed input KCM packet" }, /* ERR_KCM_MALFORMED_IN_PKT */
     { "KCM operation not implemented" }, /* ERR_KCM_OP_NOT_IMPLEMENTED */

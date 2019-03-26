@@ -1579,6 +1579,7 @@ static int monitor_ctx_destructor(void *mem)
 errno_t load_configuration(TALLOC_CTX *mem_ctx,
                            const char *config_file,
                            const char *config_dir,
+                           const char *only_section,
                            struct mt_ctx **monitor)
 {
     errno_t ret;
@@ -1600,7 +1601,8 @@ errno_t load_configuration(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    ret = confdb_setup(ctx, cdb_file, config_file, config_dir, &ctx->cdb);
+    ret = confdb_setup(ctx, cdb_file, config_file, config_dir, only_section,
+                       &ctx->cdb);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Unable to setup ConfDB [%d]: %s\n",
              ret, sss_strerror(ret));
@@ -2016,7 +2018,7 @@ static void monitor_sbus_connected(struct tevent_req *req)
         goto done;
     }
 
-    struct sbus_interface iface = SBUS_INTERFACE(
+    SBUS_INTERFACE(iface,
         sssd_monitor,
         SBUS_METHODS(
             SBUS_SYNC(METHOD, sssd_monitor, RegisterService, monitor_sbus_RegisterService, ctx)
@@ -2329,6 +2331,7 @@ int main(int argc, const char *argv[])
     char *opt_config_file = NULL;
     char *opt_logger = NULL;
     char *config_file = NULL;
+    char *opt_genconf_section = NULL;
     int flags = 0;
     struct main_context *main_ctx;
     TALLOC_CTX *tmp_ctx;
@@ -2351,6 +2354,9 @@ int main(int argc, const char *argv[])
          _("Specify a non-default config file"), NULL}, \
         {"genconf", 'g', POPT_ARG_NONE, &opt_genconf, 0, \
          _("Refresh the configuration database, then exit"), \
+         NULL}, \
+        {"genconf-section", 's', POPT_ARG_STRING, &opt_genconf_section, 0, \
+         _("Similar to --genconf, but only refreshes the given section"), \
          NULL}, \
         {"version", '\0', POPT_ARG_NONE, &opt_version, 0, \
          _("Print version number and exit"), NULL }, \
@@ -2376,6 +2382,13 @@ int main(int argc, const char *argv[])
     if (opt_version) {
         puts(VERSION""PRERELEASE_VERSION);
         return EXIT_SUCCESS;
+    }
+
+    if (opt_genconf_section) {
+        /* --genconf-section implies genconf, just restricted to a single
+         * section
+         */
+        opt_genconf = 1;
     }
 
     /* If the level or timestamps was passed at the command-line, we want
@@ -2514,18 +2527,22 @@ int main(int argc, const char *argv[])
         }
     }
 
-    /* Check if the SSSD is already running */
-    ret = check_file(SSSD_PIDFILE, 0, 0, S_IFREG|0600, 0, NULL, false);
-    if (ret == EOK) {
-        DEBUG(SSSDBG_FATAL_FAILURE,
-              "pidfile exists at %s\n", SSSD_PIDFILE);
-        ERROR("SSSD is already running\n");
-        return 2;
+    /* Check if the SSSD is already running unless we're only interested
+     * in re-reading the configuration
+     */
+    if (opt_genconf == 0) {
+        ret = check_file(SSSD_PIDFILE, 0, 0, S_IFREG|0600, 0, NULL, false);
+        if (ret == EOK) {
+            DEBUG(SSSDBG_FATAL_FAILURE,
+                "pidfile exists at %s\n", SSSD_PIDFILE);
+            ERROR("SSSD is already running\n");
+            return 2;
+        }
     }
 
     /* Parse config file, fail if cannot be done */
     ret = load_configuration(tmp_ctx, config_file, CONFDB_DEFAULT_CONFIG_DIR,
-                             &monitor);
+                             opt_genconf_section, &monitor);
     if (ret != EOK) {
         switch (ret) {
         case EPERM:

@@ -458,7 +458,7 @@ ad_get_common_options(TALLOC_CTX *mem_ctx,
      */
     ad_hostname = dp_opt_get_string(opts->basic, AD_HOSTNAME);
     if (ad_hostname == NULL) {
-        gret = gethostname(hostname, HOST_NAME_MAX);
+        gret = gethostname(hostname, sizeof(hostname));
         if (gret != 0) {
             ret = errno;
             DEBUG(SSSDBG_FATAL_FAILURE,
@@ -837,6 +837,19 @@ ad_failover_init(TALLOC_CTX *mem_ctx, struct be_ctx *bectx,
 done:
     talloc_free(tmp_ctx);
     return ret;
+}
+
+void
+ad_failover_reset(struct be_ctx *bectx,
+                  struct ad_service *adsvc)
+{
+    if (adsvc == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "NULL service\n");
+        return;
+    }
+
+    sdap_service_reset_fo(bectx, adsvc->sdap);
+    sdap_service_reset_fo(bectx, adsvc->gc);
 }
 
 static void

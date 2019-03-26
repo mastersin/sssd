@@ -148,7 +148,17 @@ int main(int argc, const char *argv[])
     struct sss_domain_info *dinfo;
 
     ret = init_context(argc, argv, &tctx);
-    if (ret != EOK) {
+    if (ret == ENOENT) {
+        /* nothing to invalidate; no reason to fail */
+        ret = EOK;
+        goto done;
+    } else if (ret == ERR_DOMAIN_NOT_FOUND) {
+        /* Cannot find domain specified in the parameter --domain.
+         * It might be a typo and therefore we will fail.
+         */
+        ret = ENOENT;
+        goto done;
+    } else if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Error initializing context for the application\n");
         goto done;
@@ -484,6 +494,13 @@ static bool invalidate_entries(TALLOC_CTX *ctx,
         if (ret == ENOENT) {
             DEBUG(SSSDBG_TRACE_FUNC, "'%s' %s: Not found in domain '%s'\n",
                   type_string, name ? name : "", dinfo->name);
+            if (name == NULL) {
+                /* nothing to invalidate in that domain, no reason to fail */
+                return true;
+            } else {
+                /* we failed to invalidate explicit name; inform about it */
+                return false;
+            }
         } else {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "Searching for %s in domain %s with filter %s failed\n",
@@ -847,11 +864,15 @@ static errno_t init_context(int argc, const char *argv[],
     }
 
     ret = init_domains(ctx, values.domain);
-    if (ret != EOK) {
+    if (ret == ENOENT && values.domain == NULL) {
+        /* Nothing to invalidate; do not log confusing messages. */
+        goto fini;
+    } else if (ret != EOK) {
         if (values.domain) {
             ERROR("Could not open domain %1$s. If the domain is a subdomain "
                   "(trusted domain), use fully qualified name instead of "
                   "--domain/-d parameter.\n", values.domain);
+            ret = ERR_DOMAIN_NOT_FOUND;
         } else {
             ERROR("Could not open available domains\n");
         }

@@ -168,53 +168,139 @@ done:
 
 }
 
+/* SSH EC keys are defined in https://tools.ietf.org/html/rfc5656 */
+#define ECDSA_SHA2_HEADER "ecdsa-sha2-"
+/* Looks like OpenSSH currently only supports the following 3 required
+ * curves. */
+#define IDENTIFIER_NISTP256 "nistp256"
+#define IDENTIFIER_NISTP384 "nistp384"
+#define IDENTIFIER_NISTP521 "nistp521"
+
+static errno_t ec_pub_key_to_ssh(TALLOC_CTX *mem_ctx, EVP_PKEY *cert_pub_key,
+                                 uint8_t **key_blob, size_t *key_size)
+{
+    int ret;
+    size_t c;
+    uint8_t *buf = NULL;
+    size_t buf_len;
+    EC_KEY *ec_key = NULL;
+    const EC_GROUP *ec_group = NULL;
+    const EC_POINT *ec_public_key = NULL;
+    BN_CTX *bn_ctx = NULL;
+    int key_len;
+    const char *identifier = NULL;
+    int identifier_len;
+    const char *header = NULL;
+    int header_len;
+
+    ec_key = EVP_PKEY_get1_EC_KEY(cert_pub_key);
+    if (ec_key == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ec_group = EC_KEY_get0_group(ec_key);
+
+    switch(EC_GROUP_get_curve_name(ec_group)) {
+    case NID_X9_62_prime256v1:
+        identifier = IDENTIFIER_NISTP256;
+        header = ECDSA_SHA2_HEADER IDENTIFIER_NISTP256;
+        break;
+    case NID_secp384r1:
+        identifier = IDENTIFIER_NISTP384;
+        header = ECDSA_SHA2_HEADER IDENTIFIER_NISTP384;
+        break;
+    case NID_secp521r1:
+        identifier = IDENTIFIER_NISTP521;
+        header = ECDSA_SHA2_HEADER IDENTIFIER_NISTP521;
+        break;
+    default:
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unsupported curve [%s]\n",
+              OBJ_nid2sn(EC_GROUP_get_curve_name(ec_group)));
+        ret = EINVAL;
+        goto done;
+    }
+
+    header_len = strlen(header);
+    identifier_len = strlen(identifier);
+
+    ec_public_key = EC_KEY_get0_public_key(ec_key);
+
+    bn_ctx =  BN_CTX_new();
+    if (bn_ctx == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "BN_CTX_new failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    key_len = EC_POINT_point2oct(ec_group, ec_public_key,
+                             POINT_CONVERSION_UNCOMPRESSED, NULL, 0, bn_ctx);
+    if (key_len == 0) {
+        DEBUG(SSSDBG_OP_FAILURE, "EC_POINT_point2oct failed.\n");
+        ret = EINVAL;
+        goto done;
+    }
+
+    buf_len = header_len + identifier_len + key_len + 3 * sizeof(uint32_t);
+    buf = talloc_size(mem_ctx, buf_len * sizeof(uint8_t));
+    if (buf == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_size failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    c = 0;
+
+    SAFEALIGN_SET_UINT32(buf, htobe32(header_len), &c);
+    safealign_memcpy(&buf[c], header, header_len, &c);
+
+    SAFEALIGN_SET_UINT32(&buf[c], htobe32(identifier_len), &c);
+    safealign_memcpy(&buf[c], identifier , identifier_len, &c);
+
+    SAFEALIGN_SET_UINT32(&buf[c], htobe32(key_len), &c);
+
+    if (EC_POINT_point2oct(ec_group, ec_public_key,
+                           POINT_CONVERSION_UNCOMPRESSED, buf + c, key_len,
+                           bn_ctx)
+            != key_len) {
+        DEBUG(SSSDBG_OP_FAILURE, "EC_POINT_point2oct failed.\n");
+        ret = EINVAL;
+        goto done;
+    }
+
+    *key_size = buf_len;
+    *key_blob = buf;
+
+    ret = EOK;
+
+done:
+    if (ret != EOK) {
+        talloc_free(buf);
+    }
+
+    BN_CTX_free(bn_ctx);
+    EC_KEY_free(ec_key);
+
+    return ret;
+}
+
+
 #define SSH_RSA_HEADER "ssh-rsa"
 #define SSH_RSA_HEADER_LEN (sizeof(SSH_RSA_HEADER) - 1)
 
-errno_t get_ssh_key_from_cert(TALLOC_CTX *mem_ctx,
-                              const uint8_t *der_blob, size_t der_size,
-                              uint8_t **key_blob, size_t *key_size)
+static errno_t rsa_pub_key_to_ssh(TALLOC_CTX *mem_ctx, EVP_PKEY *cert_pub_key,
+                                  uint8_t **key_blob, size_t *key_size)
 {
     int ret;
-    size_t size;
-    const unsigned char *d;
-    uint8_t *buf = NULL;
     size_t c;
-    X509 *cert = NULL;
-    EVP_PKEY *cert_pub_key = NULL;
+    size_t size;
+    uint8_t *buf = NULL;
     const BIGNUM *n;
     const BIGNUM *e;
     int modulus_len;
     unsigned char modulus[OPENSSL_RSA_MAX_MODULUS_BITS/8];
     int exponent_len;
     unsigned char exponent[OPENSSL_RSA_MAX_PUBEXP_BITS/8];
-
-    if (der_blob == NULL || der_size == 0) {
-        return EINVAL;
-    }
-
-    d = (const unsigned char *) der_blob;
-
-    cert = d2i_X509(NULL, &d, (int) der_size);
-    if (cert == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "d2i_X509 failed.\n");
-        return EINVAL;
-    }
-
-    cert_pub_key = X509_get_pubkey(cert);
-    if (cert_pub_key == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "X509_get_pubkey failed.\n");
-        ret = EIO;
-        goto done;
-    }
-
-    if (EVP_PKEY_base_id(cert_pub_key) != EVP_PKEY_RSA) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "Expected RSA public key, found unsupported [%d].\n",
-              EVP_PKEY_base_id(cert_pub_key));
-        ret = EINVAL;
-        goto done;
-    }
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
     RSA *rsa_pub_key = NULL;
@@ -268,6 +354,63 @@ done:
     if (ret != EOK)  {
         talloc_free(buf);
     }
+
+    return ret;
+}
+
+errno_t get_ssh_key_from_cert(TALLOC_CTX *mem_ctx,
+                              const uint8_t *der_blob, size_t der_size,
+                              uint8_t **key_blob, size_t *key_size)
+{
+    int ret;
+    const unsigned char *d;
+    X509 *cert = NULL;
+    EVP_PKEY *cert_pub_key = NULL;
+
+    if (der_blob == NULL || der_size == 0) {
+        return EINVAL;
+    }
+
+    d = (const unsigned char *) der_blob;
+
+    cert = d2i_X509(NULL, &d, (int) der_size);
+    if (cert == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "d2i_X509 failed.\n");
+        return EINVAL;
+    }
+
+    cert_pub_key = X509_get_pubkey(cert);
+    if (cert_pub_key == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "X509_get_pubkey failed.\n");
+        ret = EIO;
+        goto done;
+    }
+
+    switch (EVP_PKEY_base_id(cert_pub_key)) {
+    case EVP_PKEY_RSA:
+        ret = rsa_pub_key_to_ssh(mem_ctx, cert_pub_key, key_blob, key_size);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "rsa_pub_key_to_ssh failed.\n");
+            goto done;
+        }
+        break;
+    case EVP_PKEY_EC:
+        ret = ec_pub_key_to_ssh(mem_ctx, cert_pub_key, key_blob, key_size);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "rsa_pub_key_to_ssh failed.\n");
+            goto done;
+        }
+        break;
+    default:
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Expected RSA or EC public key, found unsupported [%d].\n",
+              EVP_PKEY_base_id(cert_pub_key));
+        ret = EINVAL;
+        goto done;
+    }
+
+done:
+
     EVP_PKEY_free(cert_pub_key);
     X509_free(cert);
 

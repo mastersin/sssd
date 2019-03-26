@@ -97,7 +97,9 @@ static errno_t curl_code2errno(CURLcode crv)
         return ETIMEDOUT;
     case CURLE_SSL_ISSUER_ERROR:
     case CURLE_SSL_CACERT_BADFILE:
+#if LIBCURL_VERSION_NUM < 0x073e00
     case CURLE_SSL_CACERT:
+#endif
     case CURLE_SSL_CERTPROBLEM:
         return ERR_INVALID_CERT;
 
@@ -412,6 +414,7 @@ static void check_fd_activity(struct tevent_context *ev,
 {
     struct tcurl_ctx *tctx = talloc_get_type(private_data, struct tcurl_ctx);
     check_curl_timeouts(tctx);
+    tctx->process_timer = NULL;
 }
 
 static int schedule_fd_processing(CURLM *multi,

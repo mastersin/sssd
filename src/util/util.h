@@ -66,8 +66,6 @@
 #define NULL 0
 #endif
 
-#define ZERO_STRUCT(x) memset((char *)&(x), 0, sizeof(x))
-
 #define SSSD_MAIN_OPTS SSSD_DEBUG_OPTS
 
 #define SSSD_SERVER_OPTS(uid, gid) \
@@ -727,5 +725,9 @@ errno_t create_preauth_indicator(void);
 #define P11_CHILD_TIMEOUT_DEFAULT 10
 #define P11_WAIT_FOR_CARD_TIMEOUT_DEFAULT 60
 #endif  /* SSSD_LIBEXEC_PATH */
+
+#ifndef N_ELEMENTS
+#define N_ELEMENTS(arr) (sizeof(arr) / sizeof(arr[0]))
+#endif
 
 #endif /* __SSSD_UTIL_H__ */

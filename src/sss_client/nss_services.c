@@ -178,8 +178,8 @@ _nss_sss_getservbyname_r(const char *name,
 
     /* Caught once glibc passing in buffer == 0x0 */
     if (!buffer || !buflen) {
-	*errnop = ERANGE;
-	return NSS_STATUS_TRYAGAIN;
+        *errnop = ERANGE;
+        return NSS_STATUS_TRYAGAIN;
     }
 
     ret = sss_strnlen(name, SSS_NAME_MAX, &name_len);
@@ -199,8 +199,8 @@ _nss_sss_getservbyname_r(const char *name,
     rd.len = name_len + proto_len + 2;
     data = malloc(sizeof(uint8_t)*rd.len);
     if (data == NULL) {
-        nret = NSS_STATUS_TRYAGAIN;
-        goto out;
+        *errnop = ENOMEM;
+        return NSS_STATUS_TRYAGAIN;
     }
 
     memcpy(data, name, name_len + 1);
@@ -297,8 +297,8 @@ _nss_sss_getservbyport_r(int port, const char *protocol,
     rd.len = sizeof(uint32_t)*2 + proto_len + 1;
     data = malloc(sizeof(uint8_t)*rd.len);
     if (data == NULL) {
-        nret = NSS_STATUS_TRYAGAIN;
-        goto out;
+        *errnop = ENOMEM;
+        return NSS_STATUS_TRYAGAIN;
     }
 
     SAFEALIGN_SET_UINT16(data, port, &p);
@@ -418,8 +418,8 @@ static enum nss_status internal_getservent_r(struct servent *result,
 
     /* Caught once glibc passing in buffer == 0x0 */
     if (!buffer || !buflen) {
-	*errnop = ERANGE;
-	return NSS_STATUS_TRYAGAIN;
+        *errnop = ERANGE;
+        return NSS_STATUS_TRYAGAIN;
     }
 
     /* if there are leftovers return the next one */

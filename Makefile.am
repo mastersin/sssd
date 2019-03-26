@@ -21,7 +21,8 @@ if HAVE_MANPAGES
 SUBDIRS += src/man
 endif
 
-SUBDIRS += . src/tests/cwrap src/tests/intg src/tests/test_CA
+SUBDIRS += . src/tests/cwrap src/tests/intg src/tests/test_CA \
+             src/tests/test_ECC_CA
 
 # Some old versions of automake don't define builddir
 builddir ?= .
@@ -3955,9 +3956,7 @@ intgcheck-prepare:
 	rm -Rf intg; \
 	$(MKDIR_P) intg/bld; \
 	: Use /hopefully/ short prefix to keep D-Bus socket path short; \
-	prefix=`mktemp --dry-run --tmpdir --directory sssd-intg.XXXXXXXX`; \
-	prefix=`echo $$prefix | tr '[:upper:]' '[:lower:]'`; \
-	mkdir -p $$prefix; \
+	prefix=`mktemp --tmpdir --directory sssd-intg.XXXXXXXX`; \
 	$(LN_S) "$$prefix" intg/pfx; \
 	cd intg/bld; \
 	$(abs_top_srcdir)/configure \
@@ -5004,43 +5003,18 @@ EXTRA_DIST += \
     src/sysv/systemd/sssd-pam.service.in \
     src/sysv/systemd/sssd-secrets.socket.in \
     src/sysv/systemd/sssd-secrets.service.in \
-    $(NULL)
-
-if BUILD_AUTOFS
-EXTRA_DIST += \
     src/sysv/systemd/sssd-autofs.socket.in \
     src/sysv/systemd/sssd-autofs.service.in \
-    $(NULL)
-endif
-if BUILD_IFP
-EXTRA_DIST += \
     src/sysv/systemd/sssd-ifp.service.in \
-    $(NULL)
-endif
-if BUILD_PAC_RESPONDER
-EXTRA_DIST += \
     src/sysv/systemd/sssd-pac.socket.in \
     src/sysv/systemd/sssd-pac.service.in \
-    $(NULL)
-endif
-if BUILD_SSH
-EXTRA_DIST += \
     src/sysv/systemd/sssd-ssh.socket.in \
     src/sysv/systemd/sssd-ssh.service.in \
-    $(NULL)
-endif
-if BUILD_SUDO
-EXTRA_DIST += \
     src/sysv/systemd/sssd-sudo.socket.in \
     src/sysv/systemd/sssd-sudo.service.in \
-    $(NULL)
-endif
-if BUILD_KCM
-EXTRA_DIST += \
     src/sysv/systemd/sssd-kcm.socket.in \
     src/sysv/systemd/sssd-kcm.service.in \
     $(NULL)
-endif
 
 src/sysv/systemd/sssd.service: src/sysv/systemd/sssd.service.in Makefile
 	@$(MKDIR_P) src/sysv/systemd/
@@ -5395,8 +5369,9 @@ CLEANFILES += *.X */*.X */*/*.X
 
 test_CA: test_CA.stamp
 
-test_CA.stamp: $(srcdir)/src/tests/test_CA/*
+test_CA.stamp: $(srcdir)/src/tests/test_CA/* $(srcdir)/src/tests/test_ECC_CA/*
 	$(MAKE) -C src/tests/test_CA ca_all
+	$(MAKE) -C src/tests/test_ECC_CA ca_all
 	touch $@
 
 if BUILD_TEST_CA

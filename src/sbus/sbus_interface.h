@@ -49,38 +49,50 @@ struct sbus_node;
  *
  * @see SBUS_SYNC, SBUS_ASYNC, SBUS_NO_METHODS, SBUS_WITHOUT_METHODS
  *
+ * The following examples demonstrate the intended usage of this macro.
+ * Do not use it in any other way.
+ *
  * @example Interface with two methods, one with synchronous handler,
  * one with asynchronous handler.
  *
- *     struct sbus_interface iface = {
- *         .name = SBUS_IFACE_ORG_FREEDESKTOP_SSSD,
- *          SBUS_METHODS(
- *              SBUS_SYNC (METHOD, org_freedekstop_sssd, UpdateMembers,
- *                         update_members_sync, pvt_data),
- *              SBUS_ASYNC(METHOD, org_freedekstop_sssd, UpdateMembersAsync,
- *                         update_members_send, update_members_recv,
- *                         pvt_data)
- *          )
- *     };
+ *     SBUS_INTERFACE(
+ *         iface_variable,
+ *         org_freedesktop_sssd,
+ *         SBUS_METHODS(
+ *             SBUS_SYNC (METHOD, org_freedekstop_sssd, UpdateMembers,
+ *                       update_members_sync, pvt_data),
+ *             SBUS_ASYNC(METHOD, org_freedekstop_sssd, UpdateMembersAsync,
+ *                        update_members_send, update_members_recv,
+ *                        pvt_data)
+ *         ),
+ *         @signals,
+ *         @properties
+ *     );
  *
  * @example Interface with no methods.
  *
- *     struct sbus_interface empty_iface = {
- *         .name = SBUS_IFACE_ORG_FREEDESKTOP_SSSD,
- *          SBUS_METHODS(
- *              SBUS_NO_METHODS
- *          )
- *     };
+ *     SBUS_INTERFACE(
+ *         iface_variable,
+ *         org_freedesktop_sssd,
+ *         SBUS_METHODS(
+ *             SBUS_NO_METHODS
+ *         ),
+ *         @signals,
+ *         @properties
+ *     );
  *
  *     or
  *
- *     struct sbus_interface empty_iface = {
- *         .name = SBUS_IFACE_ORG_FREEDESKTOP_SSSD,
- *          SBUS_WITHOUT_METHODS
- *     };
+ *     SBUS_INTERFACE(
+ *         iface_variable,
+ *         org_freedesktop_sssd,
+ *         SBUS_WITHOUT_METHODS,
+ *         @signals,
+ *         @properties
+ *     );
  */
 #define SBUS_METHODS(...)                                                     \
-    (const struct sbus_method[]) {                                            \
+    {                                                                         \
         __VA_ARGS__,                                                          \
         SBUS_INTERFACE_SENTINEL                                               \
     }
@@ -91,33 +103,45 @@ struct sbus_node;
  *
  * @see SBUS_EMIT, SBUS_NO_SIGNALS, SBUS_WITHOUT_SIGNALS
  *
+ * The following examples demonstrate the intended usage of this macro.
+ * Do not use it in any other way.
+ *
  * @example Interface that can emit a PropertyChanged signal.
  *
- *     struct sbus_interface iface = {
- *         .name = SBUS_IFACE_ORG_FREEDESKTOP_SSSD,
- *          SBUS_SIGNALS(
- *              SBUS_EMIT(org_freedekstop_sssd, PropertyChanged)
- *          )
- *     };
+ *     SBUS_INTERFACE(
+ *         iface_variable,
+ *         org_freedesktop_sssd,
+ *         @methods,
+ *         SBUS_SIGNALS(
+ *             SBUS_EMIT(org_freedekstop_sssd, PropertyChanged)
+ *         ),
+ *         @properties
+ *     );
  *
  * @example Interface with no signals.
  *
- *     struct sbus_interface empty_iface = {
- *         .name = SBUS_IFACE_ORG_FREEDESKTOP_SSSD,
- *          SBUS_SIGNALS(
- *              SBUS_NO_SIGNALS
- *          )
- *     };
+ *     SBUS_INTERFACE(
+ *         iface_variable,
+ *         org_freedesktop_sssd,
+ *         @methods,
+ *         SBUS_SIGNALS(
+ *             SBUS_NO_SIGNALS
+ *         ),
+ *         @properties
+ *     );
  *
  *     or
  *
- *     struct sbus_interface empty_iface = {
- *         .name = SBUS_IFACE_ORG_FREEDESKTOP_SSSD,
- *          SBUS_WITHOUT_SIGNALS
- *     };
+ *     SBUS_INTERFACE(
+ *         iface_variable,
+ *         org_freedesktop_sssd,
+ *         @methods,
+ *         SBUS_WITHOUT_SIGNALS,
+ *         @properties
+ *     );
  */
 #define SBUS_SIGNALS(...)                                                     \
-    (const struct sbus_signal[]) {                                            \
+    {                                                                         \
         __VA_ARGS__,                                                          \
         SBUS_INTERFACE_SENTINEL                                               \
     }
@@ -128,38 +152,50 @@ struct sbus_node;
  *
  * @see SBUS_SYNC, SBUS_ASYNC, SBUS_NO_PROPERTIES, SBUS_WITHOUT_PROPERTIES
  *
+ * The following examples demonstrate the intended usage of this macro.
+ * Do not use it in any other way.
+ *
  * @example Interface with one property with asynchronous getter and
  * synchronous setter.
  *
- *     struct sbus_interface iface = {
- *         .name = SBUS_IFACE_ORG_FREEDESKTOP_SSSD,
- *          SBUS_PROPERTIES(
- *              SBUS_SYNC (GETTER, org_freedekstop_sssd, domain_name,
- *                         set_domain_name, pvt_data),
- *              SBUS_ASYNC(GETTER, org_freedekstop_sssd, domain_name,
- *                         get_domain_name_send, get_domain_name_recv,
- *                         pvt_data)
- *          )
- *     };
+ *     SBUS_INTERFACE(
+ *         iface_variable,
+ *         org_freedesktop_sssd,
+ *         @methods,
+ *         @signals,
+ *         SBUS_PROPERTIES(
+ *             SBUS_SYNC (GETTER, org_freedekstop_sssd, domain_name,
+ *                        set_domain_name, pvt_data),
+ *             SBUS_ASYNC(GETTER, org_freedekstop_sssd, domain_name,
+ *                        get_domain_name_send, get_domain_name_recv,
+ *                        pvt_data)
+ *         )
+ *     );
  *
  * @example Interface with no properties.
  *
- *     struct sbus_interface empty_iface = {
- *         .name = SBUS_IFACE_ORG_FREEDESKTOP_SSSD,
- *          SBUS_PROPERTIES(
- *              SBUS_NO_PROPERTIES
- *          )
- *     };
+ *     SBUS_INTERFACE(
+ *         iface_variable,
+ *         org_freedesktop_sssd,
+ *         @methods,
+ *         @signals,
+ *         SBUS_PROPERTIES(
+ *             SBUS_NO_PROPERTIES
+ *         )
+ *     );
  *
  *     or
  *
- *     struct sbus_interface empty_iface = {
- *         .name = SBUS_IFACE_ORG_FREEDESKTOP_SSSD,
- *          SBUS_WITHOUT_PROPERTIES
- *     };
+ *     SBUS_INTERFACE(
+ *         iface_variable,
+ *         org_freedesktop_sssd,
+ *         @methods,
+ *         @signals,
+ *         SBUS_WITHOUT_PROPERTIES
+ *     );
  */
 #define SBUS_PROPERTIES(...)                                                  \
-    (const struct sbus_property[]) {                                          \
+    {                                                                         \
         __VA_ARGS__,                                                          \
         SBUS_INTERFACE_SENTINEL                                               \
     }
@@ -228,19 +264,76 @@ struct sbus_node;
 /**
  * Create and sbus interface.
  *
+ * @param varname      Name of the variable that will hold the interface
+ *                     description. It is created as:
+ *                       struct sbus_interface varname;
+ *                     You can refer to it later when creating 'sbus_path'
+ *                     structure as &varname.
  * @param iface        Name of the interface with dots replaced
  *                     with underscore. (token, not a string)
  * @param methods      Methods on the interface.
  * @param signals      Signals on the interface.
  * @param properties   Properties on the interface.
  *
+ * Please note that the following macro introduced to the scope these variables:
+ *   - __varname_m
+ *   - __varname_s
+ *   - __varname_p
+ *
+ * These variables are intended for internal purpose only and should not be
+ * used outside this macro. They are allocated on stack and will be destroyed
+ * with it.
+ *
+ * Additionally, it creates 'struct sbus_interface varname'. This variable
+ * holds the information about the interfaces you created. The structure and
+ * all its data are allocated on stack and will be destroyed with it.
+ *
+ * The only intended usage of this variable is to assign it to an sbus path
+ * and then register this path inside the same function where the interface
+ * is defined. It should not be used in any other way.
+ *
+ * The following example demonstrates the intended usage of this macro.
+ * Do not use it in any other way.
+ *
  * @example
- *     SBUS_INTERFACE(org_freedesktop_sssd, @methods, @signals, @properties)
+ *     SBUS_INTERFACE(
+ *         iface_bus,
+ *         org_freedesktop_DBus,
+ *         SBUS_METHODS(
+ *             SBUS_SYNC(METHOD, org_freedesktop_DBus, Hello, sbus_server_bus_hello, server),
+ *             SBUS_SYNC(METHOD, org_freedesktop_DBus, RequestName, sbus_server_bus_request_name, server),
+ *         ),
+ *         SBUS_SIGNALS(
+ *             SBUS_EMITS(org_freedesktop_DBus, NameOwnerChanged),
+ *             SBUS_EMITS(org_freedesktop_DBus, NameAcquired),
+ *             SBUS_EMITS(org_freedesktop_DBus, NameLost)
+ *         ),
+ *         SBUS_WITHOUT_PROPERTIES
+ *     );
+ *
+ *     struct sbus_path paths[] = {
+ *          {"/org/freedesktop/dbus", &iface_bus},
+ *          {NULL, NULL}
+ *     };
+ *
+ *     ret = sbus_router_add_path_map(server->router, paths);
+ *     if (ret != EOK) {
+ *         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to add paths [%d]: %s\n",
+ *               ret, sss_strerror(ret));
+ *         return ret;
+ *     }
  *
  * @see SBUS_METHODS, SBUS_SIGNALS, SBUS_PROPERTIES to create those arguments.
  */
-#define SBUS_INTERFACE(iface, methods, signals, properties)                   \
-    SBUS_IFACE_ ## iface((methods), (signals), (properties))
+#define SBUS_INTERFACE(varname, iface, methods, signals, properties)          \
+    const struct sbus_method __ ## varname ## _m[] = methods;                 \
+    const struct sbus_signal __ ## varname ## _s[] = signals;                 \
+    const struct sbus_property __ ## varname ## _p[] = properties;            \
+    struct sbus_interface varname = SBUS_IFACE_ ## iface(                     \
+        (__ ## varname ## _m),                                                \
+        (__ ## varname ## _s),                                                \
+        (__ ## varname ## _p)                                                 \
+    )
 
 /**
  * Create a new sbus synchronous handler.

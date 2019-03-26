@@ -64,8 +64,8 @@
 
 /* common functions */
 
-int sss_cli_sd = -1; /* the sss client socket descriptor */
-struct stat sss_cli_sb; /* the sss client stat buffer */
+static int sss_cli_sd = -1; /* the sss client socket descriptor */
+static struct stat sss_cli_sb; /* the sss client stat buffer */
 
 #if HAVE_FUNCTION_ATTRIBUTE_DESTRUCTOR
 __attribute__((destructor))
@@ -473,7 +473,8 @@ static int make_nonstd_fd_internals(int fd, int limit)
 }
 
 /****************************************************************************
- Set a fd into blocking/nonblocking mode. Uses POSIX O_NONBLOCK if available,
+ Ensures fd isn't std[in/out/err] (duplicates it if needed) and
+ set it into nonblocking mode. Uses POSIX O_NONBLOCK if available,
  else
  if SYSV use O_NDELAY
  if BSD use FNDELAY
@@ -539,14 +540,14 @@ static int sss_cli_open_socket(int *errnop, const char *socket_name, int timeout
     int ret;
     int sd;
 
-    if (sizeof(nssaddr.sun_path) <= strlen(socket_name) + 1) {
+    if (sizeof(nssaddr.sun_path) < strlen(socket_name) + 1) {
         *errnop = EINVAL;
         return -1;
     }
 
     memset(&nssaddr, 0, sizeof(struct sockaddr_un));
     nssaddr.sun_family = AF_UNIX;
-    strncpy(nssaddr.sun_path, socket_name, sizeof(nssaddr.sun_path));
+    strcpy(nssaddr.sun_path, socket_name); /* safe due to above check */
 
     sd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sd == -1) {

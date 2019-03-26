@@ -45,6 +45,11 @@ void sss_ini_close_file(struct sss_ini_initdata *init_data);
 int sss_ini_config_file_open(struct sss_ini_initdata *init_data,
                              const char *config_file);
 
+/* Load config from buffer */
+int sss_ini_config_file_from_mem(void *data_buf,
+                                 uint32_t data_len,
+                                 struct sss_ini_initdata *init_data);
+
 /* Check file permissions */
 int sss_ini_config_access_check(struct sss_ini_initdata *init_data);
 
@@ -77,6 +82,7 @@ void sss_ini_config_destroy(struct sss_ini_initdata *init_data);
 /* Create LDIF */
 int sss_confdb_create_ldif(TALLOC_CTX *mem_ctx,
                            struct sss_ini_initdata *init_data,
+                           const char *only_section,
                            const char **config_ldif);
 
 /* Validate sssd.conf if libini_config support it */

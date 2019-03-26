@@ -78,15 +78,17 @@ struct nss_ctx {
     const char **extra_attributes;
 
     /* Enumeration. */
-    struct nss_enum_ctx pwent;
-    struct nss_enum_ctx grent;
-    struct nss_enum_ctx svcent;
+    struct nss_enum_ctx *pwent;
+    struct nss_enum_ctx *grent;
+    struct nss_enum_ctx *svcent;
     hash_table_t *netgrent;
 
     /* Memory cache. */
     struct sss_mc_ctx *pwd_mc_ctx;
     struct sss_mc_ctx *grp_mc_ctx;
     struct sss_mc_ctx *initgr_mc_ctx;
+    uid_t mc_uid;
+    gid_t mc_gid;
 };
 
 struct sss_cmd_table *get_nss_cmds(void);

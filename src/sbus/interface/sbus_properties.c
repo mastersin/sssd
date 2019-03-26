@@ -181,10 +181,17 @@ sbus_copy_iterator_container(DBusMessageIter *from,
     errno_t ret;
 
     dbus_message_iter_recurse(from, &from_sub);
-    signature = dbus_message_iter_get_signature(&from_sub);
-    if (signature == NULL) {
-        ret = ENOMEM;
-        goto done;
+
+    if (type == DBUS_TYPE_DICT_ENTRY) {
+        /* This is a special case. Dictionary entries do not have any specific
+         * signature when we open their container. */
+        signature = NULL;
+    } else {
+        signature = dbus_message_iter_get_signature(&from_sub);
+        if (signature == NULL) {
+            ret = ENOMEM;
+            goto done;
+        }
     }
 
     dbret = dbus_message_iter_open_container(to, type, signature, &to_sub);
@@ -860,7 +867,7 @@ errno_t
 sbus_register_properties(struct sbus_router *router)
 {
 
-    struct sbus_interface iface = SBUS_INTERFACE(
+    SBUS_INTERFACE(iface,
         org_freedesktop_DBus_Properties,
         SBUS_METHODS(
             SBUS_ASYNC(METHOD, org_freedesktop_DBus_Properties, Get,

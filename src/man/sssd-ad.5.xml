@@ -759,6 +759,7 @@ ad_gpo_map_network = +my_pam_service, -ftp
 ad_gpo_map_batch = +my_pam_service, -crond
                             </programlisting>
                         </para>
+                        <para>Note: Cron service name may differ depending on Linux distribution used.</para>
                         <para>
                             Default: the default set of PAM service names includes:
                             <itemizedlist>
@@ -1125,6 +1126,21 @@ ad_gpo_map_deny = +my_pam_service
                         </para>
                         <para>
                             Default: None (let nsupdate choose the server)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>dyndns_update_per_family (boolean)</term>
+                    <listitem>
+                        <para>
+                            DNS update is by default performed in two steps -
+                            IPv4 update and then IPv6 update. In some cases
+                            it might be desirable to perform IPv4 and IPv6
+                            update in single step.
+                        </para>
+                        <para>
+                            Default: true
                         </para>
                     </listitem>
                 </varlistentry>

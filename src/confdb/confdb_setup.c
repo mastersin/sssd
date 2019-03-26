@@ -28,16 +28,6 @@
 #include "confdb_setup.h"
 #include "util/sss_ini.h"
 
-#ifndef SSSD_FALLBACK_CONFIG_LDIF
-#define SSSD_FALLBACK_CONFIG_LDIF \
-"dn: cn=config\n" \
-"version: 2\n\n" \
-"dn: cn=sssd,cn=config\n" \
-"cn: sssd\n" \
-"enable_files_domain: true\n" \
-"services: nss\n\n"
-#endif /* SSSD_FALLBACK_CONFIG_LDIF */
-
 static int confdb_test(struct confdb_ctx *cdb)
 {
     char **values;
@@ -138,6 +128,7 @@ static int confdb_create_base(struct confdb_ctx *cdb)
 static int confdb_ldif_from_ini_file(TALLOC_CTX *mem_ctx,
                                      const char *config_file,
                                      const char *config_dir,
+                                     const char *only_section,
                                      struct sss_ini_initdata *init_data,
                                      const char **_timestr,
                                      const char **_ldif)
@@ -145,28 +136,52 @@ static int confdb_ldif_from_ini_file(TALLOC_CTX *mem_ctx,
     errno_t ret;
     char timestr[21];
     int version;
+    char fallback_cfg[] =
+        "[sssd]\n"
+        "enable_files_domain = true\n"
+        "services = nss\n";
 
-    ret = sss_ini_config_access_check(init_data);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "Permission check on config file failed.\n");
-        return EPERM;
-    }
+    /* Open config file */
+    ret = sss_ini_config_file_open(init_data, config_file);
+    if (ret == ENOENT) {
+        DEBUG(SSSDBG_TRACE_FUNC, "No sssd.conf.\n");
+        ret = sss_ini_config_file_from_mem(fallback_cfg,
+                                           strlen(fallback_cfg),
+                                           init_data);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_FATAL_FAILURE,
+                  "sss_ini_config_file_from_mem failed. Error %d: %s\n",
+                  ret, sss_strerror(ret));
+            return ret;
+        }
+    } else if (ret == EOK) {
+        ret = sss_ini_config_access_check(init_data);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "Permission check on config file failed.\n");
+            return EPERM;
+        }
 
-    ret = sss_ini_get_stat(init_data);
-    if (ret != EOK) {
-        ret = errno;
-        DEBUG(SSSDBG_FATAL_FAILURE,
+        ret = sss_ini_get_stat(init_data);
+        if (ret != EOK) {
+            ret = errno;
+            DEBUG(SSSDBG_FATAL_FAILURE,
               "Status check on config file failed.\n");
-        return ret;
-    }
+            return ret;
+        }
 
-    errno = 0;
-    ret = sss_ini_get_mtime(init_data, sizeof(timestr), timestr);
-    if (ret <= 0 || ret >= (int)sizeof(timestr)) {
-        DEBUG(SSSDBG_FATAL_FAILURE,
-              "Failed to convert time_t to string??\n");
-        ret = errno ? errno : EFAULT;
+        errno = 0;
+        ret = sss_ini_get_mtime(init_data, sizeof(timestr), timestr);
+        if (ret <= 0 || ret >= (int)sizeof(timestr)) {
+            DEBUG(SSSDBG_FATAL_FAILURE,
+                  "Failed to convert time_t to string??\n");
+            ret = errno ? errno : EFAULT;
+            return ret;
+        }
+    } else {
+        DEBUG(SSSDBG_CONF_SETTINGS,
+              "sss_ini_config_file_open failed: %s [%d]\n", sss_strerror(ret),
+              ret);
         return ret;
     }
 
@@ -222,7 +237,7 @@ static int confdb_ldif_from_ini_file(TALLOC_CTX *mem_ctx,
         }
     }
 
-    ret = sss_confdb_create_ldif(mem_ctx, init_data, _ldif);
+    ret = sss_confdb_create_ldif(mem_ctx, init_data, only_section, _ldif);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Could not create LDIF for confdb\n");
         return ret;
@@ -236,20 +251,50 @@ static int confdb_ldif_from_ini_file(TALLOC_CTX *mem_ctx,
     return EOK;
 }
 
-static int confdb_fallback_ldif(TALLOC_CTX *mem_ctx,
-                                const char **_timestr,
-                                const char **_ldif)
+static int confdb_write_ldif(struct confdb_ctx *cdb,
+                             const char *config_ldif,
+                             bool replace_whole_db)
 {
-    *_timestr = talloc_strdup(mem_ctx, "1");
-    *_ldif = talloc_strdup(mem_ctx, SSSD_FALLBACK_CONFIG_LDIF);
-    if (*_timestr == NULL || *_ldif == NULL) {
-        return ENOMEM;
+    int ret;
+    struct ldb_ldif *ldif;
+
+    while ((ldif = ldb_ldif_read_string(cdb->ldb, &config_ldif))) {
+        if (ldif->changetype == LDB_CHANGETYPE_DELETE) {
+            /* We should remove this section */
+            ret = ldb_delete(cdb->ldb, ldif->msg->dn);
+            if (ret == LDB_ERR_NO_SUCH_OBJECT) {
+                /* Removing a non-existing section is not an error */
+                ret = LDB_SUCCESS;
+            }
+        } else {
+            ret = ldb_add(cdb->ldb, ldif->msg);
+            if (ret != LDB_SUCCESS && replace_whole_db == false) {
+                /* This section already existed, remove and re-add it. We
+                * really want to replace the whole thing instead of messing
+                * around with changetypes and flags on individual elements
+                */
+                ret = ldb_delete(cdb->ldb, ldif->msg->dn);
+                if (ret == LDB_SUCCESS) {
+                    ret = ldb_add(cdb->ldb, ldif->msg);
+                }
+            }
+        }
+
+        if (ret != LDB_SUCCESS) {
+            DEBUG(SSSDBG_FATAL_FAILURE,
+                "Failed to initialize DB (%d,[%s]), aborting!\n",
+                ret, ldb_errstring(cdb->ldb));
+            return EIO;
+        }
+        ldb_ldif_read_free(cdb->ldb, ldif);
     }
 
     return EOK;
 }
 
-static int confdb_init_db(const char *config_file, const char *config_dir,
+static int confdb_init_db(const char *config_file,
+                          const char *config_dir,
+                          const char *only_section,
                           struct confdb_ctx *cdb)
 {
     TALLOC_CTX *tmp_ctx;
@@ -259,7 +304,6 @@ static int confdb_init_db(const char *config_file, const char *config_dir,
     const char *timestr = NULL;
     const char *config_ldif;
     const char *vals[2] = { NULL, NULL };
-    struct ldb_ldif *ldif;
     struct sss_ini_initdata *init_data;
 
     tmp_ctx = talloc_new(cdb);
@@ -275,33 +319,17 @@ static int confdb_init_db(const char *config_file, const char *config_dir,
         goto done;
     }
 
-    /* Open config file */
-    ret = sss_ini_config_file_open(init_data, config_file);
-    if (ret == EOK) {
-        ret = confdb_ldif_from_ini_file(tmp_ctx,
-                                        config_file,
-                                        config_dir,
-                                        init_data,
-                                        &timestr,
-                                        &config_ldif);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "Cannot convert INI to LDIF [%d]: [%s]\n",
-                  ret, sss_strerror(ret));
-            goto done;
-        }
-    } else if (ret == ENOENT) {
-        ret = confdb_fallback_ldif(tmp_ctx, &timestr, &config_ldif);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE,
-                  "Cannot create a fallback configuration [%d]: [%s]\n",
-                  ret, sss_strerror(ret));
-            goto done;
-        }
-    } else {
-        DEBUG(SSSDBG_CONF_SETTINGS,
-              "sss_ini_config_file_open failed: %s [%d]\n", sss_strerror(ret),
-              ret);
+    ret = confdb_ldif_from_ini_file(tmp_ctx,
+                                    config_file,
+                                    config_dir,
+                                    only_section,
+                                    init_data,
+                                    &timestr,
+                                    &config_ldif);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Cannot convert INI to LDIF [%d]: [%s]\n",
+            ret, sss_strerror(ret));
         goto done;
     }
 
@@ -318,24 +346,21 @@ static int confdb_init_db(const char *config_file, const char *config_dir,
     }
     in_transaction = true;
 
-    /* Purge existing database */
-    ret = confdb_purge(cdb);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_FATAL_FAILURE,
-              "Could not purge existing configuration\n");
-        goto done;
-    }
-
-    while ((ldif = ldb_ldif_read_string(cdb->ldb, &config_ldif))) {
-        ret = ldb_add(cdb->ldb, ldif->msg);
-        if (ret != LDB_SUCCESS) {
+    /* Purge existing database, if we are reinitializing the confdb completely */
+    if (only_section == NULL) {
+        ret = confdb_purge(cdb);
+        if (ret != EOK) {
             DEBUG(SSSDBG_FATAL_FAILURE,
-                  "Failed to initialize DB (%d,[%s]), aborting!\n",
-                  ret, ldb_errstring(cdb->ldb));
-            ret = EIO;
+                "Could not purge existing configuration\n");
             goto done;
         }
-        ldb_ldif_read_free(cdb->ldb, ldif);
+    }
+
+    ret = confdb_write_ldif(cdb,
+                            config_ldif,
+                            only_section == NULL ? true : false);
+    if (ret != EOK) {
+        goto done;
     }
 
     /* now store the lastUpdate time so that we do not re-init if nothing
@@ -377,6 +402,7 @@ errno_t confdb_setup(TALLOC_CTX *mem_ctx,
                      const char *cdb_file,
                      const char *config_file,
                      const char *config_dir,
+                     const char *only_section,
                      struct confdb_ctx **_cdb)
 {
     TALLOC_CTX *tmp_ctx;
@@ -432,7 +458,7 @@ errno_t confdb_setup(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    ret = confdb_init_db(config_file, config_dir, cdb);
+    ret = confdb_init_db(config_file, config_dir, only_section, cdb);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "ConfDB initialization has failed "
               "[%d]: %s\n", ret, sss_strerror(ret));

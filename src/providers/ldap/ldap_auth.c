@@ -636,6 +636,7 @@ static struct tevent_req *auth_send(TALLOC_CTX *memctx,
 {
     struct tevent_req *req;
     struct auth_state *state;
+    errno_t ret;
 
     req = tevent_req_create(memctx, &state, struct auth_state);
     if (!req) return NULL;
@@ -645,11 +646,11 @@ static struct tevent_req *auth_send(TALLOC_CTX *memctx,
         if (sss_authtok_get_type(authtok) == SSS_AUTHTOK_TYPE_SC_PIN
             || sss_authtok_get_type(authtok) == SSS_AUTHTOK_TYPE_SC_KEYPAD) {
             /* Tell frontend that we do not support Smartcard authentication */
-            tevent_req_error(req, ERR_SC_AUTH_NOT_SUPPORTED);
+            ret = ERR_SC_AUTH_NOT_SUPPORTED;
         } else {
-            tevent_req_error(req, ERR_AUTH_FAILED);
+            ret = ERR_AUTH_FAILED;
         }
-        return tevent_req_post(req, ev);
+        goto fail;
     }
 
     state->ev = ev;
@@ -663,13 +664,29 @@ static struct tevent_req *auth_send(TALLOC_CTX *memctx,
         state->sdap_service = ctx->service;
     }
 
-    if (!auth_connect_send(req)) goto fail;
+    ret = get_user_dn(state, state->ctx->be->domain,
+                      state->ctx->opts, state->username, &state->dn,
+                      &state->pw_expire_type, &state->pw_expire_data);
+    if (ret == EAGAIN) {
+        DEBUG(SSSDBG_TRACE_FUNC,
+              "Need to look up the DN of %s later\n", state->username);
+    } else if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "Cannot get user DN [%d]: %s\n", ret, sss_strerror(ret));
+        goto fail;
+    }
+
+    if (auth_connect_send(req) == NULL) {
+        ret = ENOMEM;
+        goto fail;
+    }
 
     return req;
 
 fail:
-    talloc_zfree(req);
-    return NULL;
+    tevent_req_error(req, ret);
+    tevent_req_post(req, ev);
+    return req;
 }
 
 static struct tevent_req *auth_connect_send(struct tevent_req *req)
@@ -678,6 +695,8 @@ static struct tevent_req *auth_connect_send(struct tevent_req *req)
     struct auth_state *state = tevent_req_data(req,
                                                struct auth_state);
     bool use_tls;
+    bool skip_conn_auth = false;
+    const char *sasl_mech;
 
     /* Check for undocumented debugging feature to disable TLS
      * for authentication. This should never be used in production
@@ -690,10 +709,33 @@ static struct tevent_req *auth_connect_send(struct tevent_req *req)
                                "for debugging purposes only.");
     }
 
+    if (state->dn != NULL) {
+        /* In case the user's DN is known, the connection will only be used
+         * to bind as the user to perform the authentication. In that case,
+         * we don't need to authenticate the connection, because we're not
+         * looking up any information using the connection. This might be
+         * needed e.g. in case both ID and AUTH providers are set to LDAP
+         * and the server is AD, because otherwise the connection would
+         * both do a startTLS and later bind using GSSAPI which doesn't work
+         * well with AD.
+         */
+        skip_conn_auth = true;
+    }
+
+    if (skip_conn_auth == false) {
+        sasl_mech = dp_opt_get_string(state->ctx->opts->basic,
+                                      SDAP_SASL_MECH);
+        if (sasl_mech && strcasecmp(sasl_mech, "GSSAPI") == 0) {
+            /* Don't force TLS on if we're told to use GSSAPI */
+            use_tls = false;
+        }
+    }
+
     subreq = sdap_cli_connect_send(state, state->ev, state->ctx->opts,
                                    state->ctx->be,
                                    state->sdap_service, false,
-                                   use_tls ? CON_TLS_ON : CON_TLS_OFF, false);
+                                   use_tls ? CON_TLS_ON : CON_TLS_OFF,
+                                   skip_conn_auth);
 
     if (subreq == NULL) {
         tevent_req_error(req, ENOMEM);
@@ -703,6 +745,35 @@ static struct tevent_req *auth_connect_send(struct tevent_req *req)
     tevent_req_set_callback(subreq, auth_connect_done, req);
 
     return subreq;
+}
+
+static bool check_encryption_used(LDAP *ldap)
+{
+    ber_len_t sasl_ssf = 0;
+    int tls_inplace = 0;
+    int ret;
+
+    ret = ldap_get_option(ldap, LDAP_OPT_X_SASL_SSF, &sasl_ssf);
+    if (ret != LDAP_OPT_SUCCESS) {
+        DEBUG(SSSDBG_TRACE_LIBS, "ldap_get_option failed to get sasl ssf, "
+                                 "assuming SASL is not used.\n");
+        sasl_ssf = 0;
+    }
+
+    tls_inplace = ldap_tls_inplace(ldap);
+
+    DEBUG(SSSDBG_TRACE_ALL,
+          "Encryption used: SASL SSF [%lu] tls_inplace [%s].\n", sasl_ssf,
+          tls_inplace == 1 ? "TLS inplace" : "TLS NOT inplace");
+
+    if (sasl_ssf <= 1 && tls_inplace != 1) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+                "No encryption detected on LDAP connection.\n");
+        sss_log(SSS_LOG_CRIT, "No encryption detected on LDAP connection.\n");
+        return false;
+    }
+
+    return true;
 }
 
 static void auth_connect_done(struct tevent_req *subreq)
@@ -734,15 +805,15 @@ static void auth_connect_done(struct tevent_req *subreq)
         return;
     }
 
-    ret = get_user_dn(state, state->ctx->be->domain,
-                      state->ctx->opts, state->username, &state->dn,
-                      &state->pw_expire_type, &state->pw_expire_data);
-    if (ret == EOK) {
-        /* All required user data was pre-cached during an identity lookup.
-         * We can proceed with the bind */
-        auth_do_bind(req);
+    if (!check_encryption_used(state->sh->ldap) &&
+            !dp_opt_get_bool(state->ctx->opts->basic, SDAP_DISABLE_AUTH_TLS)) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Aborting the authentication request.\n");
+        sss_log(SSS_LOG_CRIT, "Aborting the authentication request.\n");
+        tevent_req_error(req, ERR_AUTH_FAILED);
         return;
-    } else if (ret == EAGAIN) {
+    }
+
+    if (state->dn == NULL) {
         /* The cached user entry was missing the bind DN. Need to look
          * it up based on user name in order to perform the bind */
         subreq = get_user_dn_send(req, state->ev, state->ctx->be->domain,
@@ -755,7 +826,9 @@ static void auth_connect_done(struct tevent_req *subreq)
         return;
     }
 
-    tevent_req_error(req, ret);
+    /* All required user data was pre-cached during an identity lookup.
+     * We can proceed with the bind */
+    auth_do_bind(req);
     return;
 }
 
