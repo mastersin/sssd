@@ -20,8 +20,8 @@
 %endif
 
 Name: sssd
-Version: 2.1.0
-Release: alt2
+Version: 2.2.0
+Release: alt1
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -849,6 +849,9 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %python3_sitelibdir_noarch/SSSDConfig/__pycache__/*.py*
 
 %changelog
+* Fri Jun 28 2019 Evgeny Sinelnikov <sin@altlinux.org> 2.2.0-alt1
+- Update to 2.2.0
+
 * Fri Jun 28 2019 Evgeny Sinelnikov <sin@altlinux.org> 2.1.0-alt2
 - Update libwbclient-sssd interface to version 0.15 (Closes: 36750)
 
