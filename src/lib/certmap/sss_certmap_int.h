@@ -101,9 +101,9 @@ enum comp_type {
 };
 
 struct parsed_template {
-    char *name;
-    char *attr_name;
-    char *conversion;
+    const char *name;
+    const char *attr_name;
+    const char *conversion;
 };
 
 struct ldap_mapping_rule_comp {
@@ -165,6 +165,28 @@ struct san_list {
 #define SSS_KU_CRL_SIGN             0x0002
 #define SSS_KU_ENCIPHER_ONLY        0x0001
 #define SSS_KU_DECIPHER_ONLY        0x8000
+
+struct sss_key_usage {
+    const char *name;
+    uint32_t flag;
+};
+
+extern const struct sss_key_usage sss_key_usage[];
+
+struct sss_ext_key_usage {
+    const char *name;
+    const char *oid;
+};
+
+extern const struct sss_ext_key_usage sss_ext_key_usage[];
+
+struct sss_san_name {
+    const char *name;
+    enum san_opt san_opt;
+    bool is_string;
+};
+
+extern const struct sss_san_name sss_san_names[];
 
 struct sss_cert_content {
     char *issuer_str;

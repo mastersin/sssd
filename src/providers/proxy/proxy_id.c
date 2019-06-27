@@ -576,7 +576,7 @@ done:
 
 
 static errno_t remove_duplicate_group_members(TALLOC_CTX *mem_ctx,
-                                             struct group *orig_grp,
+                                             const struct group *orig_grp,
                                              struct group **_grp)
 {
     TALLOC_CTX *tmp_ctx;
@@ -597,17 +597,48 @@ static errno_t remove_duplicate_group_members(TALLOC_CTX *mem_ctx,
         return ENOMEM;
     }
 
-    if (orig_grp->gr_mem == NULL) {
-        ret = ENOENT;
+    grp = talloc(tmp_ctx, struct group);
+    if (grp == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc failed.\n");
+        ret = ENOMEM;
         goto done;
     }
 
-    for (i=0; orig_grp->gr_mem[i] != NULL; i++) {
-        orig_member_count++;
+    grp->gr_gid = orig_grp->gr_gid;
+
+    grp->gr_name = talloc_strdup(grp, orig_grp->gr_name);
+    if (grp->gr_name == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
+        ret = ENOMEM;
+        goto done;
     }
 
+    grp->gr_passwd = talloc_strdup(grp, orig_grp->gr_passwd);
+    if (grp->gr_passwd == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    if (orig_grp->gr_mem == NULL) {
+        grp->gr_mem = NULL;
+        ret = EOK;
+        goto done;
+    }
+
+    for (i=0; orig_grp->gr_mem[i] != NULL; ++i) /* no-op: just counting */;
+
+    orig_member_count = i;
+
     if (orig_member_count == 0) {
-        ret = ENOENT;
+        grp->gr_mem = talloc_zero_array(grp, char *, 1);
+        if (grp->gr_mem == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE, "talloc_zero_array failed.\n");
+            ret = ENOMEM;
+            goto done;
+        }
+        grp->gr_mem[0] = NULL;
+        ret = EOK;
         goto done;
     }
 
@@ -618,26 +649,17 @@ static errno_t remove_duplicate_group_members(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    for (i=0; orig_grp->gr_mem[i] != NULL; i++) {
+    for (i=0; i < orig_member_count; ++i) {
         key.type = HASH_KEY_STRING;
-        key.str = talloc_strdup(member_tbl, orig_grp->gr_mem[i]);
-        if (key.str == NULL) {
-            DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
-            ret = ENOMEM;
-            goto done;
-        }
+        key.str = orig_grp->gr_mem[i]; /* hash_enter() makes copy itself */
 
         value.type = HASH_VALUE_PTR;
-        value.ptr = talloc_strdup(member_tbl, orig_grp->gr_mem[i]);
-        if (key.str == NULL) {
-            DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
-            ret = ENOMEM;
-            goto done;
-        }
+        /* no need to put copy in hash_table since
+           copy will be created during construction of new grp */
+        value.ptr = orig_grp->gr_mem[i];
 
         ret = hash_enter(member_tbl, &key, &value);
         if (ret != HASH_SUCCESS) {
-            talloc_free(key.str);
             ret = ENOMEM;
             goto done;
         }
@@ -645,14 +667,8 @@ static errno_t remove_duplicate_group_members(TALLOC_CTX *mem_ctx,
 
     member_count = hash_count(member_tbl);
     if (member_count == 0) {
-        ret = ENOENT;
-        goto done;
-    }
-
-    grp = talloc(mem_ctx, struct group);
-    if (grp == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "talloc failed.\n");
-        ret = ENOMEM;
+        DEBUG(SSSDBG_CRIT_FAILURE, "Empty resulting hash table - must be internal bug.\n");
+        ret = EINVAL;
         goto done;
     }
 
@@ -682,32 +698,11 @@ static errno_t remove_duplicate_group_members(TALLOC_CTX *mem_ctx,
     }
     grp->gr_mem[i] = NULL;
 
-    grp->gr_gid = orig_grp->gr_gid;
-
-    grp->gr_name = talloc_strdup(grp, orig_grp->gr_name);
-    if (grp->gr_name == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
-        ret = ENOMEM;
-        goto done;
-    }
-
-    grp->gr_passwd = talloc_strdup(grp, orig_grp->gr_passwd);
-    if (grp->gr_passwd == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
-        ret = ENOMEM;
-        goto done;
-    }
-
     *_grp = talloc_steal(mem_ctx, grp);
     ret = EOK;
 
 done:
     talloc_zfree(tmp_ctx);
-
-    if (ret == ENOENT) {
-        *_grp = talloc_steal(mem_ctx, orig_grp);
-        ret = EOK;
-    }
 
     return ret;
 }
@@ -718,7 +713,7 @@ static errno_t proxy_process_missing_users(struct sysdb_ctx *sysdb,
                                            const char *const*fq_gr_mem,
                                            time_t now);
 static int save_group(struct sysdb_ctx *sysdb, struct sss_domain_info *dom,
-                      struct group *grp,
+                      const struct group *grp,
                       const char *real_name, /* already qualified */
                       const char *alias) /* already qualified */
 {

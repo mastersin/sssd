@@ -53,6 +53,7 @@ enum ad_basic_opt {
     AD_ENABLE_GC,
     AD_GPO_ACCESS_CONTROL,
     AD_GPO_IMPLICIT_DENY,
+    AD_GPO_IGNORE_UNREADABLE,
     AD_GPO_CACHE_TIMEOUT,
     AD_GPO_MAP_INTERACTIVE,
     AD_GPO_MAP_REMOTE_INTERACTIVE,
@@ -146,6 +147,8 @@ ad_failover_init(TALLOC_CTX *mem_ctx, struct be_ctx *ctx,
                  const char *ad_gc_service,
                  const char *ad_domain,
                  bool use_kdcinfo,
+                 size_t n_lookahead_primary,
+                 size_t n_lookahead_backup,
                  struct ad_service **_service);
 
 void
@@ -216,4 +219,9 @@ errno_t netlogon_get_domain_info(TALLOC_CTX *mem_ctx,
                                  char **_site,
                                  char **_forest);
 
+errno_t ad_inherit_opts_if_needed(struct dp_option *parent_opts,
+                                  struct dp_option *suddom_opts,
+                                  struct confdb_ctx *cdb,
+                                  const char *subdom_conf_path,
+                                  int opt_id);
 #endif /* AD_COMMON_H_ */

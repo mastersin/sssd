@@ -24,6 +24,7 @@
 #include "providers/ad/ad_common.h"
 #include "providers/ad/ad_opts.h"
 #include "providers/be_dyndns.h"
+#include "providers/fail_over.h"
 
 struct ad_server_data {
     bool gc;
@@ -576,7 +577,7 @@ _ad_servers_init(struct ad_service *service,
         if (resolv_is_address(list[j])) {
             DEBUG(SSSDBG_IMPORTANT_INFO,
                   "ad_server [%s] is detected as IP address, "
-                  "this can cause GSSAPI problems\n", list[j]);
+                  "this can cause GSSAPI/GSS-SPNEGO problems\n", list[j]);
         }
     }
 
@@ -728,6 +729,8 @@ ad_failover_init(TALLOC_CTX *mem_ctx, struct be_ctx *bectx,
                  const char *ad_gc_service,
                  const char *ad_domain,
                  bool use_kdcinfo,
+                 size_t n_lookahead_primary,
+                 size_t n_lookahead_backup,
                  struct ad_service **_service)
 {
     errno_t ret;
@@ -759,7 +762,9 @@ ad_failover_init(TALLOC_CTX *mem_ctx, struct be_ctx *bectx,
 
     service->krb5_service = krb5_service_new(service, bectx,
                                              ad_service, krb5_realm,
-                                             use_kdcinfo);
+                                             use_kdcinfo,
+                                             n_lookahead_primary,
+                                             n_lookahead_backup);
     if (!service->krb5_service) {
         ret = ENOMEM;
         goto done;
@@ -852,6 +857,20 @@ ad_failover_reset(struct be_ctx *bectx,
     sdap_service_reset_fo(bectx, adsvc->gc);
 }
 
+static bool
+ad_krb5info_file_filter(struct fo_server *server)
+{
+    struct ad_server_data *sdata = NULL;
+    if (server == NULL) return true;
+
+    sdata = fo_get_server_user_data(server);
+    if (sdata && sdata->gc) {
+        /* Only write kdcinfo files for local servers */
+        return true;
+    }
+    return false;
+}
+
 static void
 ad_resolve_callback(void *private_data, struct fo_server *server)
 {
@@ -861,7 +880,6 @@ ad_resolve_callback(void *private_data, struct fo_server *server)
     struct resolv_hostent *srvaddr;
     struct sockaddr_storage *sockaddr;
     char *address;
-    char *safe_addr_list[2] = { NULL, NULL };
     char *new_uri;
     int new_port;
     const char *srv_name;
@@ -966,25 +984,14 @@ ad_resolve_callback(void *private_data, struct fo_server *server)
         goto done;
     }
 
-    /* Only write kdcinfo files for local servers */
-    if ((sdata == NULL || sdata->gc == false) &&
-        service->krb5_service->write_kdcinfo) {
-        /* Write krb5 info files */
-        safe_addr_list[0] = sss_escape_ip_address(tmp_ctx,
-                                                  srvaddr->family,
-                                                  address);
-        if (safe_addr_list[0] == NULL) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "sss_escape_ip_address failed.\n");
-            ret = ENOMEM;
-            goto done;
-        }
-
-        ret = write_krb5info_file(service->krb5_service,
-                                  safe_addr_list,
-                                  SSS_KRB5KDC_FO_SRV);
+    if (service->krb5_service->write_kdcinfo) {
+        ret = write_krb5info_file_from_fo_server(service->krb5_service,
+                                                 server,
+                                                 SSS_KRB5KDC_FO_SRV,
+                                                 ad_krb5info_file_filter);
         if (ret != EOK) {
             DEBUG(SSSDBG_MINOR_FAILURE,
-                "write_krb5info_file failed, authentication might fail.\n");
+                  "write_krb5info_file failed, authentication might fail.\n");
         }
     }
 
@@ -1018,7 +1025,7 @@ ad_set_sdap_options(struct ad_options *ad_opts,
         goto done;
     }
 
-    /* Set the Kerberos Realm for GSSAPI */
+    /* Set the Kerberos Realm for GSSAPI or GSS-SPNEGO */
     krb5_realm = dp_opt_get_string(ad_opts->basic, AD_KRB5_REALM);
     if (!krb5_realm) {
         /* Should be impossible, this is set in ad_get_common_options() */
@@ -1275,7 +1282,7 @@ ad_get_auth_options(TALLOC_CTX *mem_ctx,
            ad_servers);
 
     /* Set krb5 realm */
-    /* Set the Kerberos Realm for GSSAPI */
+    /* Set the Kerberos Realm for GSSAPI/GSS-SPNEGO */
     krb5_realm = dp_opt_get_string(ad_opts->basic, AD_KRB5_REALM);
     if (!krb5_realm) {
         /* Should be impossible, this is set in ad_get_common_options() */
@@ -1302,6 +1309,10 @@ ad_get_auth_options(TALLOC_CTX *mem_ctx,
     DEBUG(SSSDBG_CONF_SETTINGS, "Option %s set to %s\n",
           krb5_options[KRB5_USE_KDCINFO].opt_name,
           ad_opts->service->krb5_service->write_kdcinfo ? "true" : "false");
+    sss_krb5_parse_lookahead(
+        dp_opt_get_string(krb5_options, KRB5_KDCINFO_LOOKAHEAD),
+        &ad_opts->service->krb5_service->lookahead_primary,
+        &ad_opts->service->krb5_service->lookahead_backup);
 
     *_opts = talloc_steal(mem_ctx, krb5_options);
 
@@ -1456,4 +1467,42 @@ ad_user_conn_list(TALLOC_CTX *mem_ctx,
     clist[cindex] = ad_get_dom_ldap_conn(ad_ctx, dom);
 
     return clist;
+}
+
+errno_t ad_inherit_opts_if_needed(struct dp_option *parent_opts,
+                                  struct dp_option *suddom_opts,
+                                  struct confdb_ctx *cdb,
+                                  const char *subdom_conf_path,
+                                  int opt_id)
+{
+    int ret;
+    const char *parent_val = NULL;
+    char *dummy = NULL;
+    char *option_list[2] = { NULL, NULL };
+
+    parent_val = dp_opt_get_cstring(parent_opts, opt_id);
+    if (parent_val != NULL) {
+        ret = confdb_get_string(cdb, NULL, subdom_conf_path,
+                                parent_opts[opt_id].opt_name, NULL, &dummy);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "confdb_get_string failed.\n");
+            goto done;
+        }
+
+        if (dummy == NULL) {
+            DEBUG(SSSDBG_CONF_SETTINGS,
+                  "Option [%s] is set in parent domain but not set for "
+                  "sub-domain trying to set it to [%s].\n",
+                  parent_opts[opt_id].opt_name, parent_val);
+            option_list[0] = discard_const(parent_opts[opt_id].opt_name);
+            dp_option_inherit(option_list, opt_id, parent_opts, suddom_opts);
+        }
+    }
+
+    ret = EOK;
+
+done:
+    talloc_free(dummy);
+
+    return ret;
 }

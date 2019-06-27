@@ -7,10 +7,11 @@ sssd_source="/shared/sssd"
 artifacts_dir="/shared/artifacts"
 
 archive-artifacts() {
-    echo "Archiving Artifact..."
+    echo "Archiving artifacts..."
 
-    cp -f $sssd_source/ci-*.log /shared/artifacts
-    cp -f $sssd_source/ci-build-debug/ci-*.log /shared/artifacts
+    cp -f $sssd_source/ci-*.log $artifacts_dir
+    cp -f $sssd_source/ci-build-debug/ci-*.log $artifacts_dir
+    cp -f $sssd_source/ci-build-debug/test-suite.log $artifacts_dir
 }
 
 success-or-die() {
@@ -29,7 +30,7 @@ success-or-die() {
 cd $sssd_source
 
 echo "[1/1] Running Continuous Integration Tests"
-./contrib/ci/run
+./contrib/ci/run --moderate --no-deps
 success-or-die $? "CI Failed!"
 
 archive-artifacts

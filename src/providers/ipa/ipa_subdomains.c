@@ -571,7 +571,8 @@ static errno_t ipa_subdom_store(struct sss_domain_info *parent,
     const char *id;
     char *forest = NULL;
     int ret;
-    bool mpg;
+    bool use_id_mapping;
+    enum sss_domain_mpg_mode mpg_mode;
     bool enumerate;
     uint32_t direction;
     struct ldb_message_element *alternative_domain_suffixes = NULL;
@@ -611,7 +612,17 @@ static errno_t ipa_subdom_store(struct sss_domain_info *parent,
         goto done;
     }
 
-    mpg = sdap_idmap_domain_has_algorithmic_mapping(sdap_idmap_ctx, name, id);
+    use_id_mapping = sdap_idmap_domain_has_algorithmic_mapping(sdap_idmap_ctx,
+                                                               name, id);
+    if (use_id_mapping == true) {
+        mpg_mode = MPG_ENABLED;
+    } else {
+        /* Domains that use the POSIX attributes set by the admin must
+         * inherit the MPG setting from the parent domain so that the
+         * auto_private_groups options works for trusted domains as well
+         */
+        mpg_mode = get_domain_mpg_mode(parent);
+    }
 
     ret = ipa_subdom_get_forest(tmp_ctx, sysdb_ctx_get_ldb(parent->sysdb),
                                 attrs, &forest);
@@ -639,7 +650,7 @@ static errno_t ipa_subdom_store(struct sss_domain_info *parent,
     }
 
     ret = sysdb_subdomain_store(parent->sysdb, name, realm, flat,
-                                id, mpg, enumerate, forest,
+                                id, mpg_mode, enumerate, forest,
                                 direction, alternative_domain_suffixes);
     if (ret) {
         DEBUG(SSSDBG_OP_FAILURE, "sysdb_subdomain_store failed.\n");
@@ -681,7 +692,9 @@ ipa_subdom_get_k5_svc(struct ipa_subdomains_ctx *ctx,
                                         ctx->be_ctx,
                                         "IPA",
                                         dom->realm,
-                                        use_kdcinfo);
+                                        use_kdcinfo,
+                                        (size_t) -1,
+                                        (size_t) -1);
     if (k5svc_ent->k5svc == NULL) {
         talloc_free(k5svc_ent);
         return NULL;
@@ -2534,7 +2547,7 @@ static errno_t ipa_subdomains_write_kdcinfo_write_step(struct sss_domain_info *d
     errno_t ret;
     char *address = NULL;
     char *safe_address = NULL;
-    char **safe_addr_list;
+    const char **safe_addr_list;
     int addr_index = 0;
     TALLOC_CTX *tmp_ctx = NULL;
 
@@ -2543,7 +2556,7 @@ static errno_t ipa_subdomains_write_kdcinfo_write_step(struct sss_domain_info *d
         return ENOMEM;
     }
 
-    safe_addr_list = talloc_zero_array(tmp_ctx, char *, rhp_len+1);
+    safe_addr_list = talloc_zero_array(tmp_ctx, const char *, rhp_len+1);
     if (safe_addr_list == NULL) {
         ret = ENOMEM;
         goto done;

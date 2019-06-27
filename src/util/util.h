@@ -47,7 +47,8 @@
 #include "util/debug.h"
 
 /* name of the monitor server instance */
-#define SSSD_PIDFILE PID_PATH"/sssd.pid"
+#define SSSD_MONITOR_NAME        "sssd"
+#define SSSD_PIDFILE PID_PATH"/"SSSD_MONITOR_NAME".pid"
 #define MAX_PID_LENGTH 10
 
 #define _(STRING) gettext (STRING)
@@ -174,7 +175,7 @@ struct main_context {
 errno_t server_common_rotate_logs(struct confdb_ctx *confdb,
                                   const char *conf_entry);
 int die_if_parent_died(void);
-int pidfile(const char *path, const char *name);
+int pidfile(const char *file);
 int server_setup(const char *name, int flags,
                  uid_t uid, gid_t gid,
                  const char *conf_entry,
@@ -404,11 +405,11 @@ bool local_provider_is_built(void);
 /**
  * @brief Add two list of strings
  *
- * Create a new NULL-termintated list of strings by adding two lists together.
+ * Create a new NULL-terminated list of strings by adding two lists together.
  *
  * @param[in] mem_ctx      Talloc memory context for the new list.
- * @param[in] l1           First NULL-termintated list of strings.
- * @param[in] l2           Second NULL-termintated list of strings.
+ * @param[in] l1           First NULL-terminated list of strings.
+ * @param[in] l2           Second NULL-terminated list of strings.
  * @param[in] copy_strings If set to 'true' the list items will be copied
  *                         otherwise only the pointers to the items are
  *                         copied.
@@ -559,6 +560,9 @@ find_domain_by_object_name_ex(struct sss_domain_info *domain,
 bool subdomain_enumerates(struct sss_domain_info *parent,
                           const char *sd_name);
 
+char *subdomain_create_conf_path_from_str(TALLOC_CTX *mem_ctx,
+                                          const char *parent_name,
+                                          const char *subdom_name);
 char *subdomain_create_conf_path(TALLOC_CTX *mem_ctx,
                                  struct sss_domain_info *subdomain);
 
@@ -572,6 +576,12 @@ void sss_domain_info_set_output_fqnames(struct sss_domain_info *domain,
                                         bool output_fqname);
 
 bool sss_domain_info_get_output_fqnames(struct sss_domain_info *domain);
+
+bool sss_domain_is_mpg(struct sss_domain_info *domain);
+
+enum sss_domain_mpg_mode get_domain_mpg_mode(struct sss_domain_info *domain);
+const char *str_domain_mpg_mode(enum sss_domain_mpg_mode mpg_mode);
+enum sss_domain_mpg_mode str_to_domain_mpg_mode(const char *str_mpg_mode);
 
 #define IS_SUBDOMAIN(dom) ((dom)->parent != NULL)
 

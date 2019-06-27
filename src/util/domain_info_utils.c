@@ -889,6 +889,14 @@ bool sss_domain_is_forest_root(struct sss_domain_info *dom)
     return (dom->forest_root == dom);
 }
 
+char *subdomain_create_conf_path_from_str(TALLOC_CTX *mem_ctx,
+                                          const char *parent_name,
+                                          const char *subdom_name)
+{
+    return talloc_asprintf(mem_ctx, CONFDB_DOMAIN_PATH_TMPL "/%s",
+                           parent_name, subdom_name);
+}
+
 char *subdomain_create_conf_path(TALLOC_CTX *mem_ctx,
                                  struct sss_domain_info *subdomain)
 {
@@ -899,9 +907,9 @@ char *subdomain_create_conf_path(TALLOC_CTX *mem_ctx,
         return NULL;
     }
 
-    return talloc_asprintf(mem_ctx, CONFDB_DOMAIN_PATH_TMPL "/%s",
-                           subdomain->parent->name,
-                           subdomain->name);
+    return subdomain_create_conf_path_from_str(mem_ctx,
+                                               subdomain->parent->name,
+                                               subdomain->name);
 }
 
 const char *sss_domain_type_str(struct sss_domain_info *dom)
@@ -934,4 +942,44 @@ bool is_files_provider(struct sss_domain_info *domain)
     return domain != NULL &&
            domain->provider != NULL &&
            strcasecmp(domain->provider, "files") == 0;
+}
+
+bool sss_domain_is_mpg(struct sss_domain_info *domain)
+{
+    return domain->mpg_mode == MPG_ENABLED;
+}
+
+enum sss_domain_mpg_mode get_domain_mpg_mode(struct sss_domain_info *domain)
+{
+    return domain->mpg_mode;
+}
+
+const char *str_domain_mpg_mode(enum sss_domain_mpg_mode mpg_mode)
+{
+    switch (mpg_mode) {
+    case MPG_ENABLED:
+        return "true";
+    case MPG_DISABLED:
+        return "false";
+    case MPG_HYBRID:
+        return "hybrid";
+    }
+
+    return NULL;
+}
+
+enum sss_domain_mpg_mode str_to_domain_mpg_mode(const char *str_mpg_mode)
+{
+    if (strcasecmp(str_mpg_mode, "FALSE") == 0) {
+        return MPG_DISABLED;
+    } else if (strcasecmp(str_mpg_mode, "TRUE") == 0) {
+        return MPG_ENABLED;
+    } else if (strcasecmp(str_mpg_mode, "HYBRID") == 0) {
+        return MPG_HYBRID;
+    }
+
+    DEBUG(SSSDBG_MINOR_FAILURE,
+          "Invalid value for %s\n, assuming disabled",
+          SYSDB_SUBDOMAIN_MPG);
+    return MPG_DISABLED;
 }

@@ -287,7 +287,7 @@ static void ipa_subdomain_account_got_override(struct tevent_req *subreq)
         }
     } else {
         if (state->mapped_attrs != NULL) {
-            /* remove certifcate (if any) if no matching override was found */
+            /* remove certificate (if any) if no matching override was found */
             ret = sysdb_remove_mapped_data(state->domain, state->mapped_attrs);
             if (ret != EOK) {
                 DEBUG(SSSDBG_OP_FAILURE, "sysdb_remove_mapped_data failed, "
@@ -1023,7 +1023,7 @@ apply_subdomain_homedir(TALLOC_CTX *mem_ctx, struct sss_domain_info *dom,
     for (c = 0; c < msg_el->num_values; c++) {
         if (strncmp(SYSDB_USER_CLASS, (const char *)msg_el->values[c].data,
                     msg_el->values[c].length) == 0
-                || (dom->mpg
+                || (sss_domain_is_mpg(dom)
                     && strncmp(SYSDB_GROUP_CLASS,
                                (const char *)msg_el->values[c].data,
                                msg_el->values[c].length) == 0)) {

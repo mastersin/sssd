@@ -275,6 +275,15 @@
 #define CONFDB_CERTMAP_DOMAINS "domains"
 #define CONFDB_CERTMAP_PRIORITY "priority"
 
+/* Prompting */
+#define CONFDB_PC_CONF_ENTRY "config/prompting"
+#define CONFDB_PC_TYPE_PASSWORD "password"
+#define CONFDB_PC_PASSWORD_PROMPT "password_prompt"
+#define CONFDB_PC_TYPE_2FA "2fa"
+#define CONFDB_PC_2FA_SINGLE_PROMPT "single_prompt"
+#define CONFDB_PC_2FA_1ST_PROMPT "first_prompt"
+#define CONFDB_PC_2FA_2ND_PROMPT "second_prompt"
+#define CONFDB_PC_TYPE_CERT_AUTH "cert_auth"
 
 struct confdb_ctx;
 struct config_file_ctx;
@@ -310,6 +319,12 @@ enum sss_domain_type {
     DOM_TYPE_APPLICATION,
 };
 
+enum sss_domain_mpg_mode {
+    MPG_DISABLED,
+    MPG_ENABLED,
+    MPG_HYBRID,
+};
+
 /**
  * Data structure storing all of the basic features
  * of a domain.
@@ -324,7 +339,7 @@ struct sss_domain_info {
     bool enumerate;
     char **sd_enumerate;
     bool fqnames;
-    bool mpg;
+    enum sss_domain_mpg_mode mpg_mode;
     bool ignore_group_members;
     uint32_t id_min;
     uint32_t id_max;
@@ -436,9 +451,6 @@ int confdb_get_domain(struct confdb_ctx *cdb,
  */
 int confdb_get_domains(struct confdb_ctx *cdb,
                        struct sss_domain_info **domains);
-
-int confdb_ensure_files_domain(struct confdb_ctx *cdb,
-                               const char *implicit_files_dom_name);
 
 int confdb_expand_app_domains(struct confdb_ctx *cdb);
 

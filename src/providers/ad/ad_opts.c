@@ -39,6 +39,7 @@ struct dp_option ad_basic_opts[] = {
     { "ad_enable_gc", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
     { "ad_gpo_access_control", DP_OPT_STRING, { AD_GPO_ACCESS_MODE_DEFAULT }, NULL_STRING },
     { "ad_gpo_implicit_deny", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
+    { "ad_gpo_ignore_unreadable", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "ad_gpo_cache_timeout", DP_OPT_NUMBER, { .number = 5 }, NULL_NUMBER },
     { "ad_gpo_map_interactive", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ad_gpo_map_remote_interactive", DP_OPT_STRING, NULL_STRING, NULL_STRING },
@@ -86,6 +87,7 @@ struct dp_option ad_def_ldap_opts[] = {
     { "ldap_autofs_search_base", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_autofs_map_master_name", DP_OPT_STRING, { "auto.master" }, NULL_STRING },
     { "ldap_schema", DP_OPT_STRING, { "ad" }, NULL_STRING },
+    { "ldap_pwmodify_mode", DP_OPT_STRING, { "exop" }, NULL_STRING },
     { "ldap_offline_timeout", DP_OPT_NUMBER, { .number = 60 }, NULL_NUMBER },
     { "ldap_force_upper_case_realm", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
     { "ldap_enumeration_refresh_timeout", DP_OPT_NUMBER, { .number = 300 }, NULL_NUMBER },
@@ -109,6 +111,7 @@ struct dp_option ad_def_ldap_opts[] = {
     { "krb5_realm", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "krb5_canonicalize", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "krb5_use_kdcinfo", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
+    { "krb5_kdcinfo_lookahead", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_pwd_policy", DP_OPT_STRING, { "none" }, NULL_STRING },
     { "ldap_referrals", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "account_cache_expiration", DP_OPT_NUMBER, { .number = 0 }, NULL_NUMBER },
@@ -171,6 +174,7 @@ struct dp_option ad_def_krb5_opts[] = {
     { "krb5_canonicalize", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "krb5_use_enterprise_principal", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
     { "krb5_use_kdcinfo", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
+    { "krb5_kdcinfo_lookahead", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "krb5_map_user", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     DP_OPTION_TERMINATOR
 };

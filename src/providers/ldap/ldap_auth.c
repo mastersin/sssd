@@ -715,9 +715,9 @@ static struct tevent_req *auth_connect_send(struct tevent_req *req)
          * we don't need to authenticate the connection, because we're not
          * looking up any information using the connection. This might be
          * needed e.g. in case both ID and AUTH providers are set to LDAP
-         * and the server is AD, because otherwise the connection would
-         * both do a startTLS and later bind using GSSAPI which doesn't work
-         * well with AD.
+         * and the server is AD, because otherwise the connection would both
+         * do a startTLS and later bind using GSSAPI or GSS-SPNEGO which
+         * doesn't work well with AD.
          */
         skip_conn_auth = true;
     }
@@ -725,8 +725,8 @@ static struct tevent_req *auth_connect_send(struct tevent_req *req)
     if (skip_conn_auth == false) {
         sasl_mech = dp_opt_get_string(state->ctx->opts->basic,
                                       SDAP_SASL_MECH);
-        if (sasl_mech && strcasecmp(sasl_mech, "GSSAPI") == 0) {
-            /* Don't force TLS on if we're told to use GSSAPI */
+        if (sasl_mech && sdap_sasl_mech_needs_kinit(sasl_mech)) {
+            /* Don't force TLS on if we're told to use GSSAPI or GSS-SPNEGO */
             use_tls = false;
         }
     }
@@ -1101,6 +1101,136 @@ sdap_pam_auth_handler_recv(TALLOC_CTX *mem_ctx,
     return EOK;
 }
 
+struct sdap_pam_change_password_state {
+    enum pwmodify_mode mode;
+    char *user_error_message;
+};
+
+static void sdap_pam_change_password_done(struct tevent_req *subreq);
+
+static struct tevent_req *
+sdap_pam_change_password_send(TALLOC_CTX *mem_ctx,
+                              struct tevent_context *ev,
+                              struct sdap_handle *sh,
+                              struct sdap_options *opts,
+                              struct pam_data *pd,
+                              char *user_dn)
+{
+    struct sdap_pam_change_password_state *state;
+    struct tevent_req *subreq;
+    struct tevent_req *req;
+    const char *password;
+    const char *new_password;
+    char *pwd_attr;
+    int timeout;
+    errno_t ret;
+
+    pwd_attr = opts->user_map[SDAP_AT_USER_PWD].name;
+
+    req = tevent_req_create(mem_ctx, &state,
+                            struct sdap_pam_change_password_state);
+    if (req == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create tevent request!\n");
+        return NULL;
+    }
+
+    state->mode = opts->pwmodify_mode;
+
+    ret = sss_authtok_get_password(pd->authtok, &password, NULL);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    ret = sss_authtok_get_password(pd->newauthtok, &new_password, NULL);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    timeout = dp_opt_get_int(opts->basic, SDAP_OPT_TIMEOUT);
+
+    switch (opts->pwmodify_mode) {
+    case SDAP_PWMODIFY_EXOP:
+        subreq = sdap_exop_modify_passwd_send(state, ev, sh, user_dn,
+                                              password, new_password,
+                                              timeout);
+        break;
+    case SDAP_PWMODIFY_LDAP:
+        subreq = sdap_modify_passwd_send(state, ev, sh, timeout, pwd_attr,
+                                         user_dn, new_password);
+        break;
+    default:
+        DEBUG(SSSDBG_FATAL_FAILURE, "Unrecognized pwmodify mode: %d\n",
+              opts->pwmodify_mode);
+        ret = EINVAL;
+        goto done;
+    }
+    if (subreq == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    tevent_req_set_callback(subreq, sdap_pam_change_password_done, req);
+
+    ret = EOK;
+
+done:
+    if (ret != EOK) {
+        tevent_req_error(req, ret);
+        tevent_req_post(req, ev);
+    }
+
+    return req;
+}
+
+static void sdap_pam_change_password_done(struct tevent_req *subreq)
+{
+    struct sdap_pam_change_password_state *state;
+    struct tevent_req *req;
+    errno_t ret;
+
+    req = tevent_req_callback_data(subreq, struct tevent_req);
+    state = tevent_req_data(req, struct sdap_pam_change_password_state);
+
+    switch (state->mode) {
+    case SDAP_PWMODIFY_EXOP:
+        ret = sdap_exop_modify_passwd_recv(subreq, state,
+                                           &state->user_error_message);
+        break;
+    case SDAP_PWMODIFY_LDAP:
+        ret = sdap_modify_passwd_recv(subreq);
+        break;
+    default:
+        DEBUG(SSSDBG_FATAL_FAILURE, "Unrecognized pwmodify mode: %d\n",
+              state->mode);
+        ret = EINVAL;
+    }
+    talloc_zfree(subreq);
+    if (ret != EOK) {
+        tevent_req_error(req, ret);
+        return;
+    }
+
+    tevent_req_done(req);
+    return;
+}
+
+static errno_t
+sdap_pam_change_password_recv(TALLOC_CTX *mem_ctx,
+                              struct tevent_req *req,
+                              char **_user_error_message)
+{
+    struct sdap_pam_change_password_state *state;
+    state = tevent_req_data(req, struct sdap_pam_change_password_state);
+
+    /* We want to return the error message even on failure */
+    *_user_error_message = talloc_steal(mem_ctx, state->user_error_message);
+
+    TEVENT_REQ_RETURN_ON_ERROR(req);
+
+    return EOK;
+}
+
+
 struct sdap_pam_chpass_handler_state {
     struct be_ctx *be_ctx;
     struct tevent_context *ev;
@@ -1242,30 +1372,11 @@ static void sdap_pam_chpass_handler_auth_done(struct tevent_req *subreq)
                 state->pd->pam_status = PAM_MODULE_UNKNOWN;
                 goto done;
             } else {
-                const char *password;
-                const char *new_password;
-                int timeout;
-
-                ret = sss_authtok_get_password(state->pd->authtok,
-                                               &password, NULL);
-                if (ret) {
-                    state->pd->pam_status = PAM_SYSTEM_ERR;
-                    goto done;
-                }
-                ret = sss_authtok_get_password(state->pd->newauthtok,
-                                               &new_password, NULL);
-                if (ret) {
-                    state->pd->pam_status = PAM_SYSTEM_ERR;
-                    goto done;
-                }
-
-                timeout = dp_opt_get_int(state->auth_ctx->opts->basic,
-                                         SDAP_OPT_TIMEOUT);
-
-                subreq = sdap_exop_modify_passwd_send(state, state->ev,
-                                                      state->sh, state->dn,
-                                                      password, new_password,
-                                                      timeout);
+                subreq = sdap_pam_change_password_send(state, state->ev,
+                                                       state->sh,
+                                                       state->auth_ctx->opts,
+                                                       state->pd,
+                                                       state->dn);
                 if (subreq == NULL) {
                     DEBUG(SSSDBG_OP_FAILURE, "Failed to change password for "
                           "%s\n", state->pd->user);
@@ -1323,7 +1434,7 @@ static void sdap_pam_chpass_handler_chpass_done(struct tevent_req *subreq)
     req = tevent_req_callback_data(subreq, struct tevent_req);
     state = tevent_req_data(req, struct sdap_pam_chpass_handler_state);
 
-    ret = sdap_exop_modify_passwd_recv(subreq, state, &user_error_message);
+    ret = sdap_pam_change_password_recv(state, subreq, &user_error_message);
     talloc_free(subreq);
 
     switch (ret) {

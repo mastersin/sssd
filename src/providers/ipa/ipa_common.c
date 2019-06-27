@@ -492,17 +492,23 @@ int ipa_get_id_options(struct ipa_options *ipa_opts,
 
     if (NULL == dp_opt_get_string(ipa_opts->id->basic,
                                   SDAP_SERVICE_SEARCH_BASE)) {
-        ret = dp_opt_set_string(ipa_opts->id->basic, SDAP_SERVICE_SEARCH_BASE,
+        value = talloc_asprintf(tmpctx, "cn=ipservices,%s",
                                 dp_opt_get_string(ipa_opts->id->basic,
                                                   SDAP_SEARCH_BASE));
+        if (!value) {
+            ret = ENOMEM;
+            goto done;
+        }
+        ret = dp_opt_set_string(ipa_opts->id->basic,
+                                SDAP_SERVICE_SEARCH_BASE, value);
         if (ret != EOK) {
             goto done;
         }
 
         DEBUG(SSSDBG_TRACE_FUNC, "Option %s set to %s\n",
-                  ipa_opts->id->basic[SDAP_GROUP_SEARCH_BASE].opt_name,
+                  ipa_opts->id->basic[SDAP_SERVICE_SEARCH_BASE].opt_name,
                   dp_opt_get_string(ipa_opts->id->basic,
-                                    SDAP_GROUP_SEARCH_BASE));
+                                    SDAP_SERVICE_SEARCH_BASE));
     }
     ret = sdap_parse_search_base(ipa_opts->id, ipa_opts->id->basic,
                                  SDAP_SERVICE_SEARCH_BASE,
@@ -801,6 +807,12 @@ int ipa_get_auth_options(struct ipa_options *ipa_opts,
     DEBUG(SSSDBG_CONF_SETTINGS, "Option %s set to %s\n",
           ipa_opts->auth[KRB5_USE_KDCINFO].opt_name,
           ipa_opts->service->krb5_service->write_kdcinfo ? "true" : "false");
+    if (ipa_opts->service->krb5_service->write_kdcinfo) {
+        sss_krb5_parse_lookahead(
+            dp_opt_get_string(ipa_opts->auth, KRB5_KDCINFO_LOOKAHEAD),
+            &ipa_opts->service->krb5_service->lookahead_primary,
+            &ipa_opts->service->krb5_service->lookahead_backup);
+    }
 
     *_opts = ipa_opts->auth;
     ret = EOK;
@@ -819,8 +831,6 @@ static void ipa_resolve_callback(void *private_data, struct fo_server *server)
     struct ipa_service *service;
     struct resolv_hostent *srvaddr;
     struct sockaddr_storage *sockaddr;
-    char *address;
-    char *safe_addr_list[2] = { NULL, NULL };
     char *new_uri;
     const char *srv_name;
     int ret;
@@ -854,13 +864,6 @@ static void ipa_resolve_callback(void *private_data, struct fo_server *server)
         return;
     }
 
-    address = resolv_get_string_address(tmp_ctx, srvaddr);
-    if (address == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "resolv_get_string_address failed.\n");
-        talloc_free(tmp_ctx);
-        return;
-    }
-
     srv_name = fo_get_server_name(server);
     if (srv_name == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Could not get server host name\n");
@@ -883,18 +886,10 @@ static void ipa_resolve_callback(void *private_data, struct fo_server *server)
     service->sdap->sockaddr = talloc_steal(service, sockaddr);
 
     if (service->krb5_service->write_kdcinfo) {
-        safe_addr_list[0] = sss_escape_ip_address(tmp_ctx,
-                                             srvaddr->family,
-                                             address);
-        if (safe_addr_list[0] == NULL) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "sss_escape_ip_address failed.\n");
-            talloc_free(tmp_ctx);
-            return;
-        }
-
-        ret = write_krb5info_file(service->krb5_service,
-                                  safe_addr_list,
-                                  SSS_KRB5KDC_FO_SRV);
+        ret = write_krb5info_file_from_fo_server(service->krb5_service,
+                                                 server,
+                                                 SSS_KRB5KDC_FO_SRV,
+                                                 NULL);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE,
                   "write_krb5info_file failed, authentication might fail.\n");
@@ -1039,10 +1034,10 @@ int ipa_service_init(TALLOC_CTX *memctx, struct be_ctx *ctx,
 
     service->krb5_service = krb5_service_new(service, ctx,
                                              "IPA", realm,
-                                             true); /* The configured value
-                                                     * will be set later when
-                                                     * the auth provider is set up
-                                                     */
+                                             true,   /* The configured value */
+                                             0,      /* will be set later when */
+                                             0);     /* the auth provider is set up */
+
     if (!service->krb5_service) {
         ret = ENOMEM;
         goto done;

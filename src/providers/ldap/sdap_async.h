@@ -175,11 +175,22 @@ errno_t sdap_exop_modify_passwd_recv(struct tevent_req *req,
                                      char **user_error_msg);
 
 struct tevent_req *
+sdap_modify_passwd_send(TALLOC_CTX *mem_ctx,
+                        struct tevent_context *ev,
+                        struct sdap_handle *sh,
+                        int timeout,
+                        char *attr,
+                        const char *user_dn,
+                        const char *new_password);
+
+errno_t sdap_modify_passwd_recv(struct tevent_req *req);
+
+struct tevent_req *
 sdap_modify_shadow_lastchange_send(TALLOC_CTX *mem_ctx,
                              struct tevent_context *ev,
                              struct sdap_handle *sh,
                              const char *dn,
-                             char *lastchanged_name);
+                             char *attr);
 
 errno_t sdap_modify_shadow_lastchange_recv(struct tevent_req *req);
 
@@ -241,7 +252,11 @@ int sdap_get_generic_recv(struct tevent_req *req,
                          TALLOC_CTX *mem_ctx, size_t *reply_count,
                          struct sysdb_attrs ***reply_list);
 
-bool sdap_has_deref_support(struct sdap_handle *sh, struct sdap_options *opts);
+bool sdap_has_deref_support_ex(struct sdap_handle *sh,
+                               struct sdap_options *opts,
+                               bool ignore_client);
+bool sdap_has_deref_support(struct sdap_handle *sh,
+                            struct sdap_options *opts);
 
 enum sdap_deref_flags {
     SDAP_DEREF_FLG_SILENT = 1 << 0,     /* Do not warn if dereference fails */

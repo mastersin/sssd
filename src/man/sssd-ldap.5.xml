@@ -206,6 +206,44 @@
                 </varlistentry>
 
                 <varlistentry>
+                    <term>ldap_pwmodify_mode (string)</term>
+                    <listitem>
+                        <para>
+                            Specify the operation that is used to modify user
+                            password.
+                        </para>
+                        <para>
+                            Two modes are currently supported:
+                            <itemizedlist>
+                                <listitem>
+                                    <para>
+                                        exop - Password Modify Extended
+                                        Operation (RFC 3062)
+                                    </para>
+                                </listitem>
+                                <listitem>
+                                    <para>
+                                        ldap_modify - Direct modification of
+                                        userPassword (not recommended).
+                                    </para>
+                                </listitem>
+                            </itemizedlist>
+                        </para>
+                        <para>
+                            Note: First, a new connection is established to
+                            verify current password by binding as the user
+                            that requested password change. If successful,
+                            this connection is used to change the password
+                            therefore the user must have write access to
+                            userPassword attribute.
+                        </para>
+                        <para>
+                            Default: exop
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>ldap_default_bind_dn (string)</term>
                     <listitem>
                         <para>
@@ -1504,8 +1542,15 @@
                             they are looked up individually.
                         </para>
                         <para>
-                            You can turn off dereference lookups completely by
-                            setting the value to 0.
+                            You can turn off dereference lookups completely
+                            by setting the value to 0. Please note that
+                            there are some codepaths in SSSD, like the IPA
+                            HBAC provider, that are only implemented using
+                            the dereference call, so even with dereference
+                            explicitly disabled, those parts will still
+                            use dereference if the server supports it
+                            and advertises the dereference control in the
+                            rootDSE object.
                         </para>
                         <para>
                             A dereference lookup is a means of fetching all
@@ -1701,8 +1746,18 @@
                     <term>ldap_sasl_mech (string)</term>
                     <listitem>
                         <para>
-                            Specify the SASL mechanism to use.
-                            Currently only GSSAPI is tested and supported.
+                            Specify the SASL mechanism to use.  Currently only
+                            GSSAPI and GSS-SPNEGO are tested and supported.
+                        </para>
+                        <para>
+                            If the backend supports sub-domains the value of
+                            ldap_sasl_mech is automatically inherited to the
+                            sub-domains. If a different value is needed for a
+                            sub-domain it can be overwritten by setting
+                            ldap_sasl_mech for this sub-domain explicitly.
+                            Please see TRUSTED DOMAIN SECTION in
+                            <citerefentry><refentrytitle>sssd.conf</refentrytitle>
+                            <manvolnum>5</manvolnum></citerefentry> for details.
                         </para>
                         <para>
                             Default: not set
@@ -1714,13 +1769,14 @@
                     <term>ldap_sasl_authid (string)</term>
                     <listitem>
                         <para>
-                            Specify the SASL authorization id to use.
-                            When GSSAPI is used, this represents the Kerberos
-                            principal used for authentication to the directory.
-                            This option can either contain the full principal (for
-                            example host/myhost@EXAMPLE.COM) or just the principal name
-                            (for example host/myhost). By default, the value is not set
-                            and the following principals are used:
+                            Specify the SASL authorization id to use.  When
+                            GSSAPI/GSS-SPNEGO are used, this represents the
+                            Kerberos principal used for authentication to the
+                            directory.  This option can either contain the full
+                            principal (for example host/myhost@EXAMPLE.COM) or
+                            just the principal name (for example host/myhost).
+                            By default, the value is not set and the following
+                            principals are used:
                             <programlisting>
 hostname@REALM
 netbiosname$@REALM
@@ -1771,7 +1827,8 @@ host/*
                     <term>ldap_krb5_keytab (string)</term>
                     <listitem>
                         <para>
-                            Specify the keytab to use when using SASL/GSSAPI.
+                            Specify the keytab to use when using
+                            SASL/GSSAPI/GSS-SPNEGO.
                         </para>
                         <para>
                             Default: System keytab, normally <filename>/etc/krb5.keytab</filename>
@@ -1786,7 +1843,7 @@ host/*
                             Specifies that the id_provider should init
                             Kerberos credentials (TGT).
                             This action is performed only if SASL is used and
-                            the mechanism selected is GSSAPI.
+                            the mechanism selected is GSSAPI or GSS-SPNEGO.
                         </para>
                         <para>
                             Default: true
@@ -1799,7 +1856,7 @@ host/*
                     <listitem>
                         <para>
                             Specifies the lifetime in seconds of the TGT if
-                            GSSAPI is used.
+                            GSSAPI or GSS-SPNEGO is used.
                         </para>
                         <para>
                             Default: 86400 (24 hours)
@@ -1840,7 +1897,8 @@ host/*
                     <term>krb5_realm (string)</term>
                     <listitem>
                         <para>
-                            Specify the Kerberos REALM (for SASL/GSSAPI auth).
+                            Specify the Kerberos REALM (for
+                            SASL/GSSAPI/GSS-SPNEGO auth).
                         </para>
                         <para>
                             Default: System defaults, see <filename>/etc/krb5.conf</filename>
@@ -2492,12 +2550,23 @@ ldap_access_filter = (employeeType=admin)
                         <para>
                             How many seconds SSSD has to wait before executing
                             a smart refresh of sudo rules (which downloads all
-                            rules that have USN higher than the highest USN of
-                            cached rules).
+                            rules that have USN higher than the highest server
+                            USN value that is currently known by SSSD).
                         </para>
                         <para>
                             If USN attributes are not supported by the server,
                             the modifyTimestamp attribute is used instead.
+                        </para>
+                        <para>
+                            <emphasis>Note:</emphasis> the highest USN value
+                            can be updated by three tasks:
+                            1) By sudo full and smart refresh (if updated rules
+                            are found),
+                            2) by enumeration of users and groups (if enabled
+                            and updated users or groups are found) and
+                            3) by reconnecting to the server
+                            (by default every 15 minutes, see
+                            <emphasis>ldap_connection_expire_timeout</emphasis>).
                         </para>
                         <para>
                             Default: 900 (15 minutes)

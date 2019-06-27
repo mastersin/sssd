@@ -176,6 +176,7 @@ enum sdap_basic_opt {
     SDAP_AUTOFS_SEARCH_BASE,
     SDAP_AUTOFS_MAP_MASTER_NAME,
     SDAP_SCHEMA,
+    SDAP_PWMODIFY_MODE,
     SDAP_OFFLINE_TIMEOUT,
     SDAP_FORCE_UPPER_CASE_REALM,
     SDAP_ENUM_REFRESH_TIMEOUT,
@@ -198,6 +199,7 @@ enum sdap_basic_opt {
     SDAP_KRB5_REALM,
     SDAP_KRB5_CANONICALIZE,
     SDAP_KRB5_USE_KDCINFO,
+    SDAP_KRB5_KDCINFO_LOOKAHEAD,
     SDAP_PWD_POLICY,
     SDAP_REFERRALS,
     SDAP_ACCOUNT_CACHE_EXPIRATION,
@@ -492,6 +494,12 @@ struct sdap_options {
         SDAP_SCHEMA_AD = 4          /* AD's member/memberof */
     } schema_type;
 
+    /* password modify mode */
+    enum pwmodify_mode {
+        SDAP_PWMODIFY_EXOP = 1,     /* pwmodify extended operation */
+        SDAP_PWMODIFY_LDAP = 2      /* ldap_modify of userPassword */
+    } pwmodify_mode;
+
     /* The search bases for the domain or its subdomain */
     struct sdap_domain *sdom;
 
@@ -564,7 +572,7 @@ int sdap_extend_map(TALLOC_CTX *memctx,
                     size_t *_new_size);
 
 int sdap_extend_map_with_list(TALLOC_CTX *mem_ctx,
-                              struct sdap_options *opts,
+                              const struct sdap_options *opts,
                               int extra_attr_index,
                               struct sdap_attr_map *src_map,
                               size_t num_entries,
@@ -608,6 +616,8 @@ bool sdap_check_sup_list(struct sup_list *l, const char *val);
 
 #define sdap_is_extension_supported(sh, ext_oid) \
     sdap_check_sup_list(&((sh)->supported_extensions), ext_oid)
+
+bool sdap_sasl_mech_needs_kinit(const char *mech);
 
 int build_attrs_from_map(TALLOC_CTX *memctx,
                          struct sdap_attr_map *map,

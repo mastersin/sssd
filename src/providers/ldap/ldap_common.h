@@ -65,7 +65,7 @@ struct sdap_id_ctx {
     struct be_ctx *be;
     struct sdap_options *opts;
 
-    /* If using GSSAPI */
+    /* If using GSSAPI or GSS-SPNEGO */
     struct krb5_service *krb5_service;
     /* connection to a server */
     struct sdap_id_conn_ctx *conn;
@@ -373,4 +373,13 @@ errno_t sdap_init_certmap(TALLOC_CTX *mem_ctx, struct sdap_id_ctx *id_ctx);
 errno_t sdap_setup_certmap(struct sdap_certmap_ctx *sdap_certmap_ctx,
                            struct certmap_info **certmap_list);
 struct sss_certmap_ctx *sdap_get_sss_certmap(struct sdap_certmap_ctx *ctx);
+
+errno_t users_get_handle_no_user(TALLOC_CTX *mem_ctx,
+                                 struct sss_domain_info *domain,
+                                 int filter_type, const char *filter_value,
+                                 bool name_is_upn);
+
+errno_t groups_get_handle_no_group(TALLOC_CTX *mem_ctx,
+                                   struct sss_domain_info *domain,
+                                   int filter_type, const char *filter_value);
 #endif /* _LDAP_COMMON_H_ */

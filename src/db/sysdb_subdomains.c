@@ -34,7 +34,7 @@ struct sss_domain_info *new_subdomain(TALLOC_CTX *mem_ctx,
                                       const char *realm,
                                       const char *flat_name,
                                       const char *id,
-                                      bool mpg,
+                                      enum sss_domain_mpg_mode mpg_mode,
                                       bool enumerate,
                                       const char *forest,
                                       const char **upn_suffixes,
@@ -126,7 +126,7 @@ struct sss_domain_info *new_subdomain(TALLOC_CTX *mem_ctx,
 
     dom->enumerate = enumerate;
     dom->fqnames = true;
-    dom->mpg = mpg;
+    dom->mpg_mode = mpg_mode;
     dom->state = DOM_ACTIVE;
 
     /* use fully qualified names as output in order to avoid causing
@@ -154,6 +154,7 @@ struct sss_domain_info *new_subdomain(TALLOC_CTX *mem_ctx,
     dom->cache_credentials = parent->cache_credentials;
     dom->cache_credentials_min_ff_length =
                                         parent->cache_credentials_min_ff_length;
+    dom->cached_auth_timeout = parent->cached_auth_timeout;
     dom->case_sensitive = false;
     dom->user_timeout = parent->user_timeout;
     dom->group_timeout = parent->group_timeout;
@@ -320,7 +321,8 @@ errno_t sysdb_update_subdomains(struct sss_domain_info *domain,
     const char *flat;
     const char *id;
     const char *forest;
-    bool mpg;
+    const char *str_mpg_mode;
+    enum sss_domain_mpg_mode mpg_mode;
     bool enumerate;
     uint32_t trust_direction;
     struct ldb_message_element *tmp_el;
@@ -376,8 +378,12 @@ errno_t sysdb_update_subdomains(struct sss_domain_info *domain,
         id = ldb_msg_find_attr_as_string(res->msgs[i],
                                          SYSDB_SUBDOMAIN_ID, NULL);
 
-        mpg = ldb_msg_find_attr_as_bool(res->msgs[i],
-                                        SYSDB_SUBDOMAIN_MPG, false);
+        str_mpg_mode = ldb_msg_find_attr_as_string(res->msgs[i],
+                                                   SYSDB_SUBDOMAIN_MPG, NULL);
+        if (str_mpg_mode == NULL || *str_mpg_mode == '\0') {
+            str_mpg_mode = "false";
+        }
+        mpg_mode = str_to_domain_mpg_mode(str_mpg_mode);
 
         enumerate = ldb_msg_find_attr_as_bool(res->msgs[i],
                                               SYSDB_SUBDOMAIN_ENUM, false);
@@ -440,12 +446,12 @@ errno_t sysdb_update_subdomains(struct sss_domain_info *domain,
                     }
                 }
 
-                if (dom->mpg != mpg) {
+                if (dom->mpg_mode != mpg_mode) {
                     DEBUG(SSSDBG_TRACE_INTERNAL,
                           "MPG state change from [%s] to [%s]!\n",
-                           dom->mpg ? "true" : "false",
-                           mpg ? "true" : "false");
-                    dom->mpg = mpg;
+                           dom->mpg_mode == MPG_ENABLED ? "true" : "false",
+                           mpg_mode == MPG_ENABLED ? "true" : "false");
+                    dom->mpg_mode = mpg_mode;
                 }
 
                 if (dom->enumerate != enumerate) {
@@ -515,7 +521,7 @@ errno_t sysdb_update_subdomains(struct sss_domain_info *domain,
         /* If not found in loop it is a new subdomain */
         if (dom == NULL) {
             dom = new_subdomain(domain, domain, name, realm,
-                                flat, id, mpg, enumerate, forest,
+                                flat, id, mpg_mode, enumerate, forest,
                                 upn_suffixes, trust_direction, confdb);
             if (dom == NULL) {
                 ret = ENOMEM;
@@ -894,7 +900,8 @@ done:
 errno_t sysdb_subdomain_store(struct sysdb_ctx *sysdb,
                               const char *name, const char *realm,
                               const char *flat_name, const char *domain_id,
-                              bool mpg, bool enumerate, const char *forest,
+                              enum sss_domain_mpg_mode mpg_mode,
+                              bool enumerate, const char *forest,
                               uint32_t trust_direction,
                               struct ldb_message_element *upn_suffixes)
 {
@@ -984,11 +991,28 @@ errno_t sysdb_subdomain_store(struct sysdb_ctx *sysdb,
             }
         }
 
-        tmp_bool = ldb_msg_find_attr_as_bool(res->msgs[0], SYSDB_SUBDOMAIN_MPG,
-                                             !mpg);
-        if (tmp_bool != mpg) {
-            mpg_flags = LDB_FLAG_MOD_REPLACE;
+        tmp_str = ldb_msg_find_attr_as_string(res->msgs[0],
+                                              SYSDB_SUBDOMAIN_MPG,
+                                              "false");
+        /* If mpg_mode changed we need to replace the old  value in sysdb */
+        switch (mpg_mode) {
+        case MPG_ENABLED:
+            if (strcasecmp(tmp_str, "true") != 0) {
+                mpg_flags = LDB_FLAG_MOD_REPLACE;
+            }
+            break;
+        case MPG_DISABLED:
+            if (strcasecmp(tmp_str, "false") != 0) {
+                mpg_flags = LDB_FLAG_MOD_REPLACE;
+            }
+            break;
+        case MPG_HYBRID:
+            if (strcasecmp(tmp_str, "hybrid") != 0) {
+                mpg_flags = LDB_FLAG_MOD_REPLACE;
+            }
+            break;
         }
+
         tmp_bool = ldb_msg_find_attr_as_bool(res->msgs[0], SYSDB_SUBDOMAIN_ENUM,
                                              !enumerate);
         if (tmp_bool != enumerate) {
@@ -1098,8 +1122,14 @@ errno_t sysdb_subdomain_store(struct sysdb_ctx *sysdb,
             goto done;
         }
 
-        ret = ldb_msg_add_string(msg, SYSDB_SUBDOMAIN_MPG,
-                                 mpg ? "TRUE" : "FALSE");
+        tmp_str = str_domain_mpg_mode(mpg_mode);
+        if (tmp_str == NULL) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Couldn't convert mpg_mode to string\n");
+            ret = EINVAL;
+            goto done;
+        }
+
+        ret = ldb_msg_add_string(msg, SYSDB_SUBDOMAIN_MPG, tmp_str);
         if (ret != LDB_SUCCESS) {
             ret = sysdb_error_to_errno(ret);
             goto done;

@@ -39,11 +39,6 @@ struct be_ctx;
 
 typedef void (*be_callback_t)(void *);
 
-struct be_offline_status {
-    time_t went_offline;
-    bool offline;
-};
-
 struct be_resolv_ctx {
     struct resolv_ctx *resolv;
     struct dp_option *opts;
@@ -58,7 +53,7 @@ struct be_svc_data {
     const char *name;
     struct fo_service *fo_service;
 
-    struct fo_server *last_good_srv;
+    char *last_good_srv;
     time_t last_status_change;
     bool run_callbacks;
 
@@ -101,10 +96,10 @@ struct be_ctx {
     /* In contrast to online_cb_list which are only run if the backend is
      * offline the unconditional_online_cb_list should be run whenever the
      * backend receives a request to go online. The typical use case is to
-     * reset timers independenly of the state of the backend. */
+     * reset timers independently of the state of the backend. */
     struct be_cb *unconditional_online_cb_list;
 
-    struct be_offline_status offstat;
+    bool offline;
     /* Periodicly check if we can go online. */
     struct be_ptask *check_if_online_ptask;
 
@@ -113,6 +108,7 @@ struct be_ctx {
     struct be_refresh_ctx *refresh_ctx;
 
     size_t check_online_ref_count;
+    int check_online_retry_delay;
 
     struct data_provider *provider;
 

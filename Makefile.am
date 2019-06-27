@@ -240,6 +240,7 @@ if HAVE_CMOCKA
         test-io \
         test-negcache \
         test-authtok \
+        test_prompt_config \
         sss_nss_idmap-tests \
         deskprofile_utils-tests \
         dyndns-tests \
@@ -565,6 +566,7 @@ SSSD_RESPONDER_IFACE_OBJ = \
 SSSD_RESPONDER_OBJ = \
     src/responder/common/negcache_files.c \
     src/responder/common/negcache.c \
+    src/util/nss_dl_load.c \
     src/responder/common/responder_cmd.c \
     src/responder/common/responder_common.c \
     src/responder/common/responder_dp.c \
@@ -686,6 +688,7 @@ dist_noinst_HEADERS = \
     src/util/tev_curl.h \
     src/util/secrets/secrets.h \
     src/util/secrets/sec_pvt.h \
+    src/util/nss_dl_load.h \
     src/monitor/monitor.h \
     src/responder/common/responder.h \
     src/responder/common/responder_packet.h \
@@ -1569,6 +1572,7 @@ sssd_nss_SOURCES = \
     src/responder/nss/nsssrv_mmap_cache.c \
     $(SSSD_RESPONDER_OBJ)
 sssd_nss_LDADD = \
+    $(LIBADD_DL) \
     $(TDB_LIBS) \
     $(SSSD_LIBS) \
     libsss_idmap.la \
@@ -1585,9 +1589,15 @@ sssd_pam_SOURCES = \
     src/responder/pam/pamsrv_cmd.c \
     src/responder/pam/pamsrv_p11.c \
     src/responder/pam/pamsrv_dp.c \
+    src/responder/pam/pam_prompting_config.c \
+    src/sss_client/pam_sss_prompt_config.c \
     src/responder/pam/pam_helpers.c \
     $(SSSD_RESPONDER_OBJ)
+sssd_pam_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(NULL)
 sssd_pam_LDADD = \
+    $(LIBADD_DL) \
     $(TDB_LIBS) \
     $(SSSD_LIBS) \
     $(SELINUX_LIBS) \
@@ -1608,6 +1618,7 @@ sssd_sudo_SOURCES = \
     src/responder/sudo/sudosrv_dp.c \
     $(SSSD_RESPONDER_OBJ)
 sssd_sudo_LDADD = \
+    $(LIBADD_DL) \
     $(SSSD_LIBS) \
     $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -1622,6 +1633,7 @@ sssd_autofs_SOURCES = \
     src/responder/autofs/autofssrv_cmd.c \
     $(SSSD_RESPONDER_OBJ)
 sssd_autofs_LDADD = \
+    $(LIBADD_DL) \
     $(SSSD_LIBS) \
     $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -1640,6 +1652,7 @@ sssd_ssh_SOURCES = \
     $(SSSD_RESPONDER_OBJ) \
     $(NULL)
 sssd_ssh_LDADD = \
+    $(LIBADD_DL) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     $(SYSTEMD_DAEMON_LIBS) \
@@ -1658,6 +1671,7 @@ sssd_pac_CFLAGS = \
     $(AM_CFLAGS) \
     $(NDR_KRB5PAC_CFLAGS)
 sssd_pac_LDADD = \
+    $(LIBADD_DL) \
     $(NDR_KRB5PAC_LIBS) \
     $(TDB_LIBS) \
     $(SSSD_LIBS) \
@@ -1737,6 +1751,7 @@ sssd_ifp_SOURCES = \
 sssd_ifp_CFLAGS = \
     $(AM_CFLAGS)
 sssd_ifp_LDADD = \
+    $(LIBADD_DL) \
     $(SSSD_LIBS) \
     $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -1785,6 +1800,7 @@ sssd_secrets_SOURCES = \
     $(SSSD_RESPONDER_OBJ) \
     $(NULL)
 sssd_secrets_LDADD = \
+    $(LIBADD_DL) \
     $(HTTP_PARSER_LIBS) \
     $(JANSSON_LIBS) \
     $(TDB_LIBS) \
@@ -1821,6 +1837,7 @@ sssd_kcm_CFLAGS = \
     $(JANSSON_CFLAGS) \
     $(NULL)
 sssd_kcm_LDADD = \
+    $(LIBADD_DL) \
     $(KRB5_LIBS) \
     $(JANSSON_LIBS) \
     $(SSSD_LIBS) \
@@ -2026,6 +2043,7 @@ sssctl_SOURCES = \
     src/tools/sssctl/sssctl_config.c \
     src/tools/sssctl/sssctl_user_checks.c \
     src/tools/sssctl/sssctl_access_report.c \
+    src/tools/sssctl/sssctl_cert.c \
     $(SSSD_TOOLS_OBJ) \
     $(NULL)
 sssctl_LDADD = \
@@ -2035,6 +2053,7 @@ sssctl_LDADD = \
     $(PAM_LIBS) \
     $(PAM_MISC_LIBS) \
     $(LIBADD_DL) \
+    libsss_certmap.la \
     libifp_iface_sync.la \
     libsss_iface_sync.la \
     libsss_sbus_sync.la \
@@ -2109,7 +2128,7 @@ libsss_certmap_la_LIBADD = \
     $(NULL)
 libsss_certmap_la_LDFLAGS = \
     -Wl,--version-script,$(srcdir)/src/lib/certmap/sss_certmap.exports \
-    -version-info 0:0:0
+    -version-info 1:0:1
 
 if HAVE_NSS
 libsss_certmap_la_SOURCES += \
@@ -2141,6 +2160,11 @@ TESTS_ENVIRONMENT = LDB_MODULES_PATH=$(abs_top_builddir)/ldb_mod_test_dir \
                     SSS_TEST_DIR=$(TEST_DIR) \
                     ABS_TOP_SRCDIR=$(abs_top_srcdir) \
                     $(AUX_TESTS_ENVIRONMENT)
+
+if VALGRIND_ENABLED
+@VALGRIND_CHECK_RULES@
+VALGRIND_SUPPRESSIONS_FILES = $(abs_top_srcdir)/contrib/ci/sssd.supp
+endif
 
 ldb_mod_test_dir: memberof.la
 	$(MKDIR_P) $(builddir)/ldb_mod_test_dir
@@ -2529,6 +2553,7 @@ responder_socket_access_tests_SOURCES = \
     src/tests/responder_socket_access-tests.c \
     src/responder/common/negcache_files.c \
     src/responder/common/negcache.c \
+    src/util/nss_dl_load.c \
     src/responder/common/responder_common.c \
     src/responder/common/responder_packet.c \
     src/responder/common/responder_cmd.c \
@@ -2540,6 +2565,7 @@ responder_socket_access_tests_CFLAGS = \
     $(AM_CFLAGS) \
     $(CHECK_CFLAGS)
 responder_socket_access_tests_LDADD = \
+    $(LIBADD_DL) \
     $(CHECK_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -2632,6 +2658,7 @@ TEST_MOCK_RESP_OBJ = \
      src/responder/common/responder_cmd.c \
      src/responder/common/negcache_files.c \
      src/responder/common/negcache.c \
+     src/util/nss_dl_load.c \
      src/responder/common/responder_common.c \
      src/responder/common/responder_utils.c \
      src/util/session_recording.c \
@@ -2681,6 +2708,7 @@ nss_srv_tests_LDFLAGS = \
     -Wl,-wrap,sss_cmd_send_empty \
     -Wl,-wrap,sss_cmd_done
 nss_srv_tests_LDADD = \
+    $(LIBADD_DL) \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -2705,6 +2733,8 @@ pam_srv_tests_SOURCES = \
     src/responder/pam/pam_helpers.c \
     src/responder/pam/pamsrv_dp.c \
     src/responder/pam/pam_LOCAL_domain.c \
+    src/responder/pam/pam_prompting_config.c \
+    src/sss_client/pam_sss_prompt_config.c \
     $(NULL)
 pam_srv_tests_CFLAGS = \
     -U SSSD_LIBEXEC_PATH -DSSSD_LIBEXEC_PATH=\"$(abs_builddir)\" \
@@ -2719,6 +2749,7 @@ pam_srv_tests_LDFLAGS = \
     -Wl,-wrap,pam_dp_send_req \
     $(NULL)
 pam_srv_tests_LDADD = \
+    $(LIBADD_DL) \
     $(CMOCKA_LIBS) \
     $(PAM_LIBS) \
     $(SSSD_LIBS) \
@@ -2757,6 +2788,7 @@ ssh_srv_tests_LDFLAGS = \
     -Wl,-wrap,ssh_dp_send_req \
     $(NULL)
 ssh_srv_tests_LDADD = \
+    $(LIBADD_DL) \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -2778,6 +2810,7 @@ responder_get_domains_tests_LDFLAGS = \
     -Wl,-wrap,sss_parse_name_for_domains \
     -Wl,-wrap,sss_ncache_reset_repopulate_permanent
 responder_get_domains_tests_LDADD = \
+    $(LIBADD_DL) \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -2833,12 +2866,14 @@ EXTRA_test_negcache_DEPENDENCIES = \
 test_negcache_SOURCES = \
     $(SSSD_RESPONDER_OBJ) \
     src/tests/cmocka/common_mock_resp.c \
-    src/tests/cmocka/test_negcache.c
+    src/tests/cmocka/test_negcache.c \
+    src/tests/cmocka/test_negcache_2.c
 test_negcache_CFLAGS = \
     $(AM_CFLAGS) \
     $(TALLOC_CFLAGS) \
     $(DHASH_CFLAGS)
 test_negcache_LDADD = \
+    $(LIBADD_DL) \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SYSTEMD_DAEMON_LIBS) \
@@ -2869,6 +2904,21 @@ test_authtok_LDADD = \
     $(POPT_LIBS) \
     libsss_test_common.la \
     libsss_debug.la \
+    $(NULL)
+
+test_prompt_config_SOURCES = \
+    src/tests/cmocka/test_prompt_config.c \
+    src/sss_client/pam_sss_prompt_config.c \
+    $(NULL)
+test_prompt_config_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(POPT_CFLAGS) \
+    $(NULL)
+test_prompt_config_LDADD = \
+    $(CMOCKA_LIBS) \
+    $(POPT_LIBS) \
+    libsss_debug.la \
+    $(TALLOC_LIBS) \
     $(NULL)
 
 sss_nss_idmap_tests_SOURCES = \
@@ -3199,6 +3249,7 @@ ifp_tests_SOURCES = \
 ifp_tests_CFLAGS = \
     $(AM_CFLAGS)
 ifp_tests_LDADD = \
+    $(LIBADD_DL) \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -3458,6 +3509,7 @@ responder_cache_req_tests_LDFLAGS = \
     -Wl,-wrap,sss_dp_get_account_send \
     $(NULL)
 responder_cache_req_tests_LDADD = \
+    $(LIBADD_DL) \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -3551,6 +3603,7 @@ test_ad_subdom_LDADD = \
     libdlopen_test_providers.la \
     libsss_iface.la \
     libsss_sbus.la \
+    libsss_krb5_common.la \
     $(NULL)
 
 test_ipa_subdom_util_SOURCES = \
@@ -4048,6 +4101,7 @@ endif
 pamlib_LTLIBRARIES = pam_sss.la
 pam_sss_la_SOURCES = \
     src/sss_client/pam_sss.c \
+    src/sss_client/pam_sss_prompt_config.c \
     src/sss_client/pam_message.c \
     src/sss_client/common.c \
     src/sss_client/sss_cli.h \
@@ -4263,6 +4317,7 @@ libsss_proxy_la_SOURCES = \
     src/providers/proxy/proxy_netgroup.c \
     src/providers/proxy/proxy_services.c \
     src/providers/proxy/proxy_auth.c \
+    src//util/nss_dl_load.c \
     $(NULL)
 libsss_proxy_la_CFLAGS = \
     $(AM_CFLAGS)
@@ -4981,6 +5036,7 @@ edit_cmd = $(SED) \
         -e 's|@environment_file[@]|$(environment_file)|g' \
         -e 's|@localstatedir[@]|$(localstatedir)|g' \
         -e 's|@runstatedir[@]|$(runstatedir)|g' \
+        -e 's|@pidpath[@]|$(pidpath)|g' \
         -e 's|@logpath[@]|$(logpath)|g' \
         -e 's|@libexecdir[@]|$(libexecdir)|g' \
         -e 's|@pipepath[@]|$(pipepath)|g' \
@@ -5391,7 +5447,19 @@ dist_noinst_DATA += \
     m4 \
     contrib/sssd.spec.in \
     BUILD.txt \
-    COPYING
+    COPYING \
+    src/tests/multihost/basic/conftest.py \
+    src/tests/multihost/basic/mhc.yaml \
+    src/tests/multihost/basic/README \
+    src/tests/multihost/basic/test_basic.py \
+    src/tests/multihost/basic/test_config.py \
+    src/tests/multihost/basic/test_files.py \
+    src/tests/multihost/basic/test_ifp.py \
+    src/tests/multihost/basic/test_kcm.py \
+    src/tests/multihost/basic/test_sssctl_config_check.py \
+    src/tests/multihost/basic/test_sudo.py \
+    src/tests/multihost/basic/utils_config.py \
+    $(NULL)
 
 rpmroot:
 	$(MKDIR_P) $(RPMBUILD)/BUILD

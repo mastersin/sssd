@@ -42,6 +42,9 @@
 #define RETRIEVE_DOMAIN_ERROR_MSG "Error (%d [%s]) retrieving domain [%s], "\
                                   "skipping!\n"
 
+/* SSSD domain name that is used for the auto-configured files domain */
+#define IMPLICIT_FILES_DOMAIN_NAME "implicit_files"
+
 static char *prepend_cn(char *str, int *slen, const char *comp, int clen)
 {
     char *ret;
@@ -939,12 +942,9 @@ static int confdb_get_domain_internal(struct confdb_ctx *cdb,
         goto done;
     }
 
-    ret = get_entry_as_bool(res->msgs[0], &domain->mpg,
-                            CONFDB_DOMAIN_AUTO_UPG, 0);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_FATAL_FAILURE,
-              "Invalid value for %s\n", CONFDB_DOMAIN_AUTO_UPG);
-        goto done;
+    tmp = ldb_msg_find_attr_as_string(res->msgs[0], CONFDB_DOMAIN_AUTO_UPG, NULL);
+    if (tmp == NULL || *tmp == '\0') {
+        tmp = "false";
     }
 
     if (strcasecmp(domain->provider, "local") == 0) {
@@ -954,7 +954,12 @@ static int confdb_get_domain_internal(struct confdb_ctx *cdb,
             ret = EINVAL;
             goto done;
         }
+    }
 
+    domain->mpg_mode = str_to_domain_mpg_mode(tmp);
+
+    if (local_provider_is_built()
+            && strcasecmp(domain->provider, "local") == 0) {
         /* If this is the local provider, we need to ensure that
          * no other provider was specified for other types, since
          * the local provider cannot load them.
@@ -990,7 +995,7 @@ static int confdb_get_domain_internal(struct confdb_ctx *cdb,
         }
 
         /* The LOCAL provider use always Magic Private Groups */
-        domain->mpg = true;
+        domain->mpg_mode = MPG_ENABLED;
     }
 
     domain->timeout = ldb_msg_find_attr_as_int(res->msgs[0],
@@ -1932,8 +1937,8 @@ done:
     return ret;
 }
 
-int confdb_ensure_files_domain(struct confdb_ctx *cdb,
-                               const char *implicit_files_dom_name)
+static int confdb_ensure_files_domain(struct confdb_ctx *cdb,
+                                      const char *implicit_files_dom_name)
 {
 #ifdef ADD_FILES_DOMAIN
     const bool default_enable_files = true;
@@ -2166,6 +2171,14 @@ int confdb_expand_app_domains(struct confdb_ctx *cdb)
         return ENOMEM;
     }
 
+    ret = confdb_ensure_files_domain(cdb, IMPLICIT_FILES_DOMAIN_NAME);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_MINOR_FAILURE,
+              "Cannot add the implicit files domain [%d]: %s\n",
+              ret, strerror(ret));
+        /* Not fatal */
+    }
+
     ret = confdb_get_string_as_list(cdb, tmp_ctx,
                                     CONFDB_MONITOR_CONF_ENTRY,
                                     CONFDB_MONITOR_ACTIVE_DOMAINS,
@@ -2224,7 +2237,7 @@ static errno_t certmap_local_check(struct ldb_message *msg)
 
     rule_name = ldb_msg_find_attr_as_string(msg, CONFDB_CERTMAP_NAME, NULL);
     if (rule_name == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Certficate mapping rule [%s] has no name.",
+        DEBUG(SSSDBG_CRIT_FAILURE, "Certificate mapping rule [%s] has no name.",
                                    ldb_dn_get_linearized(msg->dn));
         return EINVAL;
     }
@@ -2274,7 +2287,7 @@ static errno_t confdb_get_all_certmaps(TALLOC_CTX *mem_ctx,
     TALLOC_CTX *tmp_ctx = NULL;
     struct ldb_dn *dn = NULL;
     struct ldb_result *res = NULL;
-    /* The attributte order is important, because it is used in
+    /* The attribute order is important, because it is used in
      * sysdb_ldb_msg_attr_to_certmap_info and must match
      * enum certmap_info_member. */
     static const char *attrs[] = { CONFDB_CERTMAP_NAME,

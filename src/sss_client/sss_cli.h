@@ -340,6 +340,9 @@ enum sss_authtok_type {
                                           * Smart Card authentication is used
                                           * and that the PIN will be entered
                                           * at the card reader. */
+    SSS_AUTHTOK_TYPE_2FA_SINGLE = 0x0006, /**< Authentication token has two
+                                           * factors in a single string, it may
+                                           * or may no contain a trailing \\0 */
 };
 
 /**
@@ -478,6 +481,9 @@ enum response_type {
     SSS_PAM_CERT_INFO_WITH_HINT, /**< Same as SSS_PAM_CERT_INFO but user name
                                   * might be missing and should be prompted
                                   * for. */
+    SSS_PAM_PROMPT_CONFIG, /**< Contains data which controls which credentials
+                            * are expected and how the user is prompted for
+                            * them. */
 };
 
 /**
@@ -573,6 +579,35 @@ enum user_info_type {
  * @}
  */ /* end of group sss_pam_cli */
 
+
+enum prompt_config_type {
+    PC_TYPE_INVALID = 0,
+    PC_TYPE_PASSWORD,
+    PC_TYPE_2FA,
+    PC_TYPE_2FA_SINGLE,
+    PC_TYPE_SC_PIN,
+    PC_TYPE_LAST
+};
+
+struct prompt_config;
+
+enum prompt_config_type pc_get_type(struct prompt_config *pc);
+const char *pc_get_password_prompt(struct prompt_config *pc);
+const char *pc_get_2fa_1st_prompt(struct prompt_config *pc);
+const char *pc_get_2fa_2nd_prompt(struct prompt_config *pc);
+const char *pc_get_2fa_single_prompt(struct prompt_config *pc);
+void pc_list_free(struct prompt_config **pc_list);
+errno_t pc_list_add_password(struct prompt_config ***pc_list,
+                             const char *prompt);
+errno_t pc_list_add_2fa(struct prompt_config ***pc_list,
+                        const char *prompt_1st, const char *prompt_2nd);
+errno_t pc_list_add_2fa_single(struct prompt_config ***pc_list,
+                               const char *prompt);
+errno_t pam_get_response_prompt_config(struct prompt_config **pc_list, int *len,
+                                       uint8_t **data);
+errno_t pc_list_from_response(int size, uint8_t *buf,
+                              struct prompt_config ***pc_list);
+
 enum sss_netgr_rep_type {
     SSS_NETGR_REP_TRIPLE = 1,
     SSS_NETGR_REP_GROUP
@@ -584,6 +619,8 @@ enum sss_cli_error_codes {
     ESSS_BAD_PUB_SOCKET,
     ESSS_BAD_CRED_MSG,
     ESSS_SERVER_NOT_TRUSTED,
+    ESSS_NO_SOCKET,
+    ESSS_SOCKET_STAT_ERROR,
 
     ESS_SSS_CLI_ERROR_MAX
 };

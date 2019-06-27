@@ -36,6 +36,95 @@
 #include "providers/ldap/sdap_idmap.h"
 #include "providers/ldap/sdap_users.h"
 
+errno_t users_get_handle_no_user(TALLOC_CTX *mem_ctx,
+                                 struct sss_domain_info *domain,
+                                 int filter_type, const char *filter_value,
+                                 bool name_is_upn)
+{
+    int ret;
+    const char *del_name;
+    struct ldb_message *msg = NULL;
+    uid_t uid;
+    char *endptr;
+
+    switch (filter_type) {
+    case BE_FILTER_ENUM:
+        ret = EOK;
+        break;
+    case BE_FILTER_NAME:
+        if (name_is_upn == true) {
+            ret = sysdb_search_user_by_upn(mem_ctx, domain, false,
+                                           filter_value,
+                                           NULL, &msg);
+            if (ret == ENOENT) {
+                return EOK;
+            } else if (ret != EOK && ret != ENOENT) {
+                return ret;
+            }
+            del_name = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+        } else {
+            del_name = filter_value;
+        }
+
+        if (del_name == NULL) {
+            ret = ENOMEM;
+            break;
+        }
+
+        ret = sysdb_delete_user(domain, del_name, 0);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_delete_user failed [%d].\n", ret);
+        } else {
+            ret = EOK;
+        }
+        break;
+
+    case BE_FILTER_IDNUM:
+        uid = (uid_t) strtouint32(filter_value, &endptr, 10);
+        if (errno || *endptr || (filter_value == endptr)) {
+            ret = errno ? errno : EINVAL;
+            break;
+        }
+
+        ret = sysdb_delete_user(domain, NULL, uid);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_delete_user failed [%d].\n", ret);
+        } else {
+            ret = EOK;
+        }
+        break;
+
+    case BE_FILTER_SECID:
+    case BE_FILTER_UUID:
+        /* Since it is not clear if the SID/UUID belongs to a user or a
+         * group we have nothing to do here. */
+        ret  = EOK;
+        break;
+
+    case BE_FILTER_WILDCARD:
+        /* We can't know if all users are up-to-date, especially in a large
+         * environment. Do not delete any records, let the responder fetch
+         * the entries they are requested in
+         */
+        ret = EOK;
+        break;
+
+    case BE_FILTER_CERT:
+        ret = sysdb_remove_cert(domain, filter_value);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Unable to remove user certificate"
+                  "[%d]: %s\n", ret, sss_strerror(ret));
+        }
+        break;
+
+    default:
+        ret = EINVAL;
+    }
+
+    talloc_free(msg);
+    return ret;
+}
+
 /* =Users-Related-Functions-(by-name,by-uid)============================== */
 
 struct users_get_state {
@@ -448,8 +537,6 @@ static void users_get_done(struct tevent_req *subreq)
     uid_t uid;
     int dp_error = DP_ERR_FATAL;
     int ret;
-    const char *del_name;
-    struct ldb_message *msg;
 
     ret = sdap_get_users_recv(subreq, NULL, NULL);
     talloc_zfree(subreq);
@@ -508,73 +595,10 @@ static void users_get_done(struct tevent_req *subreq)
     }
 
     if (ret == ENOENT && state->noexist_delete == true) {
-        switch (state->filter_type) {
-        case BE_FILTER_ENUM:
+        ret = users_get_handle_no_user(state, state->domain, state->filter_type,
+                                       state->filter_value, state->name_is_upn);
+        if (ret != EOK) {
             tevent_req_error(req, ret);
-            return;
-        case BE_FILTER_NAME:
-            if (state->name_is_upn == true) {
-                ret = sysdb_search_user_by_upn(state, state->domain, false,
-                                               state->filter_value,
-                                               NULL, &msg);
-                if (ret != EOK) {
-                    break;
-                }
-                del_name = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
-            } else {
-                del_name = state->filter_value;
-            }
-
-            if (del_name == NULL) {
-                break;
-            }
-
-            ret = sysdb_delete_user(state->domain, state->filter_value, 0);
-            if (ret != EOK && ret != ENOENT) {
-                tevent_req_error(req, ret);
-                return;
-            }
-            break;
-
-        case BE_FILTER_IDNUM:
-            uid = (uid_t) strtouint32(state->filter_value, &endptr, 10);
-            if (errno || *endptr || (state->filter_value == endptr)) {
-                tevent_req_error(req, errno ? errno : EINVAL);
-                return;
-            }
-
-            ret = sysdb_delete_user(state->domain, NULL, uid);
-            if (ret != EOK && ret != ENOENT) {
-                tevent_req_error(req, ret);
-                return;
-            }
-            break;
-
-        case BE_FILTER_SECID:
-        case BE_FILTER_UUID:
-            /* Since it is not clear if the SID/UUID belongs to a user or a
-             * group we have nothing to do here. */
-            break;
-
-        case BE_FILTER_WILDCARD:
-            /* We can't know if all users are up-to-date, especially in a large
-             * environment. Do not delete any records, let the responder fetch
-             * the entries they are requested in
-             */
-            break;
-
-        case BE_FILTER_CERT:
-            ret = sysdb_remove_cert(state->domain, state->filter_value);
-            if (ret != EOK) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "Unable to remove user certificate"
-                      "[%d]: %s\n", ret, sss_strerror(ret));
-                tevent_req_error(req, ret);
-                return;
-            }
-            break;
-
-        default:
-            tevent_req_error(req, EINVAL);
             return;
         }
     }
@@ -630,7 +654,6 @@ struct groups_get_state {
 static int groups_get_retry(struct tevent_req *req);
 static void groups_get_connect_done(struct tevent_req *subreq);
 static void groups_get_mpg_done(struct tevent_req *subreq);
-static errno_t groups_get_handle_no_group(struct tevent_req *req);
 static void groups_get_search(struct tevent_req *req);
 static void groups_get_done(struct tevent_req *subreq);
 
@@ -954,7 +977,7 @@ static void groups_get_done(struct tevent_req *subreq)
     }
 
     if (ret == ENOENT
-            && state->domain->mpg == true
+            && sss_domain_is_mpg(state->domain) == true
             && !state->conn->no_mpg_user_fallback) {
         /* The requested filter did not find a group. Before giving up, we must
          * also check if the GID can be resolved through a primary group of a
@@ -976,7 +999,9 @@ static void groups_get_done(struct tevent_req *subreq)
         tevent_req_set_callback(subreq, groups_get_mpg_done, req);
         return;
     } else if (ret == ENOENT && state->noexist_delete == true) {
-        ret = groups_get_handle_no_group(req);
+        ret = groups_get_handle_no_group(state, state->domain,
+                                         state->filter_type,
+                                         state->filter_value);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE,
                   "Could not delete group [%d]: %s\n", ret, sss_strerror(ret));
@@ -1006,7 +1031,9 @@ static void groups_get_mpg_done(struct tevent_req *subreq)
     }
 
     if (state->sdap_ret == ENOENT && state->noexist_delete == true) {
-        ret = groups_get_handle_no_group(req);
+        ret = groups_get_handle_no_group(state, state->domain,
+                                         state->filter_type,
+                                         state->filter_value);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE,
                   "Could not delete group [%d]: %s\n", ret, sss_strerror(ret));
@@ -1020,36 +1047,36 @@ static void groups_get_mpg_done(struct tevent_req *subreq)
     return;
 }
 
-static errno_t groups_get_handle_no_group(struct tevent_req *req)
+errno_t groups_get_handle_no_group(TALLOC_CTX *mem_ctx,
+                                   struct sss_domain_info *domain,
+                                   int filter_type, const char *filter_value)
 {
-    struct groups_get_state *state = tevent_req_data(req,
-                                                     struct groups_get_state);
     errno_t ret;
     char *endptr;
     gid_t gid;
 
-    switch (state->filter_type) {
+    switch (filter_type) {
     case BE_FILTER_ENUM:
         ret = ENOENT;
         break;
     case BE_FILTER_NAME:
-        ret = sysdb_delete_group(state->domain, state->filter_value, 0);
+        ret = sysdb_delete_group(domain, filter_value, 0);
         if (ret != EOK && ret != ENOENT) {
             DEBUG(SSSDBG_OP_FAILURE,
                   "Cannot delete group %s [%d]: %s\n",
-                  state->filter_value, ret, sss_strerror(ret));
+                  filter_value, ret, sss_strerror(ret));
             return ret;
         }
         ret = EOK;
         break;
     case BE_FILTER_IDNUM:
-        gid = (gid_t) strtouint32(state->filter_value, &endptr, 10);
-        if (errno || *endptr || (state->filter_value == endptr)) {
+        gid = (gid_t) strtouint32(filter_value, &endptr, 10);
+        if (errno || *endptr || (filter_value == endptr)) {
             ret = errno ? errno : EINVAL;
             break;
         }
 
-        ret = sysdb_delete_group(state->domain, NULL, gid);
+        ret = sysdb_delete_group(domain, NULL, gid);
         if (ret != EOK && ret != ENOENT) {
             DEBUG(SSSDBG_OP_FAILURE,
                   "Cannot delete group %"SPRIgid" [%d]: %s\n",

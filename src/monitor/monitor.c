@@ -77,9 +77,6 @@
  */
 #define MONITOR_MAX_RESTART_DELAY   4
 
-/* name of the monitor server instance */
-#define MONITOR_NAME        "sssd"
-
 /* Special value to leave the Kerberos Replay Cache set to use
  * the libkrb5 defaults
  */
@@ -89,9 +86,6 @@
 #define CONF_FILE_PERM_ERROR_MSG "Cannot read config file %s. Please check "\
                                  "that the file is accessible only by the "\
                                  "owner and owned by root.root.\n"
-
-/* SSSD domain name that is used for the auto-configured files domain */
-#define IMPLICIT_FILES_DOMAIN_NAME "implicit_files"
 
 int cmdline_debug_level;
 int cmdline_debug_timestamps;
@@ -258,7 +252,6 @@ errno_t socket_activated_service_not_found(struct mt_ctx *mt_ctx,
         return EINVAL;
     }
 
-    mt_ctx->services_started = true;
     mt_ctx->num_services++;
 
     ret = get_service_config(mt_ctx, svc_name, &svc);
@@ -513,11 +506,11 @@ static int mark_service_as_started(struct mt_svc *svc)
 
         DEBUG(SSSDBG_TRACE_FUNC,
               "All services have successfully started, creating pid file\n");
-        ret = pidfile(PID_PATH, MONITOR_NAME);
+        ret = pidfile(SSSD_PIDFILE);
         if (ret != EOK) {
             DEBUG(SSSDBG_FATAL_FAILURE,
-                  "Error creating pidfile: %s/%s.pid! (%d [%s])\n",
-                  PID_PATH, MONITOR_NAME, ret, strerror(ret));
+                  "Error creating pidfile: %s! (%d [%s])\n",
+                  SSSD_PIDFILE, ret, strerror(ret));
             kill(getpid(), SIGTERM);
         }
 
@@ -968,14 +961,6 @@ static int get_monitor_config(struct mt_ctx *ctx)
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Failed to get the unprivileged user\n");
         return ret;
-    }
-
-    ret = confdb_ensure_files_domain(ctx->cdb, IMPLICIT_FILES_DOMAIN_NAME);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_MINOR_FAILURE,
-              "Cannot add the implicit files domain [%d]: %s\n",
-              ret, strerror(ret));
-        /* Not fatal */
     }
 
     ret = confdb_expand_app_domains(ctx->cdb);
@@ -2571,7 +2556,7 @@ int main(int argc, const char *argv[])
     ret = close(STDIN_FILENO);
     if (ret != EOK) return 6;
 
-    ret = server_setup(MONITOR_NAME, flags, 0, 0,
+    ret = server_setup(SSSD_MONITOR_NAME, flags, 0, 0,
                        monitor->conf_path, &main_ctx);
     if (ret != EOK) return 2;
 

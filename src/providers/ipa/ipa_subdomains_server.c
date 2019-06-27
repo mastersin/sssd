@@ -172,6 +172,7 @@ static struct ad_options *ipa_ad_options_new(struct be_ctx *be_ctx,
     const char *forest;
     const char *forest_realm;
     char *subdom_conf_path;
+    int ret;
 
     /* Trusts are only established with forest roots */
     direction = subdom->forest_root->trust_direction;
@@ -196,12 +197,28 @@ static struct ad_options *ipa_ad_options_new(struct be_ctx *be_ctx,
         DEBUG(SSSDBG_CRIT_FAILURE, "Unsupported trust direction!\n");
         ad_options = NULL;
     }
-    talloc_free(subdom_conf_path);
 
     if (ad_options == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "Cannot initialize AD options\n");
+        talloc_free(subdom_conf_path);
         return NULL;
     }
+
+    ret = ad_inherit_opts_if_needed(id_ctx->ipa_options->id->basic,
+                                    ad_options->id->basic, be_ctx->cdb,
+                                    subdom_conf_path, SDAP_SASL_MECH);
+    talloc_free(subdom_conf_path);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to inherit option [%s] to sub-domain [%s]. "
+              "This error is ignored but might cause issues or unexpected "
+              "behavior later on.\n",
+              id_ctx->ipa_options->id->basic[SDAP_SASL_MECH].opt_name,
+              subdom->name);
+
+        return NULL;
+    }
+
     return ad_options;
 }
 
@@ -225,6 +242,8 @@ ipa_ad_ctx_new(struct be_ctx *be_ctx,
     errno_t ret;
     const char *extra_attrs;
     bool use_kdcinfo = false;
+    size_t n_lookahead_primary = (size_t)-1;
+    size_t n_lookahead_backup = (size_t)-1;
 
     ad_domain = subdom->name;
     DEBUG(SSSDBG_TRACE_LIBS, "Setting up AD subdomain %s\n", subdom->name);
@@ -284,6 +303,10 @@ ipa_ad_ctx_new(struct be_ctx *be_ctx,
     if (id_ctx->ipa_options != NULL && id_ctx->ipa_options->auth != NULL) {
         use_kdcinfo = dp_opt_get_bool(id_ctx->ipa_options->auth,
                                       KRB5_USE_KDCINFO);
+        sss_krb5_parse_lookahead(
+            dp_opt_get_string(id_ctx->ipa_options->auth, KRB5_KDCINFO_LOOKAHEAD),
+            &n_lookahead_primary,
+            &n_lookahead_backup);
     }
 
     DEBUG(SSSDBG_TRACE_ALL,
@@ -297,6 +320,7 @@ ipa_ad_ctx_new(struct be_ctx *be_ctx,
                            subdom->realm,
                            service_name, gc_service_name,
                            subdom->name, use_kdcinfo,
+                           n_lookahead_primary, n_lookahead_backup,
                            &ad_options->service);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "Cannot initialize AD failover\n");
@@ -474,7 +498,7 @@ static void ipa_getkeytab_exec(const char *ccache,
 {
     errno_t ret;
     int debug_fd;
-    const char *gkt_env[2] = { NULL, NULL };
+    const char *gkt_env[3] = { NULL, "_SSS_LOOPS=NO", NULL };
 
     if (debug_level >= SSSDBG_TRACE_LIBS) {
         debug_fd = get_fd_from_debug_file();

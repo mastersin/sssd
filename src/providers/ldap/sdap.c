@@ -89,15 +89,13 @@ int sdap_copy_map(TALLOC_CTX *memctx,
 }
 
 static errno_t split_extra_attr(TALLOC_CTX *mem_ctx,
-                                char *conf_attr,
+                                const char *conf_attr,
                                 char **_sysdb_attr,
                                 char **_ldap_attr)
 {
     char *ldap_attr;
     char *sysdb_attr;
     char *sep;
-
-    ldap_attr = conf_attr;
 
     sep = strchr(conf_attr, ':');
     if (sep == NULL) {
@@ -108,8 +106,8 @@ static errno_t split_extra_attr(TALLOC_CTX *mem_ctx,
             return ERR_INVALID_EXTRA_ATTR;
         }
 
-        sysdb_attr = talloc_strndup(mem_ctx, ldap_attr,
-                                    sep - ldap_attr);
+        sysdb_attr = talloc_strndup(mem_ctx, conf_attr,
+                                    sep - conf_attr);
         ldap_attr = talloc_strdup(mem_ctx, sep+1);
     }
 
@@ -227,7 +225,7 @@ int sdap_extend_map(TALLOC_CTX *memctx,
 }
 
 int sdap_extend_map_with_list(TALLOC_CTX *mem_ctx,
-                              struct sdap_options *opts,
+                              const struct sdap_options *opts,
                               int extra_attr_index,
                               struct sdap_attr_map *src_map,
                               size_t num_entries,
@@ -238,9 +236,9 @@ int sdap_extend_map_with_list(TALLOC_CTX *mem_ctx,
     char **extra_attrs_list;
     errno_t ret;
 
+    *_map = src_map;
     extra_attrs = dp_opt_get_string(opts->basic, extra_attr_index);
     if (extra_attrs == NULL) {
-        *_map = src_map;
         *_new_size = num_entries;
         return EOK;
     }
@@ -904,6 +902,15 @@ errno_t setup_tls_config(struct dp_option *basic_opts)
     return EOK;
 }
 
+bool sdap_sasl_mech_needs_kinit(const char *sasl_mech)
+{
+    if (strcasecmp(sasl_mech, "GSSAPI") == 0
+            || strcasecmp(sasl_mech, "GSS-SPNEGO") == 0) {
+        return true;
+    }
+
+    return false;
+}
 
 bool sdap_check_sup_list(struct sup_list *l, const char *val)
 {
@@ -1462,8 +1469,9 @@ void sdap_steal_server_opts(struct sdap_id_ctx *id_ctx,
     }
 
     /* discard if same as previous so we do not reset max usn values
-     * unnecessarily */
+     * unnecessarily, only update last_usn. */
     if (strcmp(id_ctx->srv_opts->server_id, (*srv_opts)->server_id) == 0) {
+        id_ctx->srv_opts->last_usn = (*srv_opts)->last_usn;
         talloc_zfree(*srv_opts);
         return;
     }
@@ -1510,7 +1518,7 @@ int build_attrs_from_map(TALLOC_CTX *memctx,
         goto done;
     }
 
-    /* first attribute is "objectclass" not the specifc one */
+    /* first attribute is "objectclass" not the specific one */
     attrs[0] = talloc_strdup(memctx, "objectClass");
     if (!attrs[0]) return ENOMEM;
 

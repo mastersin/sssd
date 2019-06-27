@@ -849,7 +849,8 @@
                             from the sss NSS database. This is particularly
                             useful for system accounts. This option can also
                             be set per-domain or include fully-qualified names
-                            to filter only users from the particular domain.
+                            to filter only users from the particular domain or
+                            by a user principal name (UPN).
                         </para>
                         <para>
                             NOTE: The filter_groups option doesn't affect
@@ -1525,7 +1526,7 @@ pam_p11_allowed_services = +my_pam_service, -login
                             where the 'removable' flags is set and read the
                             certificates from the inserted token from the first
                             slot found. If multiple readers are connected
-                            p11_uri can be use to tell p11_child to use a
+                            p11_uri can be used to tell p11_child to use a
                             specific reader.
                         </para>
                         <para>
@@ -3045,7 +3046,14 @@ subdomain_inherit = ldap_purge_cache_timeout
                             Specifies time in seconds since last successful
                             online authentication for which user will be
                             authenticated using cached credentials while
-                            SSSD is in the online mode.
+                            SSSD is in the online mode. If the credentials
+                            are incorrect, SSSD falls back to online
+                            authentication.
+                        </para>
+                        <para>
+                            This option's value is inherited by all trusted
+                            domains. At the moment it is not possible to set
+                            a different value per trusted domain.
                         </para>
                         <para>
                             Special value 0 implies that this feature is
@@ -3066,28 +3074,87 @@ subdomain_inherit = ldap_purge_cache_timeout
                     <term>auto_private_groups (string)</term>
                     <listitem>
                         <para>
-                            If this option is enabled, SSSD will automatically
-                            create user private groups based on user's
-                            UID number. The GID number is ignored in this case.
-		        </para>
-			<para>
-			    For POSIX subdomains, setting the option in the main
-			    domain is inherited in the subdomain.
-			</para>
-			<para>
-			    For ID-mapping subdomains, auto_private_groups is
-			    already enabled for the subdomains and setting it to
-			    false will not have any effect for the subdomain.
-			</para>
-                        <para>
-                            NOTE: Because the GID number and the user private group
-                            are inferred from the UID number, it is not supported
-                            to have multiple entries with the same UID or GID number
-                            with this option. In other words, enabling this option
-                            enforces uniqueness across the ID space.
+                            This option takes any of three available values:
+                            <variablelist>
+                                <varlistentry>
+                                    <term>true</term>
+                                    <listitem>
+                                        <para>
+                                            Create user's private group unconditionally from user's UID number.
+                                            The GID number is ignored in this case.
+                                        </para>
+                                        <para>
+                                            NOTE: Because the GID number and the user private group
+                                            are inferred from the UID number, it is not supported
+                                            to have multiple entries with the same UID or GID number
+                                            with this option. In other words, enabling this option
+                                            enforces uniqueness across the ID space.
+                                        </para>
+                                    </listitem>
+                                </varlistentry>
+                                <varlistentry>
+                                    <term>false</term>
+                                    <listitem>
+                                        <para>
+                                            Always use the user's primary GID number. The GID number must refer
+                                            to a group object in the LDAP database.
+                                        </para>
+                                    </listitem>
+                                </varlistentry>
+                                <varlistentry>
+                                    <term>hybrid</term>
+                                    <listitem>
+                                        <para>
+                                            A primary group is autogenerated
+                                            for user entries whose UID
+                                            and GID numbers have the same
+                                            value and at the same time the
+                                            GID number does not correspond
+                                            to a real group object in LDAP
+                                            If the values are the same, but
+                                            the primary GID in the user entry
+                                            is also used by a group object,
+                                            the primary GID of the user resolves
+                                            to that group object.
+                                        </para>
+                                        <para>
+                                            If the UID and GID of a user
+                                            are different, then the GID
+                                            must correspond to a group
+                                            entry, otherwise the GID is
+                                            simply not resolvable.
+                                        </para>
+                                        <para>
+                                            This feature is useful for
+                                            environments that wish to stop
+                                            maintaining a separate group
+                                            objects for the user private
+                                            groups, but also wish to retain
+                                            the existing user private groups.
+                                        </para>
+                                    </listitem>
+                                </varlistentry>
+                            </variablelist>
                         </para>
                         <para>
-                            Default: False
+                            For subdomains, the default value is False for
+                            subdomains that use assigned POSIX IDs and True
+                            for subdomains that use automatic ID-mapping.
+                        </para>
+                        <para>
+                            The value of auto_private_groups can either be set per subdomains
+                            in a subsection, for example:
+<programlisting>
+[domain/forest.domain/sub.domain]
+auto_private_groups = false
+</programlisting>
+                            or globally for all subdomains in the main domain section
+                            using the subdomain_inherit option:
+<programlisting>
+[domain/forest.domain]
+subdomain_inherit = auto_private_groups
+auto_private_groups = false
+</programlisting>
                         </para>
                     </listitem>
                 </varlistentry>
@@ -3375,6 +3442,7 @@ ldap_user_extra_attrs = phone:telephoneNumber
             <para>ldap_group_search_base,</para>
             <para>ldap_netgroup_search_base,</para>
             <para>ldap_service_search_base,</para>
+            <para>ldap_sasl_mech,</para>
             <para>ad_server,</para>
             <para>ad_backup_server,</para>
             <para>ad_site,</para>
@@ -3511,6 +3579,72 @@ ldap_user_extra_attrs = phone:telephoneNumber
                     </para>
                 </listitem>
             </itemizedlist>
+        </para>
+    </refsect1>
+
+    <refsect1 id='prompting_configuration'>
+        <title>PROMPTING CONFIGURATION SECTION</title>
+        <para>
+            If a special file
+            (<filename>/var/lib/sss/pubconf/pam_preauth_available</filename>)
+            exists SSSD's PAM module pam_sss will ask SSSD to figure out which
+            authentication methods are available for the user trying to log in.
+            Based on the results pam_sss will prompt the user for appropriate
+            credentials.
+        </para>
+        <para>
+            With the growing number of authentication methods and the
+            possibility that there are multiple ones for a single user the
+            heuristic used by pam_sss to select the prompting might not be
+            suitable for all use cases. To following options should provide a
+            better flexibility here.
+        </para>
+        <para>
+            Each supported authentication method has it's own configuration
+            sub-section under <quote>[prompting/...]</quote>. Currently there
+            are:
+        <variablelist>
+            <varlistentry>
+                <term>[prompting/password]</term>
+                <listitem>
+                    <para>to configure password prompting, allowed options are:
+                    <variablelist><varlistentry><term>password_prompt</term>
+                        <listitem><para>to change the string of the password
+                        prompt</para></listitem></varlistentry></variablelist>
+                    </para>
+                </listitem>
+            </varlistentry>
+        </variablelist>
+        <variablelist>
+            <varlistentry>
+                <term>[prompting/2fa]</term>
+                <listitem>
+                    <para>to configure two-factor authentication prompting,
+                    allowed options are:
+                    <variablelist><varlistentry><term>first_prompt</term>
+                        <listitem><para>to change the string of the prompt for
+                        the first factor </para></listitem>
+                        </varlistentry>
+                        <varlistentry><term>second_prompt</term>
+                        <listitem><para>to change the string of the prompt for
+                        the second factor </para></listitem>
+                        </varlistentry>
+                        <varlistentry><term>single_prompt</term>
+                        <listitem><para>boolean value, if True there will be
+                        only a single prompt using the value of first_prompt
+                        where it is expected that both factor are entered as a
+                        single string</para></listitem>
+                        </varlistentry>
+                    </variablelist>
+                    </para>
+                </listitem>
+            </varlistentry>
+        </variablelist>
+        </para>
+        <para>
+            It is possible to add a sub-section for specific PAM services like
+            e.g. <quote>[prompting/password/sshd]</quote> to individual change
+            the prompting for this service.
         </para>
     </refsect1>
 
