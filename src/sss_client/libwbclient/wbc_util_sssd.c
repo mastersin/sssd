@@ -158,3 +158,9 @@ wbcErr wbcLookupDomainControllerEx(const char *domain,
 {
     WBC_SSSD_NOT_IMPLEMENTED;
 }
+
+/* Set the name of the process which call wbclient */
+void wbcSetClientProcessName(const char *name)
+{
+    WBC_SSSD_NOT_IMPLEMENTED_VOID;
+}

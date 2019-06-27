@@ -153,3 +153,8 @@ WBCLIENT_0.13 {
 
 WBCLIENT_0.14 {
 } WBCLIENT_0.13;
+
+WBCLIENT_0.15 {
+    global:
+        wbcSetClientProcessName;
+} WBCLIENT_0.14;

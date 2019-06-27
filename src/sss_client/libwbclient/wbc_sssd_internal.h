@@ -38,4 +38,10 @@
         return WBC_ERR_NOT_IMPLEMENTED; \
     } while(0)
 
+#define WBC_SSSD_NOT_IMPLEMENTED_VOID \
+    do { \
+        WBC_SSSD_DEV_LOG; \
+        return; \
+    } while(0)
+
 #endif    /* _WBC_SSSD_INTERNAL_H */
