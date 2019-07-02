@@ -702,7 +702,7 @@ perform_smb_operations(int cached_gpt_version,
 {
     SMBCCTX *smbc_ctx;
     int ret;
-    int sysvol_gpt_version;
+    int sysvol_gpt_version = cached_gpt_version;
 
     smbc_ctx = smbc_new_context();
     if (smbc_ctx == NULL) {
@@ -754,9 +754,12 @@ perform_smb_operations(int cached_gpt_version,
         ret = EOK;
     }
 
+ done:
     *_sysvol_gpt_version = sysvol_gpt_version;
 
- done:
+    if (_sysvol_gpt_version >= 0)
+        ret = EOK;
+
     smbc_free_context(smbc_ctx, 0);
     return ret;
 }
