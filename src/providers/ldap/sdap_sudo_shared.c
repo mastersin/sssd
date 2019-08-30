@@ -90,9 +90,12 @@ sdap_sudo_ptask_setup_generic(struct be_ctx *be_ctx,
      * when offline. */
     if (full > 0) {
         ret = be_ptask_create(be_ctx, be_ctx, full, delay, 0, 0, full,
-                              BE_PTASK_OFFLINE_DISABLE, 0,
+                              0,
                               full_send_fn, full_recv_fn, pvt,
-                              "SUDO Full Refresh", NULL);
+                              "SUDO Full Refresh",
+                              BE_PTASK_OFFLINE_DISABLE |
+                              BE_PTASK_SCHEDULE_FROM_LAST,
+                              NULL);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Unable to setup full refresh ptask "
                   "[%d]: %s\n", ret, sss_strerror(ret));
@@ -107,9 +110,12 @@ sdap_sudo_ptask_setup_generic(struct be_ctx *be_ctx,
      * when offline. */
     if (smart > 0) {
         ret = be_ptask_create(be_ctx, be_ctx, smart, delay + smart, smart, 0,
-                              smart, BE_PTASK_OFFLINE_DISABLE, 0,
+                              smart,                              0,
                               smart_send_fn, smart_recv_fn, pvt,
-                              "SUDO Smart Refresh", NULL);
+                              "SUDO Smart Refresh",
+                              BE_PTASK_OFFLINE_DISABLE |
+                              BE_PTASK_SCHEDULE_FROM_LAST,
+                              NULL);
         if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Unable to setup smart refresh ptask "
                   "[%d]: %s\n", ret, sss_strerror(ret));
@@ -123,10 +129,23 @@ sdap_sudo_ptask_setup_generic(struct be_ctx *be_ctx,
 static char *
 sdap_sudo_new_usn(TALLOC_CTX *mem_ctx,
                   unsigned long usn,
-                  const char *leftover)
+                  const char *leftover,
+                  bool supports_usn)
 {
     const char *str = leftover == NULL ? "" : leftover;
     char *newusn;
+
+    /* This is a fresh start and server uses modifyTimestamp. We need to
+     * provide proper datetime value. */
+    if (!supports_usn && usn == 0) {
+        newusn = talloc_strdup(mem_ctx, "00000101000000Z");
+        if (newusn == NULL) {
+            DEBUG(SSSDBG_MINOR_FAILURE, "Unable to change USN value (OOM)!\n");
+            return NULL;
+        }
+
+        return newusn;
+    }
 
     /* We increment USN number so that we can later use simplify filter
      * (just usn >= last+1 instead of usn >= last && usn != last).
@@ -178,7 +197,8 @@ sdap_sudo_set_usn(struct sdap_server_opts *srv_opts,
         srv_opts->last_usn = usn_number;
     }
 
-    newusn = sdap_sudo_new_usn(srv_opts, srv_opts->last_usn, endptr);
+    newusn = sdap_sudo_new_usn(srv_opts, srv_opts->last_usn, endptr,
+                               srv_opts->supports_usn);
     if (newusn == NULL) {
         return;
     }

@@ -18,22 +18,44 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "config.h"
 
+#include <errno.h>
+#include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 
 #include "util/util.h"
 #include "util/crypto/sss_crypto.h"
 
-int generate_csprng_buffer(uint8_t *buf, size_t size)
+int sss_rand(void)
+{
+    static bool srand_done = false;
+
+    if (!srand_done) {
+        srand(time(NULL) * getpid());
+        srand_done = true;
+    }
+
+    /* Coverity will complain here: "DC.WEAK_CRYPTO (CWE-327)"
+     * We do not care as libnss is being deprecated as crypto backend.
+     */
+    return rand();
+}
+
+int sss_generate_csprng_buffer(uint8_t *buf, size_t size)
 {
     ssize_t rsize;
     int ret;
     int fd;
 
+    if (buf == NULL) {
+        return EINVAL;
+    }
+
     fd = open("/dev/urandom", O_RDONLY);
-    if (fd == -1) return errno;
+    if (fd == -1) {
+        return errno;
+    }
 
     rsize = sss_atomic_read_s(fd, buf, size);
     if (rsize == -1) {

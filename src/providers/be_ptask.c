@@ -24,16 +24,12 @@
 #include <string.h>
 
 #include "util/util.h"
+#include "util/crypto/sss_crypto.h"
 #include "providers/backend.h"
 #include "providers/be_ptask_private.h"
 #include "providers/be_ptask.h"
 
 #define backoff_allowed(ptask) (ptask->max_backoff != 0)
-
-enum be_ptask_schedule {
-    BE_PTASK_SCHEDULE_FROM_NOW,
-    BE_PTASK_SCHEDULE_FROM_LAST
-};
 
 enum be_ptask_delay {
     BE_PTASK_FIRST_DELAY,
@@ -43,7 +39,7 @@ enum be_ptask_delay {
 
 static void be_ptask_schedule(struct be_ptask *task,
                               enum be_ptask_delay delay_type,
-                              enum be_ptask_schedule from);
+                              uint32_t from);
 
 static int be_ptask_destructor(void *pvt)
 {
@@ -112,21 +108,20 @@ static void be_ptask_execute(struct tevent_context *ev,
 
     if (be_is_offline(task->be_ctx)) {
         DEBUG(SSSDBG_TRACE_FUNC, "Back end is offline\n");
-        switch (task->offline) {
-        case BE_PTASK_OFFLINE_SKIP:
+        if (task->flags & BE_PTASK_OFFLINE_SKIP) {
             be_ptask_schedule(task, BE_PTASK_PERIOD,
                               BE_PTASK_SCHEDULE_FROM_NOW);
             return;
-        case BE_PTASK_OFFLINE_DISABLE:
+        }
+        else if(task->flags & BE_PTASK_OFFLINE_DISABLE) {
             /* This case is normally handled by offline callback but we
              * should handle it here as well since we can get here in some
              * special cases for example unit tests or tevent events order. */
             be_ptask_disable(task);
             return;
-        case BE_PTASK_OFFLINE_EXECUTE:
-            /* continue */
-            break;
         }
+        /* BE_PTASK_OFFLINE_EXECUTE */
+        /* continue */
     }
 
     DEBUG(SSSDBG_TRACE_FUNC, "Task [%s]: executing task, timeout %lu "
@@ -182,7 +177,7 @@ static void be_ptask_done(struct tevent_req *req)
         DEBUG(SSSDBG_TRACE_FUNC, "Task [%s]: finished successfully\n",
                                   task->name);
 
-        be_ptask_schedule(task, BE_PTASK_PERIOD, BE_PTASK_SCHEDULE_FROM_LAST);
+        be_ptask_schedule(task, BE_PTASK_PERIOD, task->flags);
         break;
     default:
         DEBUG(SSSDBG_OP_FAILURE, "Task [%s]: failed with [%d]: %s\n",
@@ -195,7 +190,7 @@ static void be_ptask_done(struct tevent_req *req)
 
 static void be_ptask_schedule(struct be_ptask *task,
                               enum be_ptask_delay delay_type,
-                              enum be_ptask_schedule from)
+                              uint32_t from)
 {
     struct timeval tv = { 0, };
     time_t delay = 0;
@@ -213,6 +208,12 @@ static void be_ptask_schedule(struct be_ptask *task,
         delay = task->enabled_delay;
         break;
     case BE_PTASK_PERIOD:
+        if (task->flags & BE_PTASK_NO_PERIODIC) {
+            /* Periodic task is disabled, */
+            /* only online/offline change can cause some activity. */
+            return;
+        }
+
         delay = task->period;
 
         if (backoff_allowed(task) && task->period * 2 <= task->max_backoff) {
@@ -224,23 +225,21 @@ static void be_ptask_schedule(struct be_ptask *task,
 
     /* add random offset */
     if (task->random_offset != 0) {
-        delay = delay + (rand_r(&task->ro_seed) % task->random_offset);
+        delay = delay + (sss_rand() % task->random_offset);
     }
 
-    switch (from) {
-    case BE_PTASK_SCHEDULE_FROM_NOW:
+    if(from | BE_PTASK_SCHEDULE_FROM_NOW) {
         tv = tevent_timeval_current_ofs(delay, 0);
 
         DEBUG(SSSDBG_TRACE_FUNC, "Task [%s]: scheduling task %lu seconds "
               "from now [%lu]\n", task->name, delay, tv.tv_sec);
-        break;
-    case BE_PTASK_SCHEDULE_FROM_LAST:
+    }
+    else if (from | BE_PTASK_SCHEDULE_FROM_LAST) {
         tv = tevent_timeval_set(task->last_execution + delay, 0);
 
         DEBUG(SSSDBG_TRACE_FUNC, "Task [%s]: scheduling task %lu seconds "
                                   "from last execution time [%lu]\n",
                                   task->name, delay, tv.tv_sec);
-        break;
     }
 
     if (task->timer != NULL) {
@@ -260,6 +259,36 @@ static void be_ptask_schedule(struct be_ptask *task,
     task->next_execution = tv.tv_sec;
 }
 
+static unsigned int be_ptask_flag_bits(uint32_t flags)
+{
+    unsigned int cnt = 0;
+    while (flags != 0) {
+        cnt += flags & 1;
+        flags >>= 1;
+    }
+    return cnt;
+}
+
+static int be_ptask_flag_check(uint32_t flags)
+{
+    uint32_t tmpflags;
+
+    tmpflags = flags & (BE_PTASK_SCHEDULE_FROM_LAST |
+                        BE_PTASK_SCHEDULE_FROM_NOW);
+    if (be_ptask_flag_bits(tmpflags) != 1) {
+        return EINVAL;
+    }
+
+    tmpflags = flags & (BE_PTASK_OFFLINE_SKIP |
+                        BE_PTASK_OFFLINE_DISABLE |
+                        BE_PTASK_OFFLINE_EXECUTE);
+    if (be_ptask_flag_bits(tmpflags) != 1) {
+        return EINVAL;
+    }
+
+    return EOK;
+}
+
 errno_t be_ptask_create(TALLOC_CTX *mem_ctx,
                         struct be_ctx *be_ctx,
                         time_t period,
@@ -267,20 +296,30 @@ errno_t be_ptask_create(TALLOC_CTX *mem_ctx,
                         time_t enabled_delay,
                         time_t random_offset,
                         time_t timeout,
-                        enum be_ptask_offline offline,
                         time_t max_backoff,
                         be_ptask_send_t send_fn,
                         be_ptask_recv_t recv_fn,
                         void *pvt,
                         const char *name,
+                        uint32_t flags,
                         struct be_ptask **_task)
 {
     struct be_ptask *task = NULL;
     errno_t ret;
 
-    if (be_ctx == NULL || period == 0 || send_fn == NULL || recv_fn == NULL
+    if (be_ctx == NULL || send_fn == NULL || recv_fn == NULL
         || name == NULL) {
         return EINVAL;
+    }
+
+    if (period == 0 && (flags & BE_PTASK_NO_PERIODIC) == 0) {
+        return EINVAL;
+    }
+
+    /* check flags, some of them are exclusive, some must be present */
+    ret = be_ptask_flag_check(flags);
+    if (ret != EOK) {
+        return ret;
     }
 
     task = talloc_zero(mem_ctx, struct be_ptask);
@@ -296,10 +335,8 @@ errno_t be_ptask_create(TALLOC_CTX *mem_ctx,
     task->first_delay = first_delay;
     task->enabled_delay = enabled_delay;
     task->random_offset = random_offset;
-    task->ro_seed = time(NULL) * getpid();
     task->max_backoff = max_backoff;
     task->timeout = timeout;
-    task->offline = offline;
     task->send_fn = send_fn;
     task->recv_fn = recv_fn;
     task->pvt = pvt;
@@ -309,11 +346,12 @@ errno_t be_ptask_create(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
+    task->flags = flags;
     task->enabled = true;
 
     talloc_set_destructor((TALLOC_CTX*)task, be_ptask_destructor);
 
-    if (offline == BE_PTASK_OFFLINE_DISABLE) {
+    if (flags & BE_PTASK_OFFLINE_DISABLE) {
         /* install offline and online callbacks */
         ret = be_add_online_cb(task, be_ctx, be_ptask_online_cb, task, NULL);
         if (ret != EOK) {
@@ -449,11 +487,11 @@ errno_t be_ptask_create_sync(TALLOC_CTX *mem_ctx,
                              time_t enabled_delay,
                              time_t random_offset,
                              time_t timeout,
-                             enum be_ptask_offline offline,
                              time_t max_backoff,
                              be_ptask_sync_t fn,
                              void *pvt,
                              const char *name,
+                             uint32_t flags,
                              struct be_ptask **_task)
 {
     errno_t ret;
@@ -469,9 +507,10 @@ errno_t be_ptask_create_sync(TALLOC_CTX *mem_ctx,
     ctx->pvt = pvt;
 
     ret = be_ptask_create(mem_ctx, be_ctx, period, first_delay,
-                          enabled_delay, random_offset, timeout, offline,
+                          enabled_delay, random_offset, timeout,
                           max_backoff, be_ptask_sync_send, be_ptask_sync_recv,
-                          ctx, name, _task);
+                          ctx, name, flags | BE_PTASK_SCHEDULE_FROM_LAST,
+                          _task);
     if (ret != EOK) {
         goto done;
     }

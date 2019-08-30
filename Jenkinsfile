@@ -1,10 +1,4 @@
 /**
- * Remember that the build failed because one of the untrusted files were
- * modified.
- */
-untrusted = false
-
-/**
  * SSSD CI.
  *
  * This class hold SSSD CI settings and defines several helper methods
@@ -42,6 +36,11 @@ class CI {
   public static String SuiteDir = this.BaseDir + '/sssd-test-suite'
 
   /**
+   * Path to SSSD CI tools on Jenkins slave.
+   */
+  public static String CIDir = this.BaseDir + '/sssd-ci'
+
+  /**
    * Workaround for https://issues.jenkins-ci.org/browse/JENKINS-39203
    *
    * At this moment if one stage in parallel block fails, failure branch in
@@ -52,6 +51,7 @@ class CI {
    * parallel failed.
    */
   public static def Results = [:]
+  public static def RebaseResults = [:]
 
   /**
    * Mark build as successfull.
@@ -65,6 +65,20 @@ class CI {
    */
   public static def IsBuildSuccessful(build) {
     return this.Results[build] == "success"
+  }
+
+  /**
+   * Mark build as successfully rebased.
+   */
+  public static def RebaseSuccessful(build) {
+    this.RebaseResults[build] = "success"
+  }
+
+  /**
+   * Return true if the rebase was successful.
+   */
+  public static def IsRebaseSuccessful(build) {
+    return this.RebaseResults[build] == "success"
   }
 
   /**
@@ -93,18 +107,54 @@ class CI {
       )
   }
 
+  public static def Rebase(ctx) {
+    if (!ctx.env.CHANGE_TARGET) {
+      this.RebaseSuccessful(ctx.env.TEST_SYSTEM)
+      return
+    }
+
+    ctx.echo String.format('Rebasing on %s', ctx.env.CHANGE_TARGET)
+
+    ctx.sh String.format(
+      'git -C %s fetch --no-tags --progress origin +refs/heads/%s:refs/remotes/origin/%s',
+      "${ctx.env.WORKSPACE}/sssd",
+      ctx.env.CHANGE_TARGET,
+      ctx.env.CHANGE_TARGET
+    )
+
+    ctx.sh String.format(
+      'git -C %s rebase origin/%s',
+      "${ctx.env.WORKSPACE}/sssd",
+      ctx.env.CHANGE_TARGET
+    )
+
+    this.RebaseSuccessful(ctx.env.TEST_SYSTEM)
+  }
+
   /**
    * Run tests. TEST_SYSTEM environment variable must be defined.
    */
   public static def RunTests(ctx) {
+    ctx.echo "Running on ${ctx.env.NODE_NAME}"
     this.NotifyBuild(ctx, 'PENDING', 'Build is in progress.')
+    this.Rebase(ctx)
+
+    ctx.echo String.format(
+      'Executing tests, started at %s',
+      (new Date()).format('dd. MM. yyyy HH:mm:ss')
+    )
 
     ctx.sh String.format(
-      './sssd/contrib/test-suite/run.sh %s %s %s %s',
-      "${ctx.env.WORKSPACE}/sssd",
+      '%s/sssd-test-suite -c "%s" run --sssd "%s" --artifacts "%s" --update --prune',
       "${this.SuiteDir}",
-      "${ctx.env.WORKSPACE}/artifacts/${ctx.env.TEST_SYSTEM}",
-      "${this.BaseDir}/configs/${ctx.env.TEST_SYSTEM}.json"
+      "${this.BaseDir}/configs/${ctx.env.TEST_SYSTEM}.json",
+      "${ctx.env.WORKSPACE}/sssd",
+      "${ctx.env.WORKSPACE}/artifacts/${ctx.env.TEST_SYSTEM}"
+    )
+
+    ctx.echo String.format(
+      'Finished at %s',
+      (new Date()).format('dd. MM. yyyy HH:mm:ss')
     )
 
     this.BuildSuccessful(ctx.env.TEST_SYSTEM)
@@ -114,12 +164,19 @@ class CI {
    * Archive artifacts and notify Github about build result.
    */
   public static def WhenCompleted(ctx) {
+    if (!this.IsRebaseSuccessful(ctx.env.TEST_SYSTEM)) {
+      ctx.echo "Unable to rebase on target branch."
+      this.NotifyBuild(ctx, 'FAILURE', 'Unable to rebase on target branch.')
+      return
+    }
+
     ctx.archiveArtifacts artifacts: "artifacts/**", allowEmptyArchive: true
     ctx.sh String.format(
-      "${this.BaseDir}/scripts/archive.sh %s %s %s",
+      '%s/sssd-ci archive --name "%s" --system "%s" --artifacts "%s"',
+      "${this.CIDir}",
+      "${ctx.env.BRANCH_NAME}/${ctx.env.BUILD_ID}",
       ctx.env.TEST_SYSTEM,
-      "${ctx.env.WORKSPACE}/artifacts/${ctx.env.TEST_SYSTEM}",
-      "${ctx.env.BRANCH_NAME}/${ctx.env.BUILD_ID}"
+      "${ctx.env.WORKSPACE}/artifacts/${ctx.env.TEST_SYSTEM}"
     )
     ctx.sh "rm -fr ${ctx.env.WORKSPACE}/artifacts/${ctx.env.TEST_SYSTEM}"
 
@@ -152,26 +209,12 @@ def CI_Notify(status, message) { CI.Notify(this, status, message) }
 pipeline {
   agent none
   options {
-    timeout(time: 10, unit: 'HOURS')
     checkoutToSubdirectory('sssd')
   }
   stages {
     stage('Prepare') {
       steps {
         CI_Notify('PENDING', 'Running tests.')
-      }
-    }
-    stage('Read trusted files') {
-      steps {
-        readTrusted './contrib/test-suite/run.sh'
-        readTrusted './contrib/test-suite/run-client.sh'
-      }
-      post {
-        failure {
-          script {
-            untrusted = true
-          }
-        }
       }
     }
     stage('Run Tests') {
@@ -217,13 +260,7 @@ pipeline {
   }
   post {
     failure {
-      script {
-        if (untrusted) {
-          CI_Notify('ERROR', 'Untrusted files were modified.')
-        } else {
-          CI_Notify('FAILURE', 'Some tests failed.')
-        }
-      }
+      CI_Notify('FAILURE', 'Some tests failed.')
     }
     aborted {
       CI_Notify('ERROR', 'Builds were aborted.')

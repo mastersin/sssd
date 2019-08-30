@@ -58,6 +58,7 @@ errno_t ipa_dyndns_init(struct be_ctx *be_ctx,
     errno_t ret;
     const time_t ptask_first_delay = 10;
     int period;
+    uint32_t extraflags = 0;
 
     ctx->be_res = be_ctx->be_res;
     if (ctx->be_res == NULL) {
@@ -68,14 +69,19 @@ errno_t ipa_dyndns_init(struct be_ctx *be_ctx,
 
     period = dp_opt_get_int(ctx->dyndns_ctx->opts, DP_OPT_DYNDNS_REFRESH_INTERVAL);
     if (period == 0) {
-        DEBUG(SSSDBG_OP_FAILURE, "Dyndns task can't be started, "
+        DEBUG(SSSDBG_TRACE_FUNC, "DNS will not be updated periodically, "
               "dyndns_refresh_interval is 0\n");
-        return EINVAL;
+        extraflags |= BE_PTASK_NO_PERIODIC;
     }
+
     ret = be_ptask_create(ctx, be_ctx, period, ptask_first_delay, 0, 0, period,
-                          BE_PTASK_OFFLINE_DISABLE, 0,
+                          0,
                           ipa_dyndns_update_send, ipa_dyndns_update_recv, ctx,
-                          "Dyndns update", NULL);
+                          "Dyndns update",
+                          extraflags |
+                          BE_PTASK_OFFLINE_DISABLE |
+                          BE_PTASK_SCHEDULE_FROM_LAST,
+                          NULL);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to setup ptask "
               "[%d]: %s\n", ret, sss_strerror(ret));

@@ -28,7 +28,6 @@
 #include <libintl.h>
 #include <locale.h>
 #include <time.h>
-#include <pcre.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <netinet/in.h>
@@ -44,6 +43,7 @@
 #include "util/atomic_io.h"
 #include "util/util_errors.h"
 #include "util/sss_format.h"
+#include "util/sss_regexp.h"
 #include "util/debug.h"
 
 /* name of the monitor server instance */
@@ -65,6 +65,14 @@
 
 #ifndef NULL
 #define NULL 0
+#endif
+
+#ifndef MIN
+#define MIN(a, b)  (((a) < (b)) ? (a) : (b))
+#endif
+
+#ifndef MAX
+#define MAX(a, b)  (((a) > (b)) ? (a) : (b))
 #endif
 
 #define SSSD_MAIN_OPTS SSSD_DEBUG_OPTS
@@ -208,7 +216,7 @@ struct sss_names_ctx {
     char *re_pattern;
     char *fq_fmt;
 
-    pcre *re;
+    sss_regexp_t *re;
 };
 
 /* initialize sss_names_ctx directly from arguments */
@@ -364,17 +372,6 @@ int split_on_separator(TALLOC_CTX *mem_ctx, const char *str,
                        char ***_list, int *size);
 
 char **parse_args(const char *str);
-
-struct cert_verify_opts {
-    bool do_ocsp;
-    bool do_verification;
-    char *ocsp_default_responder;
-    char *ocsp_default_responder_signing_cert;
-    char *crl_file;
-};
-
-errno_t parse_cert_verify_opts(TALLOC_CTX *mem_ctx, const char *verify_opts,
-                               struct cert_verify_opts **cert_verify_opts);
 
 errno_t sss_hash_create(TALLOC_CTX *mem_ctx,
                         unsigned long count,

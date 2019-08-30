@@ -33,6 +33,7 @@
 #include <openssl/rand.h>
 #include <openssl/crypto.h>
 
+#include <openssl/hmac.h>
 #include "sss_openssl.h"
 
 struct cipher_mech {
@@ -43,24 +44,23 @@ struct cipher_mech {
 };
 
 int sss_encrypt(TALLOC_CTX *mem_ctx, enum encmethod enctype,
-                uint8_t *key, size_t keylen,
+                const uint8_t *key, size_t keylen,
                 const uint8_t *plaintext, size_t plainlen,
                 uint8_t **ciphertext, size_t *cipherlen)
 {
+    unsigned char md[EVP_MAX_MD_SIZE];
     const EVP_CIPHER *cipher;
     const EVP_MD *digest;
-    EVP_PKEY *hmackey = NULL;
-    EVP_CIPHER_CTX *ctx;
-    EVP_MD_CTX *mdctx = NULL;
+    EVP_CIPHER_CTX *ctx = NULL;
     uint8_t *out = NULL;
     int evpkeylen;
     int evpivlen;
-    int hmaclen;
+    unsigned int hmaclen;
     int outlen, tmplen;
-    size_t slen;
+    unsigned int slen;
     int ret;
 
-    if (!plaintext || !plainlen) return EINVAL;
+    if (!plaintext || !plainlen || !ciphertext || !cipherlen) return EINVAL;
 
     if (enctype != AES256CBC_HMAC_SHA256) return EINVAL;
     cipher = mechs[AES256CBC_HMAC_SHA256].cipher();
@@ -68,9 +68,6 @@ int sss_encrypt(TALLOC_CTX *mem_ctx, enum encmethod enctype,
 
     evpkeylen = EVP_CIPHER_key_length(cipher);
     if (!key || keylen != evpkeylen) return EINVAL;
-
-    hmackey = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, key, keylen);
-    if (!hmackey) return ENOMEM;
 
     /* We have no function to return the size of the output for arbitrary HMAC
      * algorithms so we just truncate to the key size should the hmac be bigger
@@ -81,11 +78,18 @@ int sss_encrypt(TALLOC_CTX *mem_ctx, enum encmethod enctype,
     outlen = plainlen + (2 * EVP_CIPHER_block_size(cipher))
                 + evpivlen + hmaclen;
     out = talloc_zero_size(mem_ctx, outlen);
+    if (out == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
 
     /* First Encrypt */
 
     if (evpivlen != 0) {
-        RAND_bytes(out, evpivlen);
+        ret = sss_generate_csprng_buffer(out, evpivlen);
+        if (ret != EOK) {
+            goto done;
+        }
     }
 
     ctx = EVP_CIPHER_CTX_new();
@@ -120,70 +124,45 @@ int sss_encrypt(TALLOC_CTX *mem_ctx, enum encmethod enctype,
 
     /* Then HMAC */
 
-    mdctx = EVP_MD_CTX_new();
-    if (mdctx == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
-
-    ret = EVP_DigestInit_ex(mdctx, digest, NULL);
-    if (ret != 1) {
+    if (!HMAC(digest, key, (int)keylen, out, outlen, md, &slen)) {
         ret = EFAULT;
         goto done;
     }
-
-    ret = EVP_DigestSignInit(mdctx, NULL, digest, NULL, hmackey);
-    if (ret != 1) {
-        ret = EFAULT;
-        goto done;
-    }
-
-    ret = EVP_DigestSignUpdate(mdctx, out, outlen);
-    if (ret != 1) {
-        ret = EFAULT;
-        goto done;
-    }
-
-    slen = hmaclen;
-    ret = EVP_DigestSignFinal(mdctx, &out[outlen], &slen);
-    if (ret != 1) {
-        ret = EFAULT;
-        goto done;
-    }
-
+    memcpy(&out[outlen], md, slen < hmaclen ? slen : hmaclen);
     outlen += hmaclen;
 
     *ciphertext = out;
+    out = NULL;
     *cipherlen = outlen;
     ret = EOK;
 
 done:
-    EVP_MD_CTX_free(mdctx);
-    EVP_CIPHER_CTX_free(ctx);
-    EVP_PKEY_free(hmackey);
+    if (out != NULL) {
+        talloc_free(out);
+    }
+    if (ctx != NULL) {
+        EVP_CIPHER_CTX_free(ctx);
+    }
     return ret;
 }
 
 int sss_decrypt(TALLOC_CTX *mem_ctx, enum encmethod enctype,
-                uint8_t *key, size_t keylen,
+                const uint8_t *key, size_t keylen,
                 const uint8_t *ciphertext, size_t cipherlen,
                 uint8_t **plaintext, size_t *plainlen)
 {
     const EVP_CIPHER *cipher;
     const EVP_MD *digest;
-    EVP_PKEY *hmackey = NULL;
     EVP_CIPHER_CTX *ctx = NULL;
-    EVP_MD_CTX *mdctx;
     const uint8_t *iv = NULL;
     uint8_t *out;
     int evpkeylen;
     int evpivlen;
     int hmaclen;
     int outlen, tmplen;
-    size_t slen;
     int ret;
 
-    if (!ciphertext || !cipherlen) return EINVAL;
+    if (!ciphertext || !plaintext || !plainlen) return EINVAL;
 
     if (enctype != AES256CBC_HMAC_SHA256) return EINVAL;
     cipher = mechs[AES256CBC_HMAC_SHA256].cipher();
@@ -192,46 +171,21 @@ int sss_decrypt(TALLOC_CTX *mem_ctx, enum encmethod enctype,
     evpkeylen = EVP_CIPHER_key_length(cipher);
     if (!key || keylen != evpkeylen) return EINVAL;
 
-    hmackey = EVP_PKEY_new_mac_key(EVP_PKEY_HMAC, NULL, key, keylen);
-    if (!hmackey) return ENOMEM;
-
     /* We have no function to return the size of the output for arbitray HMAC
      * algorithms so we just assume it was truncated to the key size should
      * the hmac be bigger (or pad with zeros should the HMAC be smaller) */
     hmaclen = keylen;
 
     evpivlen = EVP_CIPHER_iv_length(cipher);
-    out = talloc_zero_size(mem_ctx, cipherlen);
+    if (cipherlen <= (hmaclen + evpivlen)) return EINVAL;
+
+    out = talloc_zero_size(mem_ctx,
+                    cipherlen > EVP_MAX_MD_SIZE ? cipherlen : EVP_MAX_MD_SIZE);
 
     /* First check HMAC */
 
-    mdctx = EVP_MD_CTX_new();
-    if (mdctx == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
-
-    ret = EVP_DigestInit_ex(mdctx, digest, NULL);
-    if (ret != 1) {
-        ret = EFAULT;
-        goto done;
-    }
-
-    ret = EVP_DigestSignInit(mdctx, NULL, digest, NULL, hmackey);
-    if (ret != 1) {
-        ret = EFAULT;
-        goto done;
-    }
-
-    ret = EVP_DigestSignUpdate(mdctx, ciphertext, cipherlen - hmaclen);
-    if (ret != 1) {
-        ret = EFAULT;
-        goto done;
-    }
-
-    slen = hmaclen;
-    ret = EVP_DigestSignFinal(mdctx, out, &slen);
-    if (ret != 1) {
+    if (!HMAC(digest, key, (int)keylen, ciphertext, (int)cipherlen - hmaclen,
+              out, NULL)) {
         ret = EFAULT;
         goto done;
     }
@@ -281,8 +235,6 @@ int sss_decrypt(TALLOC_CTX *mem_ctx, enum encmethod enctype,
     ret = EOK;
 
 done:
-    EVP_MD_CTX_free(mdctx);
     EVP_CIPHER_CTX_free(ctx);
-    EVP_PKEY_free(hmackey);
     return ret;
 }

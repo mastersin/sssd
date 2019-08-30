@@ -665,6 +665,7 @@ dist_noinst_HEADERS = \
     src/util/sss_nss.h \
     src/util/sss_ldap.h \
     src/util/sss_python.h \
+    src/util/sss_regexp.h \
     src/util/sss_krb5.h \
     src/util/sss_selinux.h \
     src/util/sss_sockets.h \
@@ -939,9 +940,9 @@ if HAVE_NSS
                         src/util/crypto/nss/nss_obfuscate.c \
                         src/util/crypto/nss/nss_nite.c \
                         src/util/crypto/nss/nss_util.c \
-			src/util/crypto/sss_crypto.c \
-			src/util/atomic_io.c \
-			$(NULL)
+                        src/util/crypto/nss/nss_prng.c \
+                        src/util/atomic_io.c \
+                        $(NULL)
     SSS_CRYPT_CFLAGS = $(NSS_CFLAGS)
     SSS_CRYPT_LIBS = $(NSS_LIBS)
 
@@ -962,9 +963,9 @@ else
                         src/util/crypto/libcrypto/crypto_sha512crypt.c \
                         src/util/crypto/libcrypto/crypto_obfuscate.c \
                         src/util/crypto/libcrypto/crypto_nite.c \
-			src/util/crypto/sss_crypto.c \
-			src/util/atomic_io.c \
-			$(NULL)
+                        src/util/crypto/libcrypto/crypto_prng.c \
+                        src/util/atomic_io.c \
+                        $(NULL)
     SSS_CRYPT_CFLAGS = $(CRYPTO_CFLAGS)
     SSS_CRYPT_LIBS = $(CRYPTO_LIBS)
 
@@ -1270,6 +1271,7 @@ libsss_util_la_SOURCES = \
     src/util/sss_ptr_hash.c \
     src/util/files.c \
     src/util/selinux.c \
+    src/util/sss_regexp.c \
     $(NULL)
 libsss_util_la_CFLAGS = \
     $(AM_CFLAGS) \
@@ -3035,12 +3037,22 @@ test_ipa_idmap_LDADD = \
 test_utils_SOURCES = \
     src/tests/cmocka/test_utils.c \
     src/tests/cmocka/test_string_utils.c \
+    src/p11_child/p11_child_common_utils.c \
     $(NULL)
 if BUILD_SSH
 test_utils_SOURCES += src/tests/cmocka/test_sss_ssh.c
 endif
 test_utils_CFLAGS = \
     $(AM_CFLAGS)
+if HAVE_NSS
+test_utils_CFLAGS += \
+    $(NSS_CFLAGS) \
+    $(NULL)
+else
+test_utils_CFLAGS += \
+    $(P11_KIT_CFLAGS) \
+    $(NULL)
+endif
 test_utils_LDADD = \
     $(CMOCKA_LIBS) \
     $(POPT_LIBS) \
@@ -4020,6 +4032,7 @@ intgcheck-prepare:
 	    --with-secrets \
 	    --with-session-recording-shell=/bin/false \
 	    --enable-local-provider \
+	    --enable-files-domain \
 	    $(INTGCHECK_CONFIGURE_FLAGS) \
 	    CFLAGS="-O2 -g $$CFLAGS"; \
 	$(MAKE) $(AM_MAKEFLAGS) ; \
@@ -4431,6 +4444,7 @@ libsss_ipa_la_SOURCES = \
     src/providers/ipa/ipa_srv.c \
     src/providers/ipa/ipa_idmap.c \
     src/providers/ipa/ipa_dn.c \
+    src/providers/ipa/ipa_refresh.c \
     src/providers/ad/ad_opts.c \
     src/providers/ad/ad_common.c \
     src/providers/ad/ad_dyndns.c \
@@ -4503,7 +4517,10 @@ libsss_ad_la_SOURCES = \
     src/providers/ad/ad_gpo_ndr.c \
     src/providers/ad/ad_srv.c \
     src/providers/ad/ad_subdomains.c \
-    src/providers/ad/ad_domain_info.c
+    src/providers/ad/ad_domain_info.c \
+    src/providers/ad/ad_refresh.c \
+    $(NULL)
+
 
 if BUILD_SUDO
 libsss_ad_la_SOURCES += \
@@ -4661,6 +4678,7 @@ proxy_child_LDADD = \
 
 p11_child_SOURCES = \
     src/p11_child/p11_child_common.c \
+    src/p11_child/p11_child_common_utils.c \
     src/util/atomic_io.c \
     src/util/util.c \
     src/util/util_ext.c \

@@ -179,6 +179,32 @@ OCSP_RESPONSE *process_responder(OCSP_REQUEST *req,
     return resp;
 }
 
+static const EVP_MD *get_dgst(CK_MECHANISM_TYPE ocsp_dgst)
+{
+    const EVP_MD *dgst = NULL;
+
+    switch (ocsp_dgst) {
+    case CKM_SHA_1:
+        dgst = EVP_sha1();
+        break;
+    case CKM_SHA256:
+        dgst = EVP_sha256();
+        break;
+    case CKM_SHA384:
+        dgst = EVP_sha384();
+        break;
+    case CKM_SHA512:
+        dgst = EVP_sha512();
+        break;
+    default:
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unsupported digest type [%lu].\n",
+                                   ocsp_dgst);
+        dgst = NULL;
+    }
+
+    return dgst;
+}
+
 static errno_t do_ocsp(struct p11_ctx *p11_ctx, X509 *cert)
 {
     OCSP_REQUEST *ocsp_req = NULL;
@@ -204,6 +230,7 @@ static errno_t do_ocsp(struct p11_ctx *p11_ctx, X509 *cert)
     X509_NAME *issuer_name = NULL;
     X509_OBJECT *x509_obj;
     STACK_OF(X509_OBJECT) *store_objects;
+    const EVP_MD *ocsp_dgst = NULL;
 
     ocsp_urls = X509_get1_ocsp(cert);
     if (ocsp_urls == NULL
@@ -268,7 +295,13 @@ static errno_t do_ocsp(struct p11_ctx *p11_ctx, X509 *cert)
         goto done;
     }
 
-    cid = OCSP_cert_to_id(EVP_sha1(), cert, issuer);
+    ocsp_dgst = get_dgst(p11_ctx->cert_verify_opts->ocsp_dgst);
+    if (ocsp_dgst == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "Cannot determine configured digest function "
+                                 "for OCSP, using default sha256.\n");
+        ocsp_dgst = EVP_sha256();
+    }
+    cid = OCSP_cert_to_id(ocsp_dgst, cert, issuer);
     if (cid == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "OCSP_cert_to_id failed.\n");
         ret = EIO;
@@ -986,9 +1019,9 @@ static int do_hash(TALLOC_CTX *mem_ctx, const EVP_MD *evp_md,
 
 done:
 
+    EVP_MD_CTX_free(md_ctx);
     if (ret != EOK) {
         free(out);
-        EVP_MD_CTX_free(md_ctx);
     }
 
     return ret;
@@ -1097,7 +1130,75 @@ static int rs_to_seq(TALLOC_CTX *mem_ctx, CK_BYTE *rs_sig, CK_ULONG rs_sig_len,
     return EOK;
 }
 
+static CK_RV get_preferred_rsa_mechanism(TALLOC_CTX *mem_ctx,
+                                         CK_FUNCTION_LIST *module,
+                                         CK_SLOT_ID slot_id,
+                                         CK_MECHANISM_TYPE *preferred_mechanism,
+                                         const EVP_MD **preferred_evp_md)
+{
+    CK_ULONG count;
+    CK_MECHANISM_TYPE *mechanism_list = NULL;
+    CK_RV rv;
+    size_t c;
+    size_t m;
+    struct prefs {
+        CK_MECHANISM_TYPE mech;
+        const char *mech_name;
+        const EVP_MD *evp_md;
+        const char *md_name;
+    } prefs[] = {
+        { CKM_SHA512_RSA_PKCS, "CKM_SHA512_RSA_PKCS", EVP_sha512(), "sha512" },
+        { CKM_SHA384_RSA_PKCS, "CKM_SHA384_RSA_PKCS", EVP_sha384(), "sha384" },
+        { CKM_SHA256_RSA_PKCS, "CKM_SHA256_RSA_PKCS", EVP_sha256(), "sha256" },
+        { CKM_SHA224_RSA_PKCS, "CKM_SHA224_RSA_PKCS", EVP_sha224(), "sha224" },
+        { CKM_SHA1_RSA_PKCS,   "CKM_SHA1_RSA_PKCS",   EVP_sha1(),   "sha1" },
+        { 0, NULL }
+    };
+
+    *preferred_mechanism = CKM_SHA1_RSA_PKCS;
+    *preferred_evp_md = EVP_sha1();
+
+    rv = module->C_GetMechanismList(slot_id, NULL, &count);
+    if (rv == CKR_OK && count > 0) {
+        mechanism_list = talloc_size(mem_ctx,
+                                     count * sizeof(CK_MECHANISM_TYPE));
+        if (mechanism_list != NULL) {
+            rv = module->C_GetMechanismList(slot_id, mechanism_list, &count);
+            if (rv == CKR_OK) {
+                if (DEBUG_IS_SET(SSSDBG_TRACE_ALL)) {
+                    for (m = 0; m < count; m++) {
+                        DEBUG(SSSDBG_TRACE_ALL, "Found mechanism [%lu].\n",
+                                                mechanism_list[m]);
+                    }
+                }
+                for (c = 0; prefs[c].mech != 0; c++) {
+                    for (m = 0; m < count; m++) {
+                        if (prefs[c].mech == mechanism_list[m]) {
+                            *preferred_mechanism = prefs[c].mech;
+                            *preferred_evp_md = prefs[c].evp_md;
+                            DEBUG(SSSDBG_FUNC_DATA,
+                                  "Using PKCS#11 mechanism [%lu][%s] and "
+                                  "local message digest [%s].\n",
+                                  *preferred_mechanism, prefs[c].mech_name,
+                                  prefs[c].md_name);
+                            break;
+                        }
+                    }
+                    if (m != count) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    talloc_free(mechanism_list);
+
+    return rv;
+}
+
 static int sign_data(CK_FUNCTION_LIST *module, CK_SESSION_HANDLE session,
+                     CK_SLOT_ID slot_id,
                      struct cert_list *cert)
 {
     CK_OBJECT_CLASS key_class = CKO_PRIVATE_KEY;
@@ -1108,6 +1209,7 @@ static int sign_data(CK_FUNCTION_LIST *module, CK_SESSION_HANDLE session,
       {CKA_ID, NULL, 0}
     };
     CK_MECHANISM mechanism = { CK_UNAVAILABLE_INFORMATION, NULL, 0 };
+    CK_MECHANISM_TYPE preferred_mechanism;
     CK_OBJECT_HANDLE priv_key_object;
     CK_ULONG object_count;
     CK_BYTE random_value[128];
@@ -1118,7 +1220,7 @@ static int sign_data(CK_FUNCTION_LIST *module, CK_SESSION_HANDLE session,
     CK_RV rv;
     CK_RV rv_f;
     EVP_PKEY *cert_pub_key = NULL;
-    EVP_MD_CTX *md_ctx;
+    EVP_MD_CTX *md_ctx = NULL;
     int ret;
     const EVP_MD *evp_md = NULL;
     CK_BYTE *hash_val = NULL;
@@ -1157,15 +1259,23 @@ static int sign_data(CK_FUNCTION_LIST *module, CK_SESSION_HANDLE session,
 
     switch (get_key_type(module, session, priv_key_object)) {
     case CKK_RSA:
-        DEBUG(SSSDBG_TRACE_ALL, "Found RSA key using CKM_SHA1_RSA_PKCS.\n");
-        mechanism.mechanism = CKM_SHA1_RSA_PKCS;
-        evp_md = EVP_sha1();
+        rv = get_preferred_rsa_mechanism(cert, module, slot_id,
+                                         &preferred_mechanism, &evp_md);
+        if (rv != CKR_OK) {
+            DEBUG(SSSDBG_OP_FAILURE, "get_preferred_rsa_mechanism failed, "
+                                     "using default CKM_SHA1_RSA_PKCS.\n");
+            preferred_mechanism = CKM_SHA1_RSA_PKCS;
+            evp_md = EVP_sha1();
+        }
+        DEBUG(SSSDBG_TRACE_ALL, "Found RSA key using mechanism [%lu].\n",
+                                preferred_mechanism);
+        mechanism.mechanism = preferred_mechanism;
         card_does_hash = true;
         break;
     case CKK_EC:
         DEBUG(SSSDBG_TRACE_ALL, "Found ECC key using CKM_ECDSA.\n");
         mechanism.mechanism = CKM_ECDSA;
-        evp_md = EVP_sha1();
+        evp_md = EVP_sha512();
         card_does_hash = false;
         break;
     case CK_UNAVAILABLE_INFORMATION:
@@ -1184,9 +1294,10 @@ static int sign_data(CK_FUNCTION_LIST *module, CK_SESSION_HANDLE session,
         return EIO;
     }
 
-    ret = RAND_bytes(random_value, sizeof(random_value));
-    if (ret != 1) {
-        DEBUG(SSSDBG_OP_FAILURE, "RAND_bytes failed.\n");
+    ret = sss_generate_csprng_buffer((uint8_t *)random_value,
+                                     sizeof(random_value));
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "sss_generate_csprng_buffer failed.\n");
         return EINVAL;
     }
 
@@ -1280,6 +1391,8 @@ static int sign_data(CK_FUNCTION_LIST *module, CK_SESSION_HANDLE session,
     ret = EOK;
 
 done:
+    EVP_MD_CTX_destroy(md_ctx);
+    talloc_free(hash_val);
     talloc_free(signature);
     EVP_PKEY_free(cert_pub_key);
 
@@ -1661,7 +1774,7 @@ errno_t do_card(TALLOC_CTX *mem_ctx, struct p11_ctx *p11_ctx,
             goto done;
         }
 
-        ret = sign_data(module, session, cert_list);
+        ret = sign_data(module, session, slot_id, cert_list);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE, "sign_data failed.\n");
             ret = EACCES;

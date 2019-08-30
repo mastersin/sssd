@@ -130,10 +130,10 @@ void be_mark_offline(struct be_ctx *ctx)
         ret = be_ptask_create_sync(ctx, ctx,
                                    offline_timeout, offline_timeout,
                                    offline_timeout, 30, offline_timeout,
-                                   BE_PTASK_OFFLINE_EXECUTE,
                                    3600 /* max_backoff */,
                                    try_to_go_online,
                                    ctx, "Check if online (periodic)",
+                                   BE_PTASK_OFFLINE_EXECUTE,
                                    &ctx->check_if_online_ptask);
         if (ret != EOK) {
             DEBUG(SSSDBG_FATAL_FAILURE,
@@ -454,7 +454,6 @@ errno_t be_process_init(TALLOC_CTX *mem_ctx,
                         struct tevent_context *ev,
                         struct confdb_ctx *cdb)
 {
-    uint32_t refresh_interval;
     struct tevent_req *req;
     struct be_ctx *be_ctx;
     char *str = NULL;
@@ -537,27 +536,6 @@ errno_t be_process_init(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    /* Initialize be_refresh periodic task. */
-    be_ctx->refresh_ctx = be_refresh_ctx_init(be_ctx);
-    if (be_ctx->refresh_ctx == NULL) {
-        DEBUG(SSSDBG_FATAL_FAILURE, "Unable to initialize refresh_ctx\n");
-        ret = ENOMEM;
-        goto done;
-    }
-
-    refresh_interval = be_ctx->domain->refresh_expired_interval;
-    if (refresh_interval > 0) {
-        ret = be_ptask_create(be_ctx, be_ctx, refresh_interval, 30, 5, 0,
-                              refresh_interval, BE_PTASK_OFFLINE_SKIP, 0,
-                              be_refresh_send, be_refresh_recv,
-                              be_ctx->refresh_ctx, "Refresh Records", NULL);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "Unable to initialize refresh periodic task\n");
-            goto done;
-        }
-    }
-
     req = dp_init_send(be_ctx, be_ctx->ev, be_ctx, be_ctx->uid, be_ctx->gid);
     if (req == NULL) {
         ret = ENOMEM;
@@ -574,6 +552,27 @@ done:
     }
 
     return ret;
+}
+
+static void fix_child_log_permissions(uid_t uid, gid_t gid)
+{
+    int ret;
+    const char *child_names[] = { "krb5_child",
+                                  "ldap_child",
+                                  "selinux_child",
+                                  "ad_gpo_child",
+                                  "proxy_child",
+                                  NULL };
+    size_t c;
+
+    for (c = 0; child_names[c] != NULL; c++) {
+        ret = chown_debug_file(child_names[c], uid, gid);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_MINOR_FAILURE,
+                  "Cannot chown the [%s] debug file, "
+                  "debugging might not work!\n", child_names[c]);
+        }
+    }
 }
 
 static void dp_initialized(struct tevent_req *req)
@@ -630,6 +629,8 @@ static void dp_initialized(struct tevent_req *req)
         DEBUG(SSSDBG_MINOR_FAILURE,
               "Cannot chown the debug files, debugging might not work!\n");
     }
+
+    fix_child_log_permissions(be_ctx->uid, be_ctx->gid);
 
     ret = become_user(be_ctx->uid, be_ctx->gid);
     if (ret != EOK) {

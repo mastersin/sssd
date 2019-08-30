@@ -38,7 +38,8 @@ def package_install(session_multihost):
     distro = session_multihost.master[0].distro
     pkg_list = 'authselect nss-tools 389-ds-base krb5-server '\
                'openldap-clients krb5-workstation '\
-               '389-ds-base-legacy-tools sssd sssd-dbus sssd-kcm'
+               '389-ds-base-legacy-tools sssd sssd-dbus sssd-kcm ' \
+               'expect ldb-tools sssd-tools'
     if 'Fedora' in distro:
         cmd = 'dnf install -y %s' % (pkg_list)
     elif '8.' in distro.split()[5]:
@@ -297,8 +298,15 @@ def files_domain_users_class(request, session_multihost):
         useradd_cmd = "useradd %s" % (user)
         session_multihost.master[0].run_command(useradd_cmd)
 
+    no_home_users = ('no_home_user', )
+    for user in no_home_users:
+        useradd_cmd = "useradd --no-create-home %s" % (user)
+        session_multihost.master[0].run_command(useradd_cmd)
+        usermod_cmd = "usermod -d '' %s" % (user)
+        session_multihost.master[0].run_command(usermod_cmd)
+
     def teardown_files_domain_users():
-        for user in users:
+        for user in users + no_home_users:
             userdel_cmd = "userdel %s" % (user)
             session_multihost.master[0].run_command(userdel_cmd)
     request.addfinalizer(teardown_files_domain_users)
@@ -375,7 +383,8 @@ def create_posix_usersgroups(session_multihost):
         user_info = {'cn': 'foo%d' % i,
                      'uid': 'foo%d' % i,
                      'uidNumber': '1458310%d' % i,
-                     'gidNumber': '14564100'}
+                     'gidNumber': '14564100',
+                     'userPassword': 'Secret123'}
         if ldap_inst.posix_user("ou=People", "dc=example,dc=test", user_info):
             krb.add_principal('foo%d' % i, 'user', 'Secret123')
         else:
@@ -395,6 +404,14 @@ def create_posix_usersgroups(session_multihost):
         add_member = [(ldap.MOD_ADD, 'uniqueMember', user_dn.encode('utf-8'))]
         (ret, _) = ldap_inst.modify_ldap(group_dn, add_member)
         assert ret == 'Success'
+
+
+@pytest.fixture(scope='session')
+def create_many_user_principals(session_multihost):
+    krb = krb5srv(session_multihost.master[0], 'EXAMPLE.TEST')
+    for i in range(1, 65):
+        username = "user%04d" % i
+        krb.add_principal(username, 'user', 'Secret123')
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -659,7 +659,9 @@ static errno_t sec_get_ccache_recv(struct tevent_req *req,
 /*
  * The actual sssd-secrets back end
  */
-static errno_t ccdb_sec_init(struct kcm_ccdb *db)
+static errno_t ccdb_sec_init(struct kcm_ccdb *db,
+                             struct confdb_ctx *cdb,
+                             const char *confdb_service_path)
 {
     struct ccdb_sec *secdb = NULL;
 
@@ -674,10 +676,6 @@ static errno_t ccdb_sec_init(struct kcm_ccdb *db)
         talloc_zfree(secdb);
         return ENOMEM;
    }
-
-    /* We just need the random numbers to generate pseudo-random ccache names
-     * and avoid conflicts */
-    srand(time(NULL));
 
     db->db_handle = secdb;
     return EOK;
@@ -887,7 +885,7 @@ static errno_t ccdb_sec_nextid_generate(struct tevent_req *req)
         return EBUSY;
     }
 
-    state->nextid = rand() % MAX_CC_NUM;
+    state->nextid = sss_rand() % MAX_CC_NUM;
     state->nextid_name = talloc_asprintf(state, "%"SPRIuid":%u",
                                          cli_creds_get_uid(state->client),
                                          state->nextid);

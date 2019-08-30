@@ -58,11 +58,9 @@
                 </listitem>
                 <listitem>
                     <para>
-                        the SSSD implementation stores the ccaches in the SSSD
-                        <citerefentry>
-                            <refentrytitle>sssd-secrets</refentrytitle><manvolnum>5</manvolnum>
-                        </citerefentry>
-                        secrets store, allowing the ccaches to survive KCM server restarts or machine reboots.
+                        the SSSD implementation stores the ccaches in a database,
+                        typically located at <replaceable>/var/lib/sss/secrets</replaceable>
+                        allowing the ccaches to survive KCM server restarts or machine reboots.
                     </para>
                 </listitem>
             </itemizedlist>
@@ -164,12 +162,17 @@ systemctl restart sssd-kcm.service
         <title>CONFIGURATION OPTIONS</title>
         <para>
             The KCM service is configured in the <quote>kcm</quote>
-            section of the sssd.conf file. Please note that currently,
-            is it not sufficient to restart the sssd-kcm service, because
-            the sssd configuration is only parsed and read to an internal
-            configuration database by the sssd service. Therefore you
-            must restart the sssd service if you change anything in the
-            <quote>kcm</quote> section of sssd.conf.
+            section of the sssd.conf file. Please note that because
+            the KCM service is typically socket-activated, it is
+            enough to just restart the <quote>sssd-kcm</quote> service
+            after changing options in the <quote>kcm</quote> section
+            of sssd.conf:
+            <programlisting>
+systemctl restart sssd-kcm.service
+            </programlisting>
+        </para>
+        <para>
+            The KCM service is configured in the <quote>kcm</quote>
             For a detailed syntax reference, refer to the <quote>FILE FORMAT</quote> section of the
             <citerefentry>
                 <refentrytitle>sssd.conf</refentrytitle>
@@ -195,6 +198,43 @@ systemctl restart sssd-kcm.service
                     </para>
                     <para>
                         Default: <replaceable>/var/run/.heim_org.h5l.kcm-socket</replaceable>
+                    </para>
+                </listitem>
+            </varlistentry>
+            <varlistentry>
+                <term>max_ccaches (integer)</term>
+                <listitem>
+                    <para>
+                        How many credential caches does the KCM database allow
+                        for all users.
+                    </para>
+                    <para>
+                        Default: 0 (unlimited, only the per-UID quota is enforced)
+                    </para>
+                </listitem>
+            </varlistentry>
+            <varlistentry>
+                <term>max_uid_ccaches (integer)</term>
+                <listitem>
+                    <para>
+                        How many credential caches does the KCM database allow
+                        per UID. This is equivalent to <quote>with how many
+                        principals you can kinit</quote>.
+                    </para>
+                    <para>
+                        Default: 64
+                    </para>
+                </listitem>
+            </varlistentry>
+            <varlistentry>
+                <term>max_ccache_size (integer)</term>
+                <listitem>
+                    <para>
+                        How big can a credential cache be per ccache. Each
+                        service ticket accounts into this quota.
+                    </para>
+                    <para>
+                        Default: 65536
                     </para>
                 </listitem>
             </varlistentry>

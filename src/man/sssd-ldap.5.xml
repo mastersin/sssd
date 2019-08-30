@@ -373,7 +373,7 @@
                             home directory.
                         </para>
                         <para>
-                            Default: homeDirectory
+                            Default: homeDirectory (LDAP and IPA), unixHomeDirectory (AD)
                         </para>
                     </listitem>
                 </varlistentry>
@@ -1432,7 +1432,7 @@
                             StartTLS operation.
                         </para>
                         <para>
-                            Default: 6
+                            Default: 8
                         </para>
                     </listitem>
                 </varlistentry>

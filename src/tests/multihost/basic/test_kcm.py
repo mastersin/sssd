@@ -3,6 +3,7 @@ from sssd.testlib.common.utils import SSHClient
 import paramiko
 import pytest
 import os
+import re
 from utils_config import set_param, remove_section
 
 
@@ -37,6 +38,11 @@ class TestSanityKCM(object):
         nlines = sum(1 for line in open(local_kcm_log_file))
         os.remove(local_kcm_log_file)
         return nlines
+
+    def _remove_secret_db(self, multihost):
+        multihost.master[0].run_command(
+                'rm -f /var/lib/sss/secrets/secrets.ldb')
+        self._restart_kcm(multihost)
 
     def test_kinit_kcm(self, multihost, enable_kcm):
         """
@@ -175,3 +181,135 @@ class TestSanityKCM(object):
             if 'KCM:14583109' in line:
                 has_cache = True
         assert has_cache is True
+
+    def test_kvno_display(self, multihost, enable_kcm):
+        """
+        @Title: kcm: Test kvno correctly displays vesion numbers of principals
+        #https://pagure.io/SSSD/sssd/issue/3757
+        """
+        ssh = SSHClient(multihost.master[0].sys_hostname,
+                        username='foo4', password='Secret123')
+        host_princ = 'host/%s@%s' % (multihost.master[0].sys_hostname,
+                                     'EXAMPLE.TEST')
+        kvno_cmd = 'kvno %s' % (host_princ)
+        (stdout, _, exit_status) = ssh.execute_cmd(kvno_cmd)
+        for line in stdout.readlines():
+            kvno_check = re.search(r'%s: kvno = (\d+)' % host_princ, line)
+            if kvno_check:
+                print(kvno_check.group())
+            else:
+                pytest.fail("kvno display was improper")
+        ssh.close()
+
+    def test_kcm_peruid_quota(self,
+                              multihost,
+                              enable_kcm,
+                              create_many_user_principals):
+        """
+        @Title: kcm: Make sure the quota limits a client, but only that client
+        """
+        # It is easier to keep these tests stable and independent from others
+        # if they start from a clean slate
+        self._remove_secret_db(multihost)
+
+        ssh_foo2 = SSHClient(multihost.master[0].sys_hostname,
+                             username='foo2', password='Secret123')
+        ssh_foo3 = SSHClient(multihost.master[0].sys_hostname,
+                             username='foo3', password='Secret123')
+
+        # The loop would request 63 users, plus there is foo3 we authenticated
+        # earlier, so this should exactly deplete the quota, but should succeed
+        for i in range(1, 64):
+            username = "user%04d" % i
+            (_, _, exit_status) = ssh_foo3.execute_cmd('kinit %s' % username,
+                                                       stdin='Secret123')
+            assert exit_status == 0
+
+        # this kinit should be exactly one over the peruid limit
+        (_, _, exit_status) = ssh_foo3.execute_cmd('kinit user0064',
+                                                   stdin='Secret123')
+        assert exit_status != 0
+
+        # Since this is a per-uid limit, another user should be able to kinit
+        # just fine
+        (_, _, exit_status) = ssh_foo2.execute_cmd('kinit user0064',
+                                                   stdin='Secret123')
+        assert exit_status == 0
+
+        # kdestroy as the original user, the quota should allow a subsequent
+        # kinit
+        ssh_foo3.execute_cmd('kdestroy -A')
+        (_, _, exit_status) = ssh_foo3.execute_cmd('kinit user0064',
+                                                   stdin='Secret123')
+        assert exit_status == 0
+
+        ssh_foo2.execute_cmd('kdestroy -A')
+        ssh_foo2.close()
+        ssh_foo3.execute_cmd('kdestroy -A')
+        ssh_foo3.close()
+
+    def test_kcm_peruid_quota_increase(self,
+                                       multihost,
+                                       enable_kcm,
+                                       create_many_user_principals):
+        """
+        @Title: kcm: Quota increase
+
+        Increasing the peruid quota allows a client to store more
+        data
+        """
+        # It is easier to keep these tests stable and independent from others
+        # if they start from a clean slate
+        self._remove_secret_db(multihost)
+
+        ssh_foo3 = SSHClient(multihost.master[0].sys_hostname,
+                             username='foo3', password='Secret123')
+
+        # The loop would request 63 users, plus there is foo3 we authenticated
+        # earlier, so this should exactly deplete the quota, but should succeed
+        for i in range(1, 64):
+            username = "user%04d" % i
+            (_, _, exit_status) = ssh_foo3.execute_cmd('kinit %s' % username,
+                                                       stdin='Secret123')
+            assert exit_status == 0
+
+        # this kinit should be exactly one over the peruid limit
+        (_, _, exit_status) = ssh_foo3.execute_cmd('kinit user0064',
+                                                   stdin='Secret123')
+        assert exit_status != 0
+
+        set_param(multihost, 'kcm', 'max_uid_ccaches', '65')
+        self._restart_kcm(multihost)
+
+        # Now the kinit should work as we increased the limit
+        (_, _, exit_status) = ssh_foo3.execute_cmd('kinit user0064',
+                                                   stdin='Secret123')
+        assert exit_status == 0
+
+        ssh_foo3.execute_cmd('kdestroy -A')
+        ssh_foo3.close()
+
+    def test_kcm_payload_low_quota(self,
+                                   multihost,
+                                   enable_kcm):
+        """
+        @Title: kcm: Quota enforcement
+
+        Set a prohibitive quota for the per-ccache payload limit and
+        make sure it gets enforced
+        """
+        # It is easier to keep these tests stable and independent from others
+        # if they start from a clean slate
+        self._remove_secret_db(multihost)
+
+        ssh_foo3 = SSHClient(multihost.master[0].sys_hostname,
+                             username='foo3', password='Secret123')
+        ssh_foo3.execute_cmd('kdestroy -A')
+        ssh_foo3.close()
+
+        set_param(multihost, 'kcm', 'max_ccache_size', '1')
+        self._restart_kcm(multihost)
+
+        with pytest.raises(paramiko.ssh_exception.AuthenticationException):
+            ssh_foo3 = SSHClient(multihost.master[0].sys_hostname,
+                                 username='foo3', password='Secret123')
