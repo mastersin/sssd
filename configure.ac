@@ -322,7 +322,7 @@ AC_CHECK_PROG(HAVE_PYTHON3, python3, yes, no)
 AS_IF([test x$HAVE_PYTHON3 = xyes],
       [AC_PATH_PROG(PYTHON3, python3)])
 
-if test x$HAVE_PYTHON2_BINDINGS = x1; then
+if test x$HAVE_PYTHON2_BINDINGS = xyes; then
     AS_IF([test x$HAVE_PYTHON2 != xyes],
           [AC_MSG_ERROR([
 The program python2 was not found in search path.
@@ -348,7 +348,7 @@ them please use argument --without-python2-bindings when running configure.])])
     SSS_CLEAN_PYTHON_VARIABLES
 fi
 
-if test x$HAVE_PYTHON3_BINDINGS = x1; then
+if test x$HAVE_PYTHON3_BINDINGS = xyes; then
     AS_IF([test x$HAVE_PYTHON3 != xyes],
           [AC_MSG_ERROR([
 The program python3 was not found in search path.
@@ -374,7 +374,7 @@ them please use argument --without-python3-bindings when running configure.])])
     SSS_CLEAN_PYTHON_VARIABLES
 fi
 
-if test x$HAVE_PYTHON3_BINDINGS = x1; then
+if test x$HAVE_PYTHON3_BINDINGS = xyes; then
     PYTHON_EXEC=$PYTHON3
 else
     PYTHON_EXEC=$PYTHON2
@@ -384,8 +384,6 @@ AC_SUBST(PYTHON_EXEC)
 AM_CONDITIONAL([BUILD_PYTHON_BINDINGS],
                [test x"$with_python2_bindings" = xyes \
                      -o x"$with_python3_bindings" = xyes])
-
-AM_PYTHON2_MODULE([ldap])
 
 if test x$HAVE_SELINUX != x; then
     AM_CHECK_SELINUX

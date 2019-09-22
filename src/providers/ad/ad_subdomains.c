@@ -190,7 +190,7 @@ static errno_t ad_get_enabled_domains(TALLOC_CTX *mem_ctx,
 
     is_ad_in_domains = false;
     for (int i = 0; i < count; i++) {
-        is_ad_in_domains += strcmp(ad_domain, domains[i]) == 0 ? true : false;
+        is_ad_in_domains += strcasecmp(ad_domain, domains[i]) == 0 ? true : false;
     }
 
     if (is_ad_in_domains == false) {
@@ -696,6 +696,13 @@ static errno_t ad_subdomains_refresh(struct be_ctx *be_ctx,
             if (sss_domain_is_forest_root(dom)) {
                 DEBUG(SSSDBG_TRACE_ALL,
                       "Skipping removal of forest root sdap data.\n");
+
+                ret = sysdb_domain_set_enabled(dom->sysdb, dom->name, false);
+                if (ret != EOK && ret != ENOENT) {
+                    DEBUG(SSSDBG_OP_FAILURE, "Unable to disable domain %s "
+                          "[%d]: %s\n", dom->name, ret, sss_strerror(ret));
+                    goto done;
+                }
                 continue;
             }
 
@@ -825,6 +832,15 @@ static errno_t ad_subdomains_process(TALLOC_CTX *mem_ctx,
 
         if (is_domain_enabled(sd_name, enabled_domains_list) == false) {
             DEBUG(SSSDBG_TRACE_FUNC, "Disabling subdomain %s\n", sd_name);
+
+            /* The subdomain is now disabled in configuraiton file, we
+             * need to delete its cached content so it is not returned
+             * by responders. The subdomain shares sysdb with its parent
+             * domain so it is OK to use domain->sysdb. */
+            ret = sysdb_subdomain_delete(domain->sysdb, sd_name);
+            if (ret != EOK) {
+                goto fail;
+            }
             continue;
         } else {
             DEBUG(SSSDBG_TRACE_FUNC, "Enabling subdomain %s\n", sd_name);
@@ -855,6 +871,12 @@ static errno_t ad_subdomains_process(TALLOC_CTX *mem_ctx,
         } else {
             DEBUG(SSSDBG_TRACE_FUNC, "Disabling forest root domain %s\n",
                                      root_name);
+            ret = sysdb_domain_set_enabled(domain->sysdb, root_name, false);
+            if (ret != EOK && ret != ENOENT) {
+                DEBUG(SSSDBG_OP_FAILURE, "Unable to disable domain %s "
+                      "[%d]: %s\n", root_name, ret, sss_strerror(ret));
+                goto fail;
+            }
         }
     }
 
@@ -1782,9 +1804,11 @@ static void ad_subdomains_refresh_gc_check_done(struct tevent_req *subreq)
 {
     struct ad_subdomains_refresh_state *state;
     struct tevent_req *req;
+    const char **subdoms;
     const char *ad_domain;
     bool is_gc_usable;
     errno_t ret;
+    int i;
 
     req = tevent_req_callback_data(subreq, struct tevent_req);
     state = tevent_req_data(req, struct ad_subdomains_refresh_state);
@@ -1810,6 +1834,27 @@ static void ad_subdomains_refresh_gc_check_done(struct tevent_req *subreq)
                            state->be_ctx->domain->name) == 0) {
                 DEBUG(SSSDBG_TRACE_FUNC,
                       "No other enabled domain than master.\n");
+
+                ret = sysdb_list_subdomains(state, state->be_ctx->domain->sysdb,
+                                            &subdoms);
+                if (ret != EOK) {
+                    DEBUG(SSSDBG_OP_FAILURE, "Unable to list subdomains "
+                          "[%d]: %s\n", ret, sss_strerror(ret));
+                    tevent_req_error(req, ret);
+                    return;
+                }
+
+                for (i = 0; subdoms[i] != NULL; i++) {
+                    ret = sysdb_subdomain_delete(state->be_ctx->domain->sysdb,
+                                                 subdoms[i]);
+                    if (ret != EOK) {
+                        DEBUG(SSSDBG_OP_FAILURE, "Unable to remove subdomain "
+                              "[%d]: %s\n", ret, sss_strerror(ret));
+                        tevent_req_error(req, ret);
+                        return;
+                    }
+                }
+
                 tevent_req_done(req);
                 return;
             }

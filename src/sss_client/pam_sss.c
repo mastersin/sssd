@@ -124,6 +124,7 @@ struct cert_auth_info {
     char *module_name;
     char *key_id;
     char *prompt_str;
+    char *pam_cert_user;
     struct cert_auth_info *prev;
     struct cert_auth_info *next;
 };
@@ -853,7 +854,8 @@ static int eval_user_info_response(pam_handle_t *pamh, size_t buflen,
 }
 
 static int parse_cert_info(struct pam_items *pi, uint8_t *buf, size_t len,
-                           size_t *p, const char **cert_user)
+                           size_t *p, const char **cert_user,
+                           const char **pam_cert_user)
 {
     struct cert_auth_info *cai = NULL;
     size_t offset;
@@ -935,11 +937,27 @@ static int parse_cert_info(struct pam_items *pi, uint8_t *buf, size_t len,
         goto done;
     }
 
+    offset += strlen(cai->prompt_str) + 1;
+    if (offset >= len) {
+        D(("Cert message size mismatch"));
+        ret = EINVAL;
+        goto done;
+    }
+
+    cai->pam_cert_user = strdup((char *) &buf[*p + offset]);
+    if (cai->pam_cert_user == NULL) {
+        D(("strdup failed"));
+        ret = ENOMEM;
+        goto done;
+    }
+    if (pam_cert_user != NULL) {
+        *pam_cert_user = cai->pam_cert_user;
+    }
 
     D(("cert user: [%s] token name: [%s] module: [%s] key id: [%s] "
-       "prompt: [%s]",
+       "prompt: [%s] pam cert user: [%s]",
        cai->cert_user, cai->token_name, cai->module_name,
-       cai->key_id, cai->prompt_str));
+       cai->key_id, cai->prompt_str, cai->pam_cert_user));
 
     DLIST_ADD(pi->cert_list, cai);
     ret = 0;
@@ -964,6 +982,7 @@ static int eval_response(pam_handle_t *pamh, size_t buflen, uint8_t *buf,
     int32_t pam_status;
     size_t offset;
     const char *cert_user;
+    const char *pam_cert_user;
 
     if (buflen < (2*sizeof(int32_t))) {
         D(("response buffer is too small"));
@@ -1126,15 +1145,16 @@ static int eval_response(pam_handle_t *pamh, size_t buflen, uint8_t *buf,
                     pi->user_name_hint = false;
                 }
 
-                ret = parse_cert_info(pi, buf, len, &p, &cert_user);
+                ret = parse_cert_info(pi, buf, len, &p, &cert_user,
+                                      &pam_cert_user);
                 if (ret != 0) {
                     D(("Failed to parse cert info"));
                     break;
                 }
 
                 if ((pi->pam_user == NULL || *(pi->pam_user) == '\0')
-                        && *cert_user != '\0') {
-                    ret = pam_set_item(pamh, PAM_USER, cert_user);
+                        && *cert_user != '\0' && *pam_cert_user != '\0') {
+                    ret = pam_set_item(pamh, PAM_USER, pam_cert_user);
                     if (ret != PAM_SUCCESS) {
                         D(("Failed to set PAM_USER during "
                            "Smartcard authentication [%s]",
@@ -1142,15 +1162,7 @@ static int eval_response(pam_handle_t *pamh, size_t buflen, uint8_t *buf,
                         break;
                     }
 
-                    ret = pam_get_item(pamh, PAM_USER,
-                                       (const void **)&(pi->pam_user));
-                    if (ret != PAM_SUCCESS) {
-                        D(("Failed to get PAM_USER during "
-                           "Smartcard authentication [%s]",
-                           pam_strerror(pamh, ret)));
-                        break;
-                    }
-
+                    pi->pam_user = cert_user;
                     pi->pam_user_size = strlen(pi->pam_user) + 1;
                 }
                 break;
@@ -1804,21 +1816,21 @@ static int prompt_sc_pin(pam_handle_t *pamh, struct pam_items *pi)
     struct cert_auth_info *cai = pi->selected_cert;
 
     if (cai == NULL || cai->token_name == NULL || *cai->token_name == '\0') {
-        return EINVAL;
+        return PAM_SYSTEM_ERR;
     }
 
     size = sizeof(SC_PROMPT_FMT) + strlen(cai->token_name);
     prompt = malloc(size);
     if (prompt == NULL) {
         D(("malloc failed."));
-        return ENOMEM;
+        return PAM_BUF_ERR;
     }
 
     ret = snprintf(prompt, size, SC_PROMPT_FMT, cai->token_name);
     if (ret < 0 || ret >= size) {
         D(("snprintf failed."));
         free(prompt);
-        return EFAULT;
+        return PAM_SYSTEM_ERR;
     }
 
     if (pi->user_name_hint) {
@@ -1905,10 +1917,10 @@ static int prompt_sc_pin(pam_handle_t *pamh, struct pam_items *pi)
         }
     }
 
-    if (answer == NULL) {
-        pi->pam_authtok = NULL;
-        pi->pam_authtok_type = SSS_AUTHTOK_TYPE_EMPTY;
-        pi->pam_authtok_size=0;
+    if (answer == NULL || *answer == '\0') {
+        D(("Missing PIN."));
+        ret = PAM_CRED_INSUFFICIENT;
+        goto done;
     } else {
 
         ret = sss_auth_pack_sc_blob(answer, 0, cai->token_name, 0,
@@ -2075,7 +2087,7 @@ static int prompt_by_config(pam_handle_t *pamh, struct pam_items *pi)
     int ret;
 
     if (pi->pc == NULL || *pi->pc == NULL) {
-        return EINVAL;
+        return PAM_SYSTEM_ERR;
     }
 
     for (c = 0; pi->pc[c] != NULL; c++) {
@@ -2096,7 +2108,7 @@ static int prompt_by_config(pam_handle_t *pamh, struct pam_items *pi)
             /* Todo: add extra string option */
             break;
         default:
-            ret = EINVAL;
+            ret = PAM_SYSTEM_ERR;
         }
 
         /* If not credential where given try the next type otherwise we are
@@ -2116,6 +2128,7 @@ static int get_authtok_for_authentication(pam_handle_t *pamh,
                                           uint32_t flags)
 {
     int ret;
+    const char *pin = NULL;
 
     if ((flags & PAM_CLI_FLAGS_USE_FIRST_PASS)
             || ( pi->pamstack_authtok != NULL
@@ -2166,11 +2179,19 @@ static int get_authtok_for_authentication(pam_handle_t *pamh,
         if (flags & PAM_CLI_FLAGS_FORWARD_PASS) {
             if (pi->pam_authtok_type == SSS_AUTHTOK_TYPE_PASSWORD) {
                 ret = pam_set_item(pamh, PAM_AUTHTOK, pi->pam_authtok);
+            } else if (pi->pam_authtok_type == SSS_AUTHTOK_TYPE_SC_PIN) {
+                pin = sss_auth_get_pin_from_sc_blob((uint8_t *) pi->pam_authtok,
+                                                    pi->pam_authtok_size);
+                if (pin != NULL) {
+                    ret = pam_set_item(pamh, PAM_AUTHTOK, pin);
+                } else {
+                    ret = PAM_SYSTEM_ERR;
+                }
             } else if (pi->pam_authtok_type == SSS_AUTHTOK_TYPE_2FA
                            && pi->first_factor != NULL) {
                 ret = pam_set_item(pamh, PAM_AUTHTOK, pi->first_factor);
             } else {
-                ret = EINVAL;
+                ret = PAM_SYSTEM_ERR;
             }
             if (ret != PAM_SUCCESS) {
                 D(("Failed to set PAM_AUTHTOK [%s], "
