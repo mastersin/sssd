@@ -1,27 +1,23 @@
 #%PAM-1.0
-auth		required	pam_env.so
-auth		[success=ignore default=1]	pam_localuser.so
+auth		[success=ignore perm_denied=1 default=die]	pam_localuser.so
 auth		[success=done default=bad]	pam_tcb.so shadow fork prefix=$2y$ count=8 nullok
 auth		requisite	pam_succeed_if.so uid >= 500 quiet
 auth		required	pam_sss.so
 
-account		[success=ignore default=1]	pam_localuser.so
+account		[success=ignore perm_denied=1 default=die]	pam_localuser.so
 account		[success=done default=bad]	pam_tcb.so shadow fork
 account		sufficient	pam_succeed_if.so uid < 500 quiet
 account		[default=bad success=ok user_unknown=ignore]	pam_sss.so
 account		required	pam_permit.so
 
-password	[success=ignore default=2]	pam_localuser.so
+password	[success=ignore perm_denied=2 default=die]	pam_localuser.so
 password	required	pam_passwdqc.so config=/etc/passwdqc.conf
 password	[success=done default=bad]	pam_tcb.so use_authtok shadow fork prefix=$2y$ count=8 nullok write_to=tcb
 password	requisite	pam_succeed_if.so uid >= 500 quiet
 password	required	pam_sss.so
 
--session	optional	pam_keyinit.so revoke
--session	optional	pam_systemd.so
-session		[success=1 default=ignore]	pam_localuser.so
-session		[success=1 default=1]	pam_sss.so
-session		optional	pam_tcb.so
-session		required	pam_mktemp.so
-session		required	pam_mkhomedir.so silent
-session		required	pam_limits.so
+session		[success=2 perm_denied=ignore default=die]	pam_localuser.so
+session		requisite	pam_succeed_if.so uid >= 500 quiet
+session		[success=1 default=die]	pam_sss.so
+session		required	pam_tcb.so
+session		substack	system-auth-common
