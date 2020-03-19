@@ -7,7 +7,7 @@
 
 Name: sssd
 Version: 2.2.3
-Release: alt1.1
+Release: alt2
 Group: System/Servers
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -124,6 +124,7 @@ Group: Networking/Other
 License: LGPLv3+
 Provides: libnss_sss
 Provides: pam_sss
+Requires: pam-config >= 1.8.0
 
 %description client
 Provides the libraries needed by the PAM and NSS stacks to connect to the SSSD
@@ -820,6 +821,12 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %python3_sitelibdir_noarch/SSSDConfig/__pycache__/*.py*
 
 %changelog
+* Wed Apr 29 2020 Evgeny Sinelnikov <sin@altlinux.org> 2.2.3-alt2
+- Updated sss system-auth method with pam_localuser.so
+  to separate configuration for local and global users
+- Add requires to pam-config-1.8.0 supported configurable session
+  substack system-policy
+
 * Tue Apr 28 2020 Evgeny Sinelnikov <sin@altlinux.org> 2.2.3-alt1.1
 - Rebuild with libldb-2.0.10
 
