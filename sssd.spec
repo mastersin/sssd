@@ -16,6 +16,8 @@ Source: %name-%version.tar
 Source2: %name.init
 Source3: system-auth-sss.pam
 Source4: system-auth-use_first_pass-sss.pam
+Source5: system-auth-sss-only.pam
+Source6: system-auth-use_first_pass-sss-only.pam
 
 Patch: %name-%version-alt.patch
 
@@ -124,7 +126,7 @@ Group: Networking/Other
 License: LGPLv3+
 Provides: libnss_sss
 Provides: pam_sss
-Requires: pam-config >= 1.8.0
+Requires: pam-config >= 1.9.0
 
 %description client
 Provides the libraries needed by the PAM and NSS stacks to connect to the SSSD
@@ -493,6 +495,8 @@ touch %buildroot%mcpath/initgroups
 install -D -m755 %SOURCE2 %buildroot%_initdir/%name
 install -D -m644 %SOURCE3 %buildroot%_pamdir/system-auth-sss
 install -D -m644 %SOURCE4 %buildroot%_pamdir/system-auth-use_first_pass-sss
+install -D -m644 %SOURCE5 %buildroot%_pamdir/system-auth-sss-only
+install -D -m644 %SOURCE6 %buildroot%_pamdir/system-auth-use_first_pass-sss-only
 
 # Remove .la files created by libtool
 find %buildroot -name "*.la" -exec rm -f {} \;
@@ -681,7 +685,7 @@ chown root:root %_sysconfdir/sssd/sssd.conf
 %_datadir/%name/sssd.api.d/sssd-proxy.conf
 
 %files client
-%config(noreplace) %_pamdir/*-sss
+%config(noreplace) %_pamdir/*-sss*
 /%_lib/libnss_sss.so.2
 /%_lib/security/pam_sss.so
 %_libdir/krb5/plugins/libkrb5/sssd_krb5_locator_plugin.so

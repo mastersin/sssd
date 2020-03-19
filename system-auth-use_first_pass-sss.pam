@@ -1,10 +1,17 @@
 #%PAM-1.0
-auth		[success=ignore perm_denied=1 default=die]	pam_localuser.so
-auth		[success=done default=bad]	pam_tcb.so shadow fork prefix=$2y$ count=8 nullok use_first_pass
-auth		requisite	pam_succeed_if.so uid >= 500 quiet
-auth		required	pam_sss.so use_first_pass
 
-password	[success=ignore perm_denied=1 default=die]	pam_localuser.so
-password	[success=done default=bad]	pam_tcb.so use_authtok shadow fork prefix=$2y$ count=8 nullok write_to=tcb
-password	requisite	pam_succeed_if.so uid >= 500 quiet
-password	required	pam_sss.so use_authtok
+auth		[success=4 perm_denied=ignore default=die]	pam_localuser.so
+auth		[success=1 default=bad]	pam_succeed_if.so uid >= 500 quiet
+auth		[default=1]	pam_permit.so
+auth		substack	system-auth-use_first_pass-sss-only
+auth		[default=1]	pam_permit.so
+auth		substack	system-auth-use_first_pass-local-only
+auth		substack	system-auth-common
+
+password	[success=4 perm_denied=ignore default=die]	pam_localuser.so
+password	[success=1 default=bad]	pam_succeed_if.so uid >= 500 quiet
+password	[default=1]	pam_permit.so
+password	substack	system-auth-use_first_pass-sss-only
+password	[default=1]	pam_permit.so
+password	substack	system-auth-use_first_pass-local-only
+password	substack	system-auth-common
