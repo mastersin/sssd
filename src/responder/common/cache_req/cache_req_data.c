@@ -94,6 +94,8 @@ cache_req_data_create(TALLOC_CTX *mem_ctx,
     case CACHE_REQ_INITGROUPS_BY_UPN:
     case CACHE_REQ_NETGROUP_BY_NAME:
     case CACHE_REQ_OBJECT_BY_NAME:
+    case CACHE_REQ_AUTOFS_MAP_ENTRIES:
+    case CACHE_REQ_AUTOFS_MAP_BY_NAME:
         if (input->name.input == NULL) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Bug: name cannot be NULL!\n");
             ret = ERR_INTERNAL;
@@ -204,6 +206,25 @@ cache_req_data_create(TALLOC_CTX *mem_ctx,
 
         data->alias = talloc_strdup(data, input->alias);
         if (data->alias == NULL) {
+            ret = ENOMEM;
+            goto done;
+        }
+        break;
+    case CACHE_REQ_AUTOFS_ENTRY_BY_NAME:
+        if (input->name.input == NULL) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Bug: name cannot be NULL!\n");
+            ret = ERR_INTERNAL;
+            goto done;
+        }
+
+        data->name.input = talloc_strdup(data, input->name.input);
+        if (data->name.input == NULL) {
+            ret = ENOMEM;
+            goto done;
+        }
+
+        data->autofs_entry_name = talloc_strdup(data, input->autofs_entry_name);
+        if (data->autofs_entry_name == NULL) {
             ret = ENOMEM;
             goto done;
         }
@@ -351,6 +372,20 @@ cache_req_data_host(TALLOC_CTX *mem_ctx,
     input.name.input = name;
     input.alias = alias;
     input.attrs = attrs;
+
+    return cache_req_data_create(mem_ctx, type, &input);
+}
+
+struct cache_req_data *
+cache_req_data_autofs_entry(TALLOC_CTX *mem_ctx,
+                            enum cache_req_type type,
+                            const char *mapname,
+                            const char *entryname)
+{
+    struct cache_req_data input = {0};
+
+    input.name.input = mapname;
+    input.autofs_entry_name = entryname;
 
     return cache_req_data_create(mem_ctx, type, &input);
 }

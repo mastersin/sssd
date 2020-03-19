@@ -224,12 +224,14 @@ static int seed_password_input_prompt(TALLOC_CTX *mem_ctx, char **_password)
     }
 
     password = talloc_strdup(tmp_ctx, temp);
+    sss_erase_mem_securely(temp, strlen(temp));
     if (password == NULL) {
         ret = ENOMEM;
         goto done;
     }
 
-    talloc_set_destructor((TALLOC_CTX *)password, password_destructor);
+    talloc_set_destructor((TALLOC_CTX *)password,
+                          sss_erase_talloc_mem_securely);
 
     temp = getpass("Enter temporary password again:");
     if (temp == NULL) {
@@ -249,6 +251,9 @@ static int seed_password_input_prompt(TALLOC_CTX *mem_ctx, char **_password)
 
 done:
     talloc_free(tmp_ctx);
+    if (temp != NULL) {
+        sss_erase_mem_securely(temp, strlen(temp));
+    }
     return ret;
 }
 
@@ -334,10 +339,14 @@ static int seed_password_input_file(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
+    talloc_set_destructor((TALLOC_CTX *)password,
+                          sss_erase_talloc_mem_securely);
+
     *_password = talloc_steal(mem_ctx, password);
 
 done:
     talloc_free(tmp_ctx);
+    sss_erase_mem_securely(buf, sizeof(buf));
     return ret;
 }
 
@@ -823,7 +832,7 @@ int main(int argc, const char **argv)
     /* interactive mode to fill in user information */
     if (sctx->interact == true) {
         if (sctx->user_cached == true) {
-            ERROR(_("User entry already exists in the cache.\n"));
+            ERROR("User entry already exists in the cache.\n");
             ret = EEXIST;
             goto done;
         } else {
@@ -871,10 +880,10 @@ int main(int argc, const char **argv)
         goto done;
     } else {
         if (sctx->user_cached == false) {
-            printf(_("User cache entry created for %1$s\n"), sctx->uctx->name);
+            PRINT("User cache entry created for %1$s\n", sctx->uctx->name);
         }
-        printf(_("Temporary password added to cache entry for %1$s\n"),
-                 sctx->uctx->name);
+        PRINT("Temporary password added to cache entry for %1$s\n",
+              sctx->uctx->name);
     }
 
 done:

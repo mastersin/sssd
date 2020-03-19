@@ -181,7 +181,7 @@ void sss_authtok_set_empty(struct sss_auth_token *tok)
     case SSS_AUTHTOK_TYPE_2FA:
     case SSS_AUTHTOK_TYPE_SC_PIN:
     case SSS_AUTHTOK_TYPE_2FA_SINGLE:
-        safezero(tok->data, tok->length);
+        sss_erase_mem_securely(tok->data, tok->length);
         break;
     case SSS_AUTHTOK_TYPE_CCFILE:
     case SSS_AUTHTOK_TYPE_SC_KEYPAD:
@@ -270,6 +270,14 @@ errno_t sss_authtok_copy(struct sss_auth_token *src,
     return EOK;
 }
 
+static int sss_auth_token_destructor(struct sss_auth_token *tok)
+{
+    if (tok != NULL) {
+        sss_erase_talloc_mem_securely(tok->data);
+    }
+    return 0;
+}
+
 struct sss_auth_token *sss_authtok_new(TALLOC_CTX *mem_ctx)
 {
     struct sss_auth_token *token;
@@ -278,6 +286,8 @@ struct sss_auth_token *sss_authtok_new(TALLOC_CTX *mem_ctx)
     if (token == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "talloc_zero failed.\n");
     }
+
+    talloc_set_destructor(token, sss_auth_token_destructor);
 
     return token;
 }
@@ -289,7 +299,7 @@ void sss_authtok_wipe_password(struct sss_auth_token *tok)
         return;
     }
 
-    safezero(tok->data, tok->length);
+    sss_erase_mem_securely(tok->data, tok->length);
 }
 
 errno_t sss_auth_unpack_2fa_blob(TALLOC_CTX *mem_ctx,

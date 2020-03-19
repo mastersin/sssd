@@ -563,6 +563,9 @@ SSSD_CACHE_REQ_OBJ = \
 	src/responder/common/cache_req/plugins/cache_req_svc_by_port.c \
 	src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c \
 	src/responder/common/cache_req/plugins/cache_req_host_by_name.c \
+	src/responder/common/cache_req/plugins/cache_req_autofs_map_entries.c \
+	src/responder/common/cache_req/plugins/cache_req_autofs_map_by_name.c \
+	src/responder/common/cache_req/plugins/cache_req_autofs_entry_by_name.c \
 	$(NULL)
 
 SSSD_RESPONDER_IFACE_OBJ = \
@@ -948,6 +951,7 @@ if HAVE_NSS
                         src/util/crypto/nss/nss_util.c \
                         src/util/crypto/nss/nss_prng.c \
                         src/util/atomic_io.c \
+                        src/util/memory.c \
                         $(NULL)
     SSS_CRYPT_CFLAGS = $(NSS_CFLAGS)
     SSS_CRYPT_LIBS = $(NSS_LIBS)
@@ -971,6 +975,7 @@ else
                         src/util/crypto/libcrypto/crypto_nite.c \
                         src/util/crypto/libcrypto/crypto_prng.c \
                         src/util/atomic_io.c \
+                        src/util/memory.c \
                         $(NULL)
     SSS_CRYPT_CFLAGS = $(CRYPTO_CFLAGS)
     SSS_CRYPT_LIBS = $(CRYPTO_LIBS)
@@ -1518,6 +1523,7 @@ dist_sssdtapscript_DATA = \
     contrib/systemtap/id_perf.stp \
     contrib/systemtap/nested_group_perf.stp \
     contrib/systemtap/dp_request.stp \
+    contrib/systemtap/ldap_perf.stp \
     $(NULL)
 
 stap_generated_probes.h: $(srcdir)/src/systemtap/sssd_probes.d
@@ -1665,6 +1671,7 @@ sssd_ssh_LDADD = \
     $(SSSD_INTERNAL_LTLIBS) \
     $(SYSTEMD_DAEMON_LIBS) \
     libsss_cert.la \
+    libsss_certmap.la \
     libsss_iface.la \
     libsss_sbus.la \
     $(NULL)
@@ -2192,6 +2199,9 @@ libsss_test_common_la_LIBADD = \
     $(LDB_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     $(NULL)
+if BUILD_SYSTEMTAP
+libsss_test_common_la_LIBADD += stap_generated_probes.lo
+endif
 
 if HAVE_CHECK
 libsss_test_common_la_SOURCES += \
@@ -4575,6 +4585,7 @@ krb5_child_SOURCES = \
     src/util/sss_iobuf.c \
     src/util/find_uid.c \
     src/util/atomic_io.c \
+    src/util/memory.c \
     src/util/authtok.c \
     src/util/authtok-utils.c \
     src/util/util.c \
@@ -4607,12 +4618,14 @@ ldap_child_SOURCES = \
     src/util/sss_krb5.c \
     src/util/sss_iobuf.c \
     src/util/atomic_io.c \
+    src/util/memory.c \
     src/util/authtok.c \
     src/util/authtok-utils.c \
     src/util/util.c \
     src/util/util_ext.c \
     src/util/signal.c \
     src/util/become_user.c \
+    src/util/util_errors.c \
     $(NULL)
 ldap_child_CFLAGS = \
     $(AM_CFLAGS) \
@@ -5474,7 +5487,7 @@ dist_noinst_DATA += \
     COPYING \
     src/tests/multihost/basic/conftest.py \
     src/tests/multihost/basic/mhc.yaml \
-    src/tests/multihost/basic/README \
+    src/tests/multihost/basic/README.md \
     src/tests/multihost/basic/test_basic.py \
     src/tests/multihost/basic/test_config.py \
     src/tests/multihost/basic/test_files.py \

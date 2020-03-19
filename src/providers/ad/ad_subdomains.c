@@ -720,9 +720,6 @@ static errno_t ad_subdomains_refresh(struct be_ctx *be_ctx,
             /* Remove the subdomain from the list of LDAP domains */
             sdap_domain_remove(opts, dom);
 
-            be_ptask_destroy(&sdom->enum_task);
-            be_ptask_destroy(&sdom->cleanup_task);
-
             /* terminate all requests for this subdomain so we can free it */
             dp_terminate_domain_requests(be_ctx->provider, dom->name);
             talloc_zfree(sdom);
@@ -1110,7 +1107,7 @@ static void ad_get_slave_domain_connect_done(struct tevent_req *subreq)
                                     sdap_id_op_handle(state->sdap_op),
                                     state->root_sdom->search_bases,
                                     NULL, false, 0,
-                                    SLAVE_DOMAIN_FILTER, attrs);
+                                    SLAVE_DOMAIN_FILTER, attrs, NULL);
     if (subreq == NULL) {
         tevent_req_error(req, ret);
         return;
@@ -1304,7 +1301,8 @@ ad_get_root_domain_send(TALLOC_CTX *mem_ctx,
 
     subreq = sdap_search_bases_return_first_send(state, ev, opts, sh,
                                                  opts->sdom->search_bases,
-                                                 NULL, false, 0, filter, attrs);
+                                                 NULL, false, 0, filter, attrs,
+                                                 NULL);
     if (subreq == NULL) {
         ret = ENOMEM;
         goto immediately;

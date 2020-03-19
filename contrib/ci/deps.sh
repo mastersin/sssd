@@ -35,6 +35,7 @@ if [[ "$DISTRO_BRANCH" == -redhat-* ]]; then
     DEPS_LIST+=(
         clang-analyzer
         fakeroot
+        libfaketime
         libcmocka-devel
         mock
         nss_wrapper
@@ -48,6 +49,15 @@ if [[ "$DISTRO_BRANCH" == -redhat-* ]]; then
         krb5-server
         krb5-workstation
     )
+
+    if [[ "$DISTRO_BRANCH" == -redhat-fedora-31* ||
+          "$DISTRO_BRANCH" == -redhat-redhatenterprise*-8.*- ||
+          "$DISTRO_BRANCH" == -redhat-centos-8.*- ]]; then
+        DEPS_LIST+=(
+            python2
+            python2-devel
+        )
+    fi
 
     if [[ "$DISTRO_BRANCH" == -redhat-fedora-3[1-9]* ||
           "$DISTRO_BRANCH" == -redhat-redhatenterprise*-8.*- ||
@@ -116,8 +126,6 @@ if [[ "$DISTRO_BRANCH" == -debian-* ]]; then
         libnfsidmap-dev
         libnl-3-dev
         libnl-route-3-dev
-        libnspr4-dev
-        libnss3-dev
         libpam0g-dev
         libpcre3-dev
         libpopt-dev
@@ -141,6 +149,7 @@ if [[ "$DISTRO_BRANCH" == -debian-* ]]; then
         xsltproc
         libssl-dev
         fakeroot
+        faketime
         libnss-wrapper
         libuid-wrapper
         libpam-wrapper

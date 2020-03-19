@@ -187,6 +187,7 @@ Requires: python2-sssdconfig = %{version}-%{release}
 
 ### Build Dependencies ###
 
+BuildRequires: make
 BuildRequires: autoconf
 BuildRequires: automake
 BuildRequires: libtool
@@ -1081,6 +1082,7 @@ done
 %{_datadir}/sssd/systemtap/id_perf.stp
 %{_datadir}/sssd/systemtap/nested_group_perf.stp
 %{_datadir}/sssd/systemtap/dp_request.stp
+%{_datadir}/sssd/systemtap/ldap_perf.stp
 %dir %{_datadir}/systemtap
 %dir %{_datadir}/systemtap/tapset
 %{_datadir}/systemtap/tapset/sssd.stp
@@ -1098,6 +1100,7 @@ done
 %license COPYING
 %{_libdir}/%{name}/libsss_ldap.so
 %{_mandir}/man5/sssd-ldap.5*
+%{_mandir}/man5/sssd-ldap-attributes.5*
 
 %files krb5-common
 %defattr(-,root,root,-)

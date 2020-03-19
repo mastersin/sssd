@@ -38,6 +38,15 @@ extern const struct sbus_method_arguments
 _sbus_sss_args_sssd_DataProvider_AccessControl_RefreshRules;
 
 extern const struct sbus_method_arguments
+_sbus_sss_args_sssd_DataProvider_Autofs_Enumerate;
+
+extern const struct sbus_method_arguments
+_sbus_sss_args_sssd_DataProvider_Autofs_GetEntry;
+
+extern const struct sbus_method_arguments
+_sbus_sss_args_sssd_DataProvider_Autofs_GetMap;
+
+extern const struct sbus_method_arguments
 _sbus_sss_args_sssd_DataProvider_Backend_IsOnline;
 
 extern const struct sbus_method_arguments
@@ -69,9 +78,6 @@ _sbus_sss_args_sssd_Responder_NegativeCache_ResetGroups;
 
 extern const struct sbus_method_arguments
 _sbus_sss_args_sssd_Responder_NegativeCache_ResetUsers;
-
-extern const struct sbus_method_arguments
-_sbus_sss_args_sssd_dataprovider_autofsHandler;
 
 extern const struct sbus_method_arguments
 _sbus_sss_args_sssd_dataprovider_getAccountDomain;

@@ -71,6 +71,16 @@ struct sdap_id_ctx {
     struct sdap_id_conn_ctx *conn;
 
     struct sdap_server_opts *srv_opts;
+
+    /* Enumeration/cleanup periodic task. Only the enumeration or the cleanup
+     * task is started depending on the value of the domain's enumeration
+     * setting, this is why there is only one task pointer for both tasks. */
+    struct be_ptask *task;
+
+    /* enumeration loop timer */
+    struct timeval last_enum;
+    /* cleanup loop timer */
+    struct timeval last_purge;
 };
 
 struct sdap_auth_ctx {
@@ -108,13 +118,13 @@ errno_t sdap_account_info_handler_recv(TALLOC_CTX *mem_ctx,
                                        struct dp_reply_std *data);
 
 /* Set up enumeration and/or cleanup */
-int ldap_id_setup_tasks(struct sdap_id_ctx *ctx);
-int sdap_id_setup_tasks(struct be_ctx *be_ctx,
-                        struct sdap_id_ctx *ctx,
-                        struct sdap_domain *sdom,
-                        be_ptask_send_t send_fn,
-                        be_ptask_recv_t recv_fn,
-                        void *pvt);
+errno_t ldap_id_setup_tasks(struct sdap_id_ctx *ctx);
+errno_t sdap_id_setup_tasks(struct be_ctx *be_ctx,
+                            struct sdap_id_ctx *ctx,
+                            struct sdap_domain *sdom,
+                            be_ptask_send_t send_fn,
+                            be_ptask_recv_t recv_fn,
+                            void *pvt);
 
 /* Allow shortcutting an enumeration request */
 bool sdap_is_enum_request(struct dp_id_data *ar);
@@ -156,15 +166,37 @@ sdap_pam_chpass_handler_recv(TALLOC_CTX *mem_ctx,
 
 /* autofs */
 struct tevent_req *
-sdap_autofs_handler_send(TALLOC_CTX *mem_ctx,
-                         struct sdap_id_ctx *id_ctx,
-                         struct dp_autofs_data *data,
-                         struct dp_req_params *params);
+sdap_autofs_enumerate_handler_send(TALLOC_CTX *mem_ctx,
+                                   struct sdap_id_ctx *id_ctx,
+                                   struct dp_autofs_data *data,
+                                   struct dp_req_params *params);
 
 errno_t
-sdap_autofs_handler_recv(TALLOC_CTX *mem_ctx,
-                         struct tevent_req *req,
-                         struct dp_reply_std *data);
+sdap_autofs_enumerate_handler_recv(TALLOC_CTX *mem_ctx,
+                                   struct tevent_req *req,
+                                   dp_no_output *_no_output);
+
+struct tevent_req *
+sdap_autofs_get_map_handler_send(TALLOC_CTX *mem_ctx,
+                                 struct sdap_id_ctx *id_ctx,
+                                 struct dp_autofs_data *data,
+                                 struct dp_req_params *params);
+
+errno_t
+sdap_autofs_get_map_handler_recv(TALLOC_CTX *mem_ctx,
+                                   struct tevent_req *req,
+                                   dp_no_output *_no_output);
+
+struct tevent_req *
+sdap_autofs_get_entry_handler_send(TALLOC_CTX *mem_ctx,
+                                 struct sdap_id_ctx *id_ctx,
+                                 struct dp_autofs_data *data,
+                                 struct dp_req_params *params);
+
+errno_t
+sdap_autofs_get_entry_handler_recv(TALLOC_CTX *mem_ctx,
+                                   struct tevent_req *req,
+                                   dp_no_output *_no_output);
 
 int sdap_service_init(TALLOC_CTX *memctx, struct be_ctx *ctx,
                       const char *service_name, const char *dns_service_name,
@@ -200,6 +232,7 @@ int ldap_get_options(TALLOC_CTX *memctx,
 int ldap_get_sudo_options(struct confdb_ctx *cdb,
                           const char *conf_path,
                           struct sdap_options *opts,
+                          struct sdap_attr_map *native_map,
                           bool *use_host_filter,
                           bool *include_regexp,
                           bool *include_netgroups);
@@ -209,7 +242,7 @@ int ldap_get_autofs_options(TALLOC_CTX *memctx,
                             const char *conf_path,
                             struct sdap_options *opts);
 
-/* Calling ldap_setup_enumeration will set up a periodic task
+/* Calling ldap_id_setup_enumeration will set up a periodic task
  * that would periodically call send_fn/recv_fn request. The
  * send_fn's pvt parameter will be a pointer to ldap_enum_ctx
  * structure that contains the request data
@@ -219,24 +252,24 @@ struct ldap_enum_ctx {
     void *pvt;
 };
 
-errno_t ldap_setup_enumeration(struct be_ctx *be_ctx,
-                               struct sdap_options *opts,
-                               struct sdap_domain *sdom,
-                               be_ptask_send_t send_fn,
-                               be_ptask_recv_t recv_fn,
-                               void *pvt);
+errno_t ldap_id_setup_enumeration(struct be_ctx *be_ctx,
+                                  struct sdap_id_ctx *id_ctx,
+                                  struct sdap_domain *sdom,
+                                  be_ptask_send_t send_fn,
+                                  be_ptask_recv_t recv_fn,
+                                  void *pvt);
 struct tevent_req *
-ldap_enumeration_send(TALLOC_CTX *mem_ctx,
-                      struct tevent_context *ev,
-                      struct be_ctx *be_ctx,
-                      struct be_ptask *be_ptask,
-                      void *pvt);
-errno_t ldap_enumeration_recv(struct tevent_req *req);
+ldap_id_enumeration_send(TALLOC_CTX *mem_ctx,
+                         struct tevent_context *ev,
+                         struct be_ctx *be_ctx,
+                         struct be_ptask *be_ptask,
+                         void *pvt);
+errno_t ldap_id_enumeration_recv(struct tevent_req *req);
 
-errno_t ldap_setup_cleanup(struct sdap_id_ctx *id_ctx,
-                           struct sdap_domain *sdom);
+errno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,
+                              struct sdap_domain *sdom);
 
-errno_t ldap_id_cleanup(struct sdap_options *opts,
+errno_t ldap_id_cleanup(struct sdap_id_ctx *id_ctx,
                         struct sdap_domain *sdom);
 
 struct tevent_req *groups_get_send(TALLOC_CTX *memctx,

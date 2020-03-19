@@ -45,6 +45,9 @@
 #define SSSD_MIN_ID 1
 #define SSSD_LOCAL_MINID 1000
 #define CONFDB_DEFAULT_SHELL_FALLBACK "/bin/sh"
+#define CONFDB_FALLBACK_CONFIG \
+    "[sssd]\n" \
+    "services = nss\n"
 
 
 /* Configuration options */
@@ -66,6 +69,7 @@
 #define CONFDB_MONITOR_SBUS_TIMEOUT "sbus_timeout"
 #define CONFDB_MONITOR_ACTIVE_SERVICES "services"
 #define CONFDB_MONITOR_ACTIVE_DOMAINS "domains"
+#define CONFDB_MONITOR_RESOLV_CONF "monitor_resolv_conf"
 #define CONFDB_MONITOR_TRY_INOTIFY "try_inotify"
 #define CONFDB_MONITOR_KRB5_RCACHEDIR "krb5_rcache_dir"
 #define CONFDB_MONITOR_DEFAULT_DOMAIN "default_domain_suffix"
@@ -164,6 +168,7 @@
 #endif
 #define CONFDB_SSH_USE_CERT_KEYS "ssh_use_certificate_keys"
 #define CONFDB_DEFAULT_SSH_USE_CERT_KEYS true
+#define CONFDB_SSH_USE_CERT_RULES "ssh_use_certificate_matching_rules"
 
 /* PAC */
 #define CONFDB_PAC_CONF_ENTRY "config/pac"

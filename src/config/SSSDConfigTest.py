@@ -391,6 +391,7 @@ class SSSDConfigTestSSSDService(unittest.TestCase):
             'enable_files_domain',
             'domain_resolution_order',
             'try_inotify',
+            'monitor_resolv_conf',
         ]
 
         self.assertTrue(type(options) == dict,
@@ -1405,7 +1406,10 @@ class SSSDConfigTestSSSDConfig(unittest.TestCase):
             'id_provider',
             'auth_provider',
             'access_provider',
-            'session_provider',
+            'autofs_provider',
+            'chpass_provider',
+            'sudo_provider',
+            'subdomains_provider',
             'default_shell',
             'fallback_homedir',
             'cache_credentials',
@@ -1421,6 +1425,9 @@ class SSSDConfigTestSSSDConfig(unittest.TestCase):
             'ad_server',
             'ldap_id_mapping',
             'ldap_sasl_authid',
+            'selinux_provider',
+            'hostid_provider',
+            'session_provider',
         ]
 
         for option in ad_domain.get_all_options():
@@ -1828,6 +1835,8 @@ class SSSDConfigTestSSSDConfig(unittest.TestCase):
 
         # TODO verify the contents of this domain
         self.assertTrue(domain.get_option('ldap_id_use_start_tls'))
+        self.assertTrue(domain.get_option('ldap_sudo_include_regexp'))
+        self.assertTrue(domain.get_option('ldap_autofs_map_master_name'))
 
         # Negative Test - No such domain
         self.assertRaises(SSSDConfig.NoDomainError, sssdconfig.get_domain, 'nosuchdomain')

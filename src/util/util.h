@@ -197,17 +197,20 @@ void (*CatchSignal(int signum,void (*handler)(int )))(int);
 
 /* from memory.c */
 typedef int (void_destructor_fn_t)(void *);
+/* sssd_mem_attach
+ * This function will take a non-talloc pointer and "attach" it to a talloc
+ * memory context. It will accept a destructor for the original pointer
+ * so that when the parent memory context is freed, the non-talloc
+ * pointer will also be freed properly.
+ * Returns EOK in case of success.
+ */
+int sss_mem_attach(TALLOC_CTX *mem_ctx, void *ptr, void_destructor_fn_t *fn);
 
-struct mem_holder {
-    void *mem;
-    void_destructor_fn_t *fn;
-};
-
-void *sss_mem_attach(TALLOC_CTX *mem_ctx,
-                     void *ptr,
-                     void_destructor_fn_t *fn);
-
-int password_destructor(void *memctx);
+/* sss_erase_talloc_mem_securely() function always returns 0 as an int value
+ * to make it possible to use it as talloc destructor.
+ */
+int sss_erase_talloc_mem_securely(void *p);
+void sss_erase_mem_securely(void *p, size_t size);
 
 /* from usertools.c */
 char *get_uppercase_realm(TALLOC_CTX *memctx, const char *name);
@@ -485,18 +488,16 @@ errno_t add_string_to_list(TALLOC_CTX *mem_ctx, const char *string,
 
 bool string_in_list(const char *string, char **list, bool case_sensitive);
 
-/**
- * @brief Safely zero a segment of memory,
- *        prevents the compiler from optimizing out
- *
- * @param data   The address of buffer to wipe
- * @param size   Size of the buffer
- */
-void safezero(void *data, size_t size);
-
 int domain_to_basedn(TALLOC_CTX *memctx, const char *domain, char **basedn);
 
 bool is_host_in_domain(const char *host, const char *domain);
+
+/* This is simple wrapper around libc rand() intended to avoid calling srand()
+ * explicitly, thus *not* suitable to be used in security relevant context.
+ * If CS properties are desired (security relevant functionality/FIPS/etc) then
+ * use sss_crypto.h:sss_generate_csprng_buffer() instead!
+ */
+int sss_rand(void);
 
 /* from nscd.c */
 enum nscd_db {
@@ -534,6 +535,10 @@ struct sss_domain_info *get_next_domain(struct sss_domain_info *domain,
 struct sss_domain_info *find_domain_by_name(struct sss_domain_info *domain,
                                             const char *name,
                                             bool match_any);
+struct sss_domain_info *find_domain_by_name_ex(struct sss_domain_info *domain,
+                                               const char *name,
+                                               bool match_any,
+                                               uint32_t gnd_flags);
 struct sss_domain_info *find_domain_by_sid(struct sss_domain_info *domain,
                                            const char *sid);
 enum sss_domain_state sss_domain_get_state(struct sss_domain_info *dom);
@@ -552,7 +557,8 @@ find_domain_by_object_name(struct sss_domain_info *domain,
 
 struct sss_domain_info *
 find_domain_by_object_name_ex(struct sss_domain_info *domain,
-                              const char *object_name, bool strict);
+                              const char *object_name, bool strict,
+                              uint32_t gnd_flags);
 
 bool subdomain_enumerates(struct sss_domain_info *parent,
                           const char *sd_name);

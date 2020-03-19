@@ -326,6 +326,7 @@ enum sdap_netgroup_attrs {
 
 enum sdap_sudorule_attrs {
     SDAP_OC_SUDORULE = 0,
+    SDAP_AT_SUDO_OC,
     SDAP_AT_SUDO_NAME,
     SDAP_AT_SUDO_COMMAND,
     SDAP_AT_SUDO_HOST,
@@ -429,15 +430,6 @@ struct sdap_domain {
     struct sdap_domain *next, *prev;
     /* Need to modify the list from a talloc destructor */
     struct sdap_domain **head;
-
-    /* Enumeration and cleanup periodic task */
-    struct be_ptask *enum_task;
-    struct be_ptask *cleanup_task;
-
-    /* enumeration loop timer */
-    struct timeval last_enum;
-    /* cleanup loop timer */
-    struct timeval last_purge;
 
     void *pvt;
 };

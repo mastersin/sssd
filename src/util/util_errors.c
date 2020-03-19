@@ -35,6 +35,7 @@ struct err_string error_to_str[] = {
     { "Invalid data type" },       /* ERR_INVALID_DATA_TYPE */
     { "DP target is not configured" }, /* ERR_MISSING_DP_TARGET */
     { "Account Unknown" },      /* ERR_ACCOUNT_UNKNOWN */
+    { "No suitable principal found in keytab" }, /* ERR_KRB5_PRINCIPAL_NOT_FOUND */
     { "Invalid credential type" },  /* ERR_INVALID_CRED_TYPE */
     { "No credentials available" }, /* ERR_NO_CREDS */
     { "Credentials are expired" }, /* ERR_CREDS_EXPIRED */
@@ -122,6 +123,7 @@ struct err_string error_to_str[] = {
     { "The last GetAccountDomain() result is still valid" }, /* ERR_GET_ACCT_DOM_CACHED */
     { "ID is outside the allowed range" }, /* ERR_ID_OUTSIDE_RANGE */
     { "Group ID is duplicated" }, /* ERR_GID_DUPLICATED */
+    { "Multiple objects were found when only one was expected" }, /* ERR_MULTIPLE_ENTRIES */
 
     /* DBUS Errors */
     { "Connection was killed on demand" }, /* ERR_SBUS_KILL_CONNECTION */
@@ -134,6 +136,12 @@ struct err_string error_to_str[] = {
     { "Unknown property" }, /* ERR_SBUS_UNKNOWN_PROPERTY */
     { "Unknown bus owner" }, /* ERR_SBUS_UNKNOWN_OWNER */
     { "No reply was received" }, /* ERR_SBUS_NO_REPLY */
+
+    /* ini parsing errors */
+    { "Failed to open configuration" }, /* ERR_INI_OPEN_FAILED */
+    { "File ownership and permissions check failed" }, /* ERR_INI_INVALID_PERMISSION */
+    { "Error while parsing configuration file" }, /* ERR_INI_PARSE_FAILED */
+    { "Failed to add configuration snippets" }, /* ERR_INI_ADD_SNIPPETS_FAILED */
 
     { "ERR_LAST" } /* ERR_LAST */
 };

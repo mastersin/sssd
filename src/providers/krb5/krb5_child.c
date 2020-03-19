@@ -305,8 +305,7 @@ static inline checker pick_checker(int format)
 
 static int token_pin_destructor(char *mem)
 {
-    safezero(mem, strlen(mem));
-    return 0;
+    return sss_erase_talloc_mem_securely(mem);
 }
 
 static krb5_error_code tokeninfo_matches_2fa(TALLOC_CTX *mem_ctx,
@@ -2628,10 +2627,12 @@ static krb5_error_code check_fast_ccache(TALLOC_CTX *mem_ctx,
         kerr = krb5_kt_default(ctx, &keytab);
     }
     if (kerr) {
+        const char *__err_msg = sss_krb5_get_error_message(ctx, kerr);
         DEBUG(SSSDBG_FATAL_FAILURE,
               "Failed to read keytab file [%s]: %s\n",
-               KEYTAB_CLEAN_NAME,
-               sss_krb5_get_error_message(ctx, kerr));
+               sss_printable_keytab_name(ctx, keytab_name),
+               __err_msg);
+        sss_krb5_free_error_message(ctx, __err_msg);
         goto done;
     }
 

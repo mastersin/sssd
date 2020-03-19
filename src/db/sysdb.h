@@ -98,6 +98,7 @@
 #define SYSDB_LAST_UPDATE "lastUpdate"
 #define SYSDB_CACHE_EXPIRE "dataExpireTimestamp"
 #define SYSDB_INITGR_EXPIRE "initgrExpireTimestamp"
+#define SYSDB_ENUM_EXPIRE "enumerationExpireTimestamp"
 #define SYSDB_IFP_CACHED "ifpCached"
 
 #define SYSDB_AUTHORIZED_SERVICE "authorizedService"
@@ -225,6 +226,7 @@
 #define SYSDB_USER_CERT_FILTER "(&("SYSDB_UC")%s)"
 
 #define SYSDB_HAS_ENUMERATED "has_enumerated"
+#define SYSDB_HAS_ENUMERATED_ID       0x00000001
 
 #define SYSDB_DEFAULT_ATTRS SYSDB_LAST_UPDATE, \
                             SYSDB_CACHE_EXPIRE, \
@@ -552,6 +554,9 @@ errno_t sysdb_master_domain_add_info(struct sss_domain_info *domain,
                                      struct ldb_message_element *alt_dom_suf);
 
 errno_t sysdb_subdomain_delete(struct sysdb_ctx *sysdb, const char *name);
+
+errno_t sysdb_subdomain_content_delete(struct sysdb_ctx *sysdb,
+                                       const char *name);
 
 errno_t sysdb_get_ranges(TALLOC_CTX *mem_ctx, struct sysdb_ctx *sysdb,
                              size_t *range_count,
@@ -892,6 +897,11 @@ int sysdb_delete_entry(struct sysdb_ctx *sysdb,
 int sysdb_delete_recursive(struct sysdb_ctx *sysdb,
                            struct ldb_dn *dn,
                            bool ignore_not_found);
+
+int sysdb_delete_recursive_with_filter(struct sysdb_ctx *sysdb,
+                                       struct ldb_dn *dn,
+                                       bool ignore_not_found,
+                                       const char *filter);
 
 /* Mark entry as expired */
 errno_t sysdb_mark_entry_as_expired_ldb_dn(struct sss_domain_info *dom,
@@ -1283,11 +1293,24 @@ errno_t sysdb_set_bool(struct sysdb_ctx *sysdb,
                        const char *attr_name,
                        bool value);
 
+errno_t sysdb_get_uint(struct sysdb_ctx *sysdb,
+                       struct ldb_dn *dn,
+                       const char *attr_name,
+                       uint32_t *value);
+
+errno_t sysdb_set_uint(struct sysdb_ctx *sysdb,
+                       struct ldb_dn *dn,
+                       const char *cn_value,
+                       const char *attr_name,
+                       uint32_t value);
+
 errno_t sysdb_has_enumerated(struct sss_domain_info *domain,
+                             uint32_t provider,
                              bool *has_enumerated);
 
 errno_t sysdb_set_enumerated(struct sss_domain_info *domain,
-                             bool enumerated);
+                             uint32_t provider,
+                             bool has_enumerated);
 
 errno_t sysdb_remove_attrs(struct sss_domain_info *domain,
                            const char *name,

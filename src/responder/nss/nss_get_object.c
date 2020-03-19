@@ -299,20 +299,22 @@ nss_get_object_send(TALLOC_CTX *mem_ctx,
                             state->nss_ctx->cache_refresh_percent,
                             CACHE_REQ_POSIX_DOM, NULL, data);
     if (subreq == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to send cache request!\n");
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Client [%p][%d]: unable to send cache request!\n",
+              cli_ctx, cli_ctx->cfd);
         ret = ENOMEM;
         goto done;
     }
+
+    DEBUG(SSSDBG_TRACE_FUNC, "Client [%p][%d]: sent cache request #%u\n",
+          cli_ctx, cli_ctx->cfd, cache_req_get_reqid(subreq));
 
     tevent_req_set_callback(subreq, nss_get_object_done, req);
 
     ret = EAGAIN;
 
 done:
-    if (ret == EOK) {
-        tevent_req_done(req);
-        tevent_req_post(req, ev);
-    } else if (ret != EAGAIN) {
+    if (ret != EAGAIN) {
         tevent_req_error(req, ret);
         tevent_req_post(req, ev);
     }

@@ -37,6 +37,7 @@ struct dp_hostid_data {
 
 struct dp_autofs_data {
     const char *mapname;
+    const char *entryname;
 };
 
 struct dp_subdomains_data {
@@ -75,5 +76,8 @@ void dp_req_reply_std(const char *request_name,
                       uint16_t *_dp_error,
                       uint32_t *_error,
                       const char **_message);
+
+/* Convert pair of ret and dp_error to single ret value. */
+errno_t dp_error_to_ret(errno_t ret, int dp_error);
 
 #endif /* _DP_CUSTOM_DATA_H_ */

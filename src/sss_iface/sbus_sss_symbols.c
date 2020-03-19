@@ -83,6 +83,43 @@ _sbus_sss_args_sssd_DataProvider_AccessControl_RefreshRules = {
 };
 
 const struct sbus_method_arguments
+_sbus_sss_args_sssd_DataProvider_Autofs_Enumerate = {
+    .input = (const struct sbus_argument[]){
+        {.type = "u", .name = "dp_flags"},
+        {.type = "s", .name = "mapname"},
+        {NULL}
+    },
+    .output = (const struct sbus_argument[]){
+        {NULL}
+    }
+};
+
+const struct sbus_method_arguments
+_sbus_sss_args_sssd_DataProvider_Autofs_GetEntry = {
+    .input = (const struct sbus_argument[]){
+        {.type = "u", .name = "dp_flags"},
+        {.type = "s", .name = "mapname"},
+        {.type = "s", .name = "entryname"},
+        {NULL}
+    },
+    .output = (const struct sbus_argument[]){
+        {NULL}
+    }
+};
+
+const struct sbus_method_arguments
+_sbus_sss_args_sssd_DataProvider_Autofs_GetMap = {
+    .input = (const struct sbus_argument[]){
+        {.type = "u", .name = "dp_flags"},
+        {.type = "s", .name = "mapname"},
+        {NULL}
+    },
+    .output = (const struct sbus_argument[]){
+        {NULL}
+    }
+};
+
+const struct sbus_method_arguments
 _sbus_sss_args_sssd_DataProvider_Backend_IsOnline = {
     .input = (const struct sbus_argument[]){
         {.type = "s", .name = "domain_name"},
@@ -202,21 +239,6 @@ _sbus_sss_args_sssd_Responder_NegativeCache_ResetUsers = {
         {NULL}
     },
     .output = (const struct sbus_argument[]){
-        {NULL}
-    }
-};
-
-const struct sbus_method_arguments
-_sbus_sss_args_sssd_dataprovider_autofsHandler = {
-    .input = (const struct sbus_argument[]){
-        {.type = "u", .name = "dp_flags"},
-        {.type = "s", .name = "mapname"},
-        {NULL}
-    },
-    .output = (const struct sbus_argument[]){
-        {.type = "q", .name = "dp_error"},
-        {.type = "u", .name = "error"},
-        {.type = "s", .name = "error_message"},
         {NULL}
     }
 };

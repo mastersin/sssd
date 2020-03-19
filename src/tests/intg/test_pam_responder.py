@@ -272,13 +272,15 @@ def cleanup_nssdb():
 
 
 def create_nssdb_fixture(request):
-    create_nssdb()
-    request.addfinalizer(cleanup_nssdb)
+    if 'USE_NSS' in os.environ and os.environ['USE_NSS'] == '1':
+        create_nssdb()
+        request.addfinalizer(cleanup_nssdb)
 
 
 def create_nssdb_no_cert_fixture(request):
-    create_nssdb_no_cert()
-    request.addfinalizer(cleanup_nssdb)
+    if 'USE_NSS' in os.environ and os.environ['USE_NSS'] == '1':
+        create_nssdb_no_cert()
+        request.addfinalizer(cleanup_nssdb)
 
 
 @pytest.fixture
@@ -598,6 +600,33 @@ def test_sc_auth_missing_name(simple_pam_cert_auth, env_for_sssctl):
     """
 
     sssctl = subprocess.Popen(["sssctl", "user-checks", "",
+                               "--action=auth",
+                               "--service=pam_sss_allow_missing_name"],
+                              universal_newlines=True,
+                              env=env_for_sssctl, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    try:
+        out, err = sssctl.communicate(input="123456")
+    except:
+        sssctl.kill()
+        out, err = sssctl.communicate()
+
+    sssctl.stdin.close()
+    sssctl.stdout.close()
+
+    if sssctl.wait() != 0:
+        raise Exception("sssctl failed")
+
+    assert err.find("pam_authenticate for user [user1]: Success") != -1
+
+
+def test_sc_auth_missing_name_whitespace(simple_pam_cert_auth, env_for_sssctl):
+    """
+    Test pam_sss allow_missing_name feature.
+    """
+
+    sssctl = subprocess.Popen(["sssctl", "user-checks", " ",
                                "--action=auth",
                                "--service=pam_sss_allow_missing_name"],
                               universal_newlines=True,

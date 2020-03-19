@@ -28,6 +28,7 @@
 #include "providers/data_provider.h"
 #include "responder/autofs/autofs_private.h"
 #include "sss_iface/sss_iface_async.h"
+#include "util/sss_ptr_hash.h"
 
 static errno_t
 autofs_get_config(struct autofs_ctx *actx,
@@ -46,14 +47,23 @@ autofs_clean_hash_table(TALLOC_CTX *mem_ctx,
                        struct sbus_request *sbus_req,
                        struct autofs_ctx *actx)
 {
-    errno_t ret;
+    autofs_orphan_maps(actx);
 
-    ret = autofs_orphan_maps(actx);
-    if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "Could not invalidate maps\n");
-    }
+    return EOK;
+}
 
-    return ret;
+static void
+autofs_maps_delete_cb(hash_entry_t *item,
+                      hash_destroy_enum deltype,
+                      void *pvt)
+{
+    struct autofs_ctx *autofs_ctx;
+    struct autofs_enum_ctx *enum_ctx;
+
+    autofs_ctx = talloc_get_type(pvt, struct autofs_ctx);
+    enum_ctx = talloc_get_type(item->value.ptr, struct autofs_enum_ctx);
+
+    talloc_unlink(autofs_ctx->maps, enum_ctx);
 }
 
 static errno_t
@@ -91,7 +101,6 @@ autofs_process_init(TALLOC_CTX *mem_ctx,
     struct sss_cmd_table *autofs_cmds;
     struct autofs_ctx *autofs_ctx;
     int ret;
-    int hret;
 
     autofs_cmds = get_autofs_cmds();
     ret = sss_process_init(mem_ctx, ev, cdb,
@@ -123,9 +132,10 @@ autofs_process_init(TALLOC_CTX *mem_ctx,
     autofs_ctx->rctx->pvt_ctx = autofs_ctx;
 
     /* Create the lookup table for setautomntent results */
-    hret = sss_hash_create_ex(autofs_ctx, 10, &autofs_ctx->maps, 0, 0, 0, 0,
-                              autofs_map_hash_delete_cb, NULL);
-    if (hret != HASH_SUCCESS) {
+    autofs_ctx->maps = sss_ptr_hash_create(autofs_ctx,
+                                           autofs_maps_delete_cb,
+                                           autofs_ctx);
+    if (autofs_ctx->maps == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Unable to initialize automount maps hash table\n");
         ret = EIO;

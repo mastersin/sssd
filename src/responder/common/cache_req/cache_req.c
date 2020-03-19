@@ -60,6 +60,10 @@ cache_req_get_plugin(enum cache_req_type type)
         &cache_req_netgroup_by_name,
 
         &cache_req_host_by_name,
+
+        &cache_req_autofs_map_entries,
+        &cache_req_autofs_map_by_name,
+        &cache_req_autofs_entry_by_name
     };
 
     if (type >= CACHE_REQ_SENTINEL) {
@@ -1497,6 +1501,19 @@ static void cache_req_done(struct tevent_req *subreq)
         tevent_req_error(req, ret);
         break;
     }
+}
+
+uint32_t cache_req_get_reqid(struct tevent_req *req)
+{
+    const struct cache_req_state *state;
+
+    state = tevent_req_data(req, struct cache_req_state);
+
+    if (state && state->cr) {
+        return state->cr->reqid;
+    }
+
+    return 0;
 }
 
 errno_t cache_req_recv(TALLOC_CTX *mem_ctx,

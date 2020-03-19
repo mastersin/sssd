@@ -30,13 +30,6 @@
 #include "providers/ldap/sdap_async.h"
 #include "providers/ipa/ipa_id.h"
 
-static struct tevent_req *
-ipa_id_get_account_info_send(TALLOC_CTX *memctx, struct tevent_context *ev,
-                             struct ipa_id_ctx *ipa_ctx,
-                             struct dp_id_data *ar);
-
-static int ipa_id_get_account_info_recv(struct tevent_req *req, int *dp_error);
-
 static bool is_object_overridable(struct dp_id_data *ar)
 {
     bool ret = false;
@@ -138,7 +131,8 @@ static errno_t ipa_resolve_user_list_get_user_step(struct tevent_req *req)
 
     state->user_domain = find_domain_by_object_name_ex(
                                         state->ipa_ctx->sdap_id_ctx->be->domain,
-                                        ar->filter_value, true);
+                                        ar->filter_value, true,
+                                        SSS_GND_DESCEND);
     /* Use provided domain as fallback because no known domain was found in the
      * user name. */
     if (state->user_domain == NULL) {
@@ -515,7 +509,7 @@ static void ipa_id_get_account_info_orig_done(struct tevent_req *subreq);
 static void ipa_id_get_account_info_done(struct tevent_req *subreq);
 static void ipa_id_get_user_list_done(struct tevent_req *subreq);
 
-static struct tevent_req *
+struct tevent_req *
 ipa_id_get_account_info_send(TALLOC_CTX *memctx, struct tevent_context *ev,
                              struct ipa_id_ctx *ipa_ctx,
                              struct dp_id_data *ar)
@@ -646,7 +640,22 @@ static void ipa_id_get_account_info_got_override(struct tevent_req *subreq)
     ret = ipa_get_ad_override_recv(subreq, &dp_error, state,
                                    &state->override_attrs);
     talloc_zfree(subreq);
+
     if (ret != EOK) {
+        ret = sdap_id_op_done(state->op, ret, &dp_error);
+
+        if (dp_error == DP_ERR_OK && ret != EOK) {
+            /* retry */
+            subreq = sdap_id_op_connect_send(state->op, state, &ret);
+            if (subreq == NULL) {
+                DEBUG(SSSDBG_OP_FAILURE, "sdap_id_op_connect_send failed.\n");
+                goto fail;
+            }
+            tevent_req_set_callback(subreq, ipa_id_get_account_info_connected,
+                                    req);
+            return;
+        }
+
         DEBUG(SSSDBG_OP_FAILURE, "IPA override lookup failed: %d\n", ret);
         goto fail;
     }
@@ -1119,7 +1128,7 @@ fail:
     return;
 }
 
-static int ipa_id_get_account_info_recv(struct tevent_req *req, int *dp_error)
+int ipa_id_get_account_info_recv(struct tevent_req *req, int *dp_error)
 {
     struct ipa_id_get_account_info_state *state = tevent_req_data(req,
                                           struct ipa_id_get_account_info_state);

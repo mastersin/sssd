@@ -38,20 +38,20 @@
 /* a fd the child process would log into */
 int ldap_child_debug_fd = -1;
 
-int ldap_id_setup_tasks(struct sdap_id_ctx *ctx)
+errno_t ldap_id_setup_tasks(struct sdap_id_ctx *ctx)
 {
     return sdap_id_setup_tasks(ctx->be, ctx, ctx->opts->sdom,
-                               ldap_enumeration_send,
-                               ldap_enumeration_recv,
+                               ldap_id_enumeration_send,
+                               ldap_id_enumeration_recv,
                                ctx);
 }
 
-int sdap_id_setup_tasks(struct be_ctx *be_ctx,
-                        struct sdap_id_ctx *ctx,
-                        struct sdap_domain *sdom,
-                        be_ptask_send_t send_fn,
-                        be_ptask_recv_t recv_fn,
-                        void *pvt)
+errno_t sdap_id_setup_tasks(struct be_ctx *be_ctx,
+                            struct sdap_id_ctx *ctx,
+                            struct sdap_domain *sdom,
+                            be_ptask_send_t send_fn,
+                            be_ptask_recv_t recv_fn,
+                            void *pvt)
 {
     int ret;
 
@@ -59,14 +59,14 @@ int sdap_id_setup_tasks(struct be_ctx *be_ctx,
     if (sdom->dom->enumerate) {
         DEBUG(SSSDBG_TRACE_FUNC, "Setting up enumeration for %s\n",
                                   sdom->dom->name);
-        ret = ldap_setup_enumeration(be_ctx, ctx->opts, sdom,
-                                     send_fn, recv_fn, pvt);
+        ret = ldap_id_setup_enumeration(be_ctx, ctx, sdom,
+                                        send_fn, recv_fn, pvt);
     } else {
         /* the enumeration task, runs the cleanup process by itself,
          * but if enumeration is not running we need to schedule it */
         DEBUG(SSSDBG_TRACE_FUNC, "Setting up cleanup task for %s\n",
                                   sdom->dom->name);
-        ret = ldap_setup_cleanup(ctx, sdom);
+        ret = ldap_id_setup_cleanup(ctx, sdom);
     }
 
     return ret;
@@ -253,8 +253,10 @@ sdap_gssapi_get_default_realm(TALLOC_CTX *mem_ctx)
 
     krberr = krb5_get_default_realm(context, &krb5_realm);
     if (krberr) {
+        const char *__err_msg = sss_krb5_get_error_message(context, krberr);
         DEBUG(SSSDBG_OP_FAILURE, "Failed to get default realm name: %s\n",
-                  sss_krb5_get_error_message(context, krberr));
+              __err_msg);
+        sss_krb5_free_error_message(context, __err_msg);
         goto done;
     }
 
@@ -568,6 +570,7 @@ errno_t string_to_shadowpw_days(const char *s, long *d)
 {
     long l;
     char *endptr;
+    int ret;
 
     if (s == NULL || *s == '\0') {
         *d = -1;
@@ -577,9 +580,10 @@ errno_t string_to_shadowpw_days(const char *s, long *d)
     errno = 0;
     l = strtol(s, &endptr, 10);
     if (errno != 0) {
+        ret = errno;
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "strtol failed [%d][%s].\n", errno, strerror(errno));
-        return errno;
+              "strtol failed [%d][%s].\n", ret, strerror(ret));
+        return ret;
     }
 
     if (*endptr != '\0') {
@@ -838,6 +842,12 @@ sdap_id_ctx_conn_add(struct sdap_id_ctx *id_ctx,
     return conn;
 }
 
+static int sdap_id_ctx_destructor(struct sdap_id_ctx *id_ctx)
+{
+    be_ptask_destroy(&id_ctx->task);
+    return 0;
+}
+
 struct sdap_id_ctx *
 sdap_id_ctx_new(TALLOC_CTX *mem_ctx, struct be_ctx *bectx,
                 struct sdap_service *sdap_service)
@@ -848,6 +858,8 @@ sdap_id_ctx_new(TALLOC_CTX *mem_ctx, struct be_ctx *bectx,
     if (sdap_ctx == NULL) {
         return NULL;
     }
+    talloc_set_destructor(sdap_ctx, sdap_id_ctx_destructor);
+
     sdap_ctx->be = bectx;
 
     /* There should be at least one connection context */

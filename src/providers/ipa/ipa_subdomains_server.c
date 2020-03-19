@@ -380,8 +380,8 @@ ipa_ad_ctx_new(struct be_ctx *be_ctx,
     ret = sdap_id_setup_tasks(be_ctx,
                               ad_id_ctx->sdap_id_ctx,
                               sdom,
-                              ldap_enumeration_send,
-                              ldap_enumeration_recv,
+                              ldap_id_enumeration_send,
+                              ldap_id_enumeration_recv,
                               ad_id_ctx->sdap_id_ctx);
     if (ret != EOK) {
         talloc_free(ad_options);
@@ -1054,8 +1054,6 @@ void ipa_ad_subdom_remove(struct be_ctx *be_ctx,
 
     sdom = sdap_domain_get(iter->ad_id_ctx->sdap_id_ctx->opts, subdom);
     if (sdom == NULL) return;
-    be_ptask_destroy(&sdom->enum_task);
-    be_ptask_destroy(&sdom->cleanup_task);
 
     sdap_domain_remove(iter->ad_id_ctx->sdap_id_ctx->opts, subdom);
     DLIST_REMOVE(id_ctx->server_mode->trusts, iter);

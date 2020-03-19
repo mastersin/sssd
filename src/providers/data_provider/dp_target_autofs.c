@@ -27,28 +27,26 @@
 #include "providers/backend.h"
 #include "util/util.h"
 
-struct dp_autofs_handler_state {
+struct dp_autofs_get_map_state {
     struct dp_autofs_data *data;
-    struct dp_reply_std reply;
-    const char *request_name;
 };
 
-static void dp_autofs_handler_done(struct tevent_req *subreq);
+static void dp_autofs_get_map_done(struct tevent_req *subreq);
 
 struct tevent_req *
-dp_autofs_handler_send(TALLOC_CTX *mem_ctx,
+dp_autofs_get_map_send(TALLOC_CTX *mem_ctx,
                        struct tevent_context *ev,
                        struct sbus_request *sbus_req,
                        struct data_provider *provider,
                        uint32_t dp_flags,
                        const char *mapname)
 {
-    struct dp_autofs_handler_state *state;
+    struct dp_autofs_get_map_state *state;
     struct tevent_req *subreq;
     struct tevent_req *req;
     errno_t ret;
 
-    req = tevent_req_create(mem_ctx, &state, struct dp_autofs_handler_state);
+    req = tevent_req_create(mem_ctx, &state, struct dp_autofs_get_map_state);
     if (req == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create tevent request!\n");
         return NULL;
@@ -63,15 +61,15 @@ dp_autofs_handler_send(TALLOC_CTX *mem_ctx,
     state->data->mapname = mapname;
 
     subreq = dp_req_send(state, provider, NULL, "AutoFS", DPT_AUTOFS,
-                         DPM_AUTOFS_HANDLER, dp_flags, state->data,
-                         &state->request_name);
+                         DPM_AUTOFS_GET_MAP, dp_flags, state->data,
+                         NULL);
     if (subreq == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create subrequest!\n");
         ret = ENOMEM;
         goto done;
     }
 
-    tevent_req_set_callback(subreq, dp_autofs_handler_done, req);
+    tevent_req_set_callback(subreq, dp_autofs_get_map_done, req);
 
     ret = EAGAIN;
 
@@ -84,16 +82,14 @@ done:
     return req;
 }
 
-static void dp_autofs_handler_done(struct tevent_req *subreq)
+static void dp_autofs_get_map_done(struct tevent_req *subreq)
 {
-    struct dp_autofs_handler_state *state;
     struct tevent_req *req;
     errno_t ret;
 
     req = tevent_req_callback_data(subreq, struct tevent_req);
-    state = tevent_req_data(req, struct dp_autofs_handler_state);
 
-    ret = dp_req_recv(state, subreq, struct dp_reply_std, &state->reply);
+    ret = dp_req_recv_no_output(subreq);
     talloc_zfree(subreq);
     if (ret != EOK) {
         tevent_req_error(req, ret);
@@ -104,20 +100,171 @@ static void dp_autofs_handler_done(struct tevent_req *subreq)
     return;
 }
 
-errno_t
-dp_autofs_handler_recv(TALLOC_CTX *mem_ctx,
-                       struct tevent_req *req,
-                       uint16_t *_dp_error,
-                       uint32_t *_error,
-                       const char **_err_msg)
+errno_t dp_autofs_get_map_recv(TALLOC_CTX *mem_ctx, struct tevent_req *req)
 {
-    struct dp_autofs_handler_state *state;
-    state = tevent_req_data(req, struct dp_autofs_handler_state);
-
     TEVENT_REQ_RETURN_ON_ERROR(req);
 
-    dp_req_reply_std(state->request_name, &state->reply,
-                     _dp_error, _error, _err_msg);
+    return EOK;
+}
+
+struct dp_autofs_get_entry_state {
+    struct dp_autofs_data *data;
+};
+
+static void dp_autofs_get_entry_done(struct tevent_req *subreq);
+
+struct tevent_req *
+dp_autofs_get_entry_send(TALLOC_CTX *mem_ctx,
+                         struct tevent_context *ev,
+                         struct sbus_request *sbus_req,
+                         struct data_provider *provider,
+                         uint32_t dp_flags,
+                         const char *mapname,
+                         const char *entryname)
+{
+    struct dp_autofs_get_entry_state *state;
+    struct tevent_req *subreq;
+    struct tevent_req *req;
+    errno_t ret;
+
+    req = tevent_req_create(mem_ctx, &state, struct dp_autofs_get_entry_state);
+    if (req == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create tevent request!\n");
+        return NULL;
+    }
+
+    state->data = talloc_zero(state, struct dp_autofs_data);
+    if (state->data == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    state->data->mapname = mapname;
+    state->data->entryname = entryname;
+
+    subreq = dp_req_send(state, provider, NULL, "AutoFS", DPT_AUTOFS,
+                         DPM_AUTOFS_GET_ENTRY, dp_flags, state->data,
+                         NULL);
+    if (subreq == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create subrequest!\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    tevent_req_set_callback(subreq, dp_autofs_get_entry_done, req);
+
+    ret = EAGAIN;
+
+done:
+    if (ret != EAGAIN) {
+        tevent_req_error(req, ret);
+        tevent_req_post(req, ev);
+    }
+
+    return req;
+}
+
+static void dp_autofs_get_entry_done(struct tevent_req *subreq)
+{
+    struct tevent_req *req;
+    errno_t ret;
+
+    req = tevent_req_callback_data(subreq, struct tevent_req);
+
+    ret = dp_req_recv_no_output(subreq);
+    talloc_zfree(subreq);
+    if (ret != EOK) {
+        tevent_req_error(req, ret);
+        return;
+    }
+
+    tevent_req_done(req);
+    return;
+}
+
+errno_t dp_autofs_get_entry_recv(TALLOC_CTX *mem_ctx, struct tevent_req *req)
+{
+    TEVENT_REQ_RETURN_ON_ERROR(req);
+
+    return EOK;
+}
+
+struct dp_autofs_enumerate_state {
+    struct dp_autofs_data *data;
+};
+
+static void dp_autofs_enumerate_done(struct tevent_req *subreq);
+
+struct tevent_req *
+dp_autofs_enumerate_send(TALLOC_CTX *mem_ctx,
+                         struct tevent_context *ev,
+                         struct sbus_request *sbus_req,
+                         struct data_provider *provider,
+                         uint32_t dp_flags,
+                         const char *mapname)
+{
+    struct dp_autofs_enumerate_state *state;
+    struct tevent_req *subreq;
+    struct tevent_req *req;
+    errno_t ret;
+
+    req = tevent_req_create(mem_ctx, &state, struct dp_autofs_enumerate_state);
+    if (req == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create tevent request!\n");
+        return NULL;
+    }
+
+    state->data = talloc_zero(state, struct dp_autofs_data);
+    if (state->data == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    state->data->mapname = mapname;
+
+    subreq = dp_req_send(state, provider, NULL, "AutoFS", DPT_AUTOFS,
+                         DPM_AUTOFS_ENUMERATE, dp_flags, state->data,
+                         NULL);
+    if (subreq == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create subrequest!\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    tevent_req_set_callback(subreq, dp_autofs_enumerate_done, req);
+
+    ret = EAGAIN;
+
+done:
+    if (ret != EAGAIN) {
+        tevent_req_error(req, ret);
+        tevent_req_post(req, ev);
+    }
+
+    return req;
+}
+
+static void dp_autofs_enumerate_done(struct tevent_req *subreq)
+{
+    struct tevent_req *req;
+    errno_t ret;
+
+    req = tevent_req_callback_data(subreq, struct tevent_req);
+
+    ret = dp_req_recv_no_output(subreq);
+    talloc_zfree(subreq);
+    if (ret != EOK) {
+        tevent_req_error(req, ret);
+        return;
+    }
+
+    tevent_req_done(req);
+    return;
+}
+
+errno_t dp_autofs_enumerate_recv(TALLOC_CTX *mem_ctx, struct tevent_req *req)
+{
+    TEVENT_REQ_RETURN_ON_ERROR(req);
 
     return EOK;
 }

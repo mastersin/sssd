@@ -23,6 +23,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
@@ -43,27 +44,16 @@
 static void close_low_fds(void)
 {
 #ifndef VALGRIND
-    int fd;
-    int i;
-
-    close(0);
-    close(1);
-    close(2);
-
     /* try and use up these file descriptors, so silly
        library routines writing to stdout etc. won't cause havoc */
-    for (i = 0; i < 3; i++) {
-        fd = open("/dev/null", O_RDWR, 0);
-        if (fd < 0)
-            fd = open("/dev/null", O_WRONLY, 0);
-        if (fd < 0) {
-            DEBUG(SSSDBG_FATAL_FAILURE, "Can't open /dev/null\n");
-            return;
-        }
-        if (fd != i) {
-            DEBUG(SSSDBG_FATAL_FAILURE, "Didn't get file descriptor %d\n",i);
-            return;
-        }
+    if (freopen ("/dev/null", "r", stdin) == NULL) {
+        DEBUG(SSSDBG_FATAL_FAILURE, "Can't freopen() stdin to /dev/null\n");
+    }
+    if (freopen ("/dev/null", "w", stdout) == NULL) {
+        DEBUG(SSSDBG_FATAL_FAILURE, "Can't freopen() stdout to /dev/null\n");
+    }
+    if (freopen ("/dev/null", "w", stderr) == NULL) {
+        DEBUG(SSSDBG_FATAL_FAILURE, "Can't freopen() stderr to /dev/null\n");
     }
 #endif
 }
@@ -77,54 +67,62 @@ static void daemon_parent_sigterm(int sig)
  Become a daemon, discarding the controlling terminal.
 **/
 
-void become_daemon(bool Fork)
+static void become_daemon(void)
 {
     pid_t pid, cpid;
     int status;
     int ret, error;
 
-    if (Fork) {
-        pid = fork();
-        if (pid != 0) {
-            /* Terminate parent process on demand so we can hold systemd
-             * or initd from starting next service until SSSD is initialized.
-             * We use signals directly here because we don't have a tevent
-             * context yet. */
-            CatchSignal(SIGTERM, daemon_parent_sigterm);
+    pid = fork();
+    if (pid == -1) {
+        ret = errno;
+        DEBUG(SSSDBG_FATAL_FAILURE, "fork() failed: %d [%s]\n",
+                                     ret, strerror(ret));
+        sss_log(SSS_LOG_ERR, "can't start: fork() failed");
+        _exit(1);
+    }
+    if (pid != 0) {
+        /* Terminate parent process on demand so we can hold systemd
+         * or initd from starting next service until SSSD is initialized.
+         * We use signals directly here because we don't have a tevent
+         * context yet. */
+        CatchSignal(SIGTERM, daemon_parent_sigterm);
 
-            /* or exit when sssd monitor is terminated */
-            do {
-                errno = 0;
-                cpid = waitpid(pid, &status, 0);
-                if (cpid == 1) {
-                    /* An error occurred while waiting */
-                    error = errno;
-                    if (error != EINTR) {
-                        DEBUG(SSSDBG_CRIT_FAILURE,
-                              "Error [%d][%s] while waiting for child\n",
-                               error, strerror(error));
-                        /* Forcibly kill this child */
-                        kill(pid, SIGKILL);
-                        ret = 1;
-                    }
+        /* or exit when child process (i.e. sssd monitor) is terminated
+         * and return error in this case */
+        ret = 1;
+        do {
+            error = 0;
+            cpid = waitpid(pid, &status, 0);
+            if (cpid == -1) {
+                /* An error occurred while waiting */
+                error = errno;
+                if (error != EINTR) {
+                    DEBUG(SSSDBG_CRIT_FAILURE,
+                          "Error [%d][%s] while waiting for child\n",
+                           error, strerror(error));
+                    /* Forcibly kill this child */
+                    kill(pid, SIGKILL);
                 }
-
-                error = 0;
-                /* return error if we didn't exited normally */
-                ret = 1;
-
+            } else {
                 if (WIFEXITED(status)) {
-                    /* but return our exit code otherwise */
+                    /* return our exit code if available */
                     ret = WEXITSTATUS(status);
                 }
-            } while (error == EINTR);
+            }
+        } while (error == EINTR);
 
-            _exit(ret);
-        }
+        _exit(ret);
     }
 
-    /* detach from the terminal */
-    setsid();
+    /* create new session, process group and detach from the terminal */
+    if (setsid() == (pid_t) -1) {
+        ret = errno;
+        DEBUG(SSSDBG_FATAL_FAILURE, "setsid() failed: %d [%s]\n",
+                                     ret, strerror(ret));
+        sss_log(SSS_LOG_ERR, "can't start: setsid() failed");
+        _exit(1);
+    }
 
     /* chdir to / to be sure we're not on a remote filesystem */
     errno = 0;
@@ -132,7 +130,6 @@ void become_daemon(bool Fork)
         ret = errno;
         DEBUG(SSSDBG_FATAL_FAILURE, "Cannot change directory (%d [%s])\n",
                                      ret, strerror(ret));
-        return;
     }
 
     /* Close FDs 0,1,2. Needed if started by rsh */
@@ -505,7 +502,7 @@ int server_setup(const char *name, int flags,
 
     if (flags & FLAGS_DAEMON) {
         DEBUG(SSSDBG_IMPORTANT_INFO, "Becoming a daemon.\n");
-        become_daemon(true);
+        become_daemon();
     }
 
     if (flags & FLAGS_PID_FILE) {

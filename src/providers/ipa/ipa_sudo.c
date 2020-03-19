@@ -21,6 +21,7 @@
 #include "providers/ipa/ipa_opts.h"
 #include "providers/ipa/ipa_common.h"
 #include "providers/ldap/sdap_sudo.h"
+#include "providers/ldap/ldap_opts.h"
 #include "providers/ipa/ipa_sudo.h"
 #include "db/sysdb_sudo.h"
 
@@ -308,7 +309,11 @@ int ipa_sudo_init(TALLOC_CTX *mem_ctx,
         break;
     case SUDO_SCHEMA_LDAP:
         DEBUG(SSSDBG_TRACE_FUNC, "Using LDAP schema for sudo\n");
-        ret = sdap_sudo_init(mem_ctx, be_ctx, id_ctx->sdap_id_ctx, dp_methods);
+        ret = sdap_sudo_init(mem_ctx,
+                             be_ctx,
+                             id_ctx->sdap_id_ctx,
+                             native_sudorule_map,
+                             dp_methods);
         break;
     }
 
