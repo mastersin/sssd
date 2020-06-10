@@ -71,11 +71,52 @@ struct sss_nss_ops {
                                     int *errnop);
     enum nss_status (*endservent)(void);
 
+    /* Hosts */
+    enum nss_status (*gethostbyname_r)(const char *name,
+                                       struct hostent *result,
+                                       char *buffer, size_t buflen,
+                                       int *errnop, int *h_errnop);
+    enum nss_status (*gethostbyname2_r)(const char *name, int af,
+                                        struct hostent *result,
+                                        char *buffer, size_t buflen,
+                                        int *errnop, int *h_errnop);
+    enum nss_status (*gethostbyaddr_r)(const void *addr, socklen_t addrlen,
+                                       int af, struct hostent *result,
+                                       char *buffer, size_t buflen,
+                                       int *errnop, int *h_errnop);
+    enum nss_status (*sethostent)(void);
+    enum nss_status (*gethostent_r)(struct hostent *ret,
+                                    char *buf, size_t buflen,
+                                    int *errnop, int *h_errnop);
+    enum nss_status (*endhostent)(void);
+
+    /* Networks */
+    enum nss_status (*getnetbyname_r)(const char *name,
+                                      struct netent *result,
+                                      char *buffer, size_t buflen,
+                                      int *errnop, int *h_errnop);
+    enum nss_status (*getnetbyaddr_r)(uint32_t addr, int type,
+                                      struct netent *result,
+                                      char *buffer, size_t buflen,
+                                      int *errnop, int *h_errnop);
+    enum nss_status (*setnetent)(void);
+    enum nss_status (*getnetent_r)(struct netent *ret,
+                                   char *buffer, size_t buflen,
+                                   int *errnop, int *h_errnop);
+    enum nss_status (*endnetent)(void);
+
     void *dl_handle;
 };
 
 
-errno_t sss_load_nss_symbols(struct sss_nss_ops *ops, const char *libname);
+struct sss_nss_symbols {
+    void **fptr;
+    bool mandatory;
+    const char *fname;
+};
+
+errno_t sss_load_nss_symbols(struct sss_nss_ops *ops, const char *libname,
+                             struct sss_nss_symbols *syms, size_t nsyms);
 
 
 #endif /* __SSSD_NSS_DL_LOAD_H__ */

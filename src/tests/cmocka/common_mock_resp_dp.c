@@ -63,6 +63,57 @@ sss_dp_get_account_recv(TALLOC_CTX *mem_ctx,
 }
 
 struct tevent_req *
+sss_dp_resolver_get_send(TALLOC_CTX *mem_ctx,
+                         struct resp_ctx *rctx,
+                         struct sss_domain_info *dom,
+                         bool fast_reply,
+                         uint32_t entry_type,
+                         uint32_t query_type,
+                         const char *query_value)
+{
+    return test_req_succeed_send(mem_ctx, rctx->ev);
+}
+
+errno_t
+sss_dp_resolver_get_recv(TALLOC_CTX *mem_ctx,
+                         struct tevent_req *req,
+                         dbus_uint16_t *dp_err,
+                         dbus_uint32_t *dp_ret,
+                         const char **err_msg)
+{
+    resolver_cb_t cb;
+
+    *dp_err = sss_mock_type(dbus_uint16_t);
+    *dp_ret = sss_mock_type(dbus_uint32_t);
+    *err_msg = sss_mock_ptr_type(char *);
+
+    cb = sss_mock_ptr_type(resolver_cb_t);
+    if (cb) {
+        (cb)(sss_mock_ptr_type(void *));
+    }
+
+    return test_request_recv(req);
+}
+
+void mock_resolver_recv(uint16_t dp_err, uint32_t dp_ret, char *msg,
+                        resolver_cb_t cb, void *pvt)
+{
+    will_return(sss_dp_resolver_get_recv, dp_err);
+    will_return(sss_dp_resolver_get_recv, dp_ret);
+    will_return(sss_dp_resolver_get_recv, msg);
+
+    will_return(sss_dp_resolver_get_recv, cb);
+    if (cb) {
+        will_return(sss_dp_resolver_get_recv, pvt);
+    }
+}
+
+void mock_resolver_recv_simple(void)
+{
+    return mock_resolver_recv(0, 0, NULL, NULL, NULL);
+}
+
+struct tevent_req *
 sss_dp_get_ssh_host_send(TALLOC_CTX *mem_ctx,
                          struct resp_ctx *rctx,
                          struct sss_domain_info *dom,

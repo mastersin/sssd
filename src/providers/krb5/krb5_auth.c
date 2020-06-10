@@ -1087,6 +1087,13 @@ static void krb5_auth_done(struct tevent_req *subreq)
                               kr->srv, PORT_WORKING);
     }
 
+    if (pd->cmd == SSS_PAM_PREAUTH) {
+        state->pam_status = PAM_SUCCESS;
+        state->dp_err = DP_ERR_OK;
+        ret = EOK;
+        goto done;
+    }
+
     /* Now only a successful authentication or password change is left.
      *
      * We expect that one of the messages in the received buffer contains
@@ -1289,6 +1296,14 @@ static void krb5_pam_handler_auth_done(struct tevent_req *subreq)
     talloc_zfree(subreq);
     if (ret != EOK) {
         state->pd->pam_status = PAM_SYSTEM_ERR;
+    }
+
+    /* PAM_CRED_ERR is used to indicate to the IPA provider that trying
+     * password migration would make sense. From this point on it isn't
+     * necessary to keep this status, so it can be translated to PAM_AUTH_ERR.
+     */
+    if (state->pd->pam_status == PAM_CRED_ERR) {
+        state->pd->pam_status = PAM_AUTH_ERR;
     }
 
     /* TODO For backward compatibility we always return EOK to DP now. */

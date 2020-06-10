@@ -208,6 +208,7 @@
 
 #define SYSDB_GRNAM_FILTER "(&("SYSDB_GC")(|("SYSDB_NAME_ALIAS"=%s)("SYSDB_NAME_ALIAS"=%s)("SYSDB_NAME"=%s)))"
 #define SYSDB_GRGID_FILTER "(&("SYSDB_GC")("SYSDB_GIDNUM"=%lu))"
+#define SYSDB_GRORIGGID_FILTER "(&("SYSDB_GC")("ORIGINALAD_PREFIX SYSDB_GIDNUM"=%lu))"
 #define SYSDB_GRSID_FILTER "(&("SYSDB_GC")("SYSDB_SID_STR"=%s))"
 #define SYSDB_GRENT_FILTER "("SYSDB_GC")"
 #define SYSDB_GRNAM_MPG_FILTER "(&("SYSDB_MPGC")(|("SYSDB_NAME_ALIAS"=%s)("SYSDB_NAME_ALIAS"=%s)("SYSDB_NAME"=%s)))"
@@ -227,6 +228,7 @@
 
 #define SYSDB_HAS_ENUMERATED "has_enumerated"
 #define SYSDB_HAS_ENUMERATED_ID       0x00000001
+#define SYSDB_HAS_ENUMERATED_RESOLVER 0x00000002
 
 #define SYSDB_DEFAULT_ATTRS SYSDB_LAST_UPDATE, \
                             SYSDB_CACHE_EXPIRE, \
@@ -356,6 +358,8 @@ enum sysdb_member_type {
     SYSDB_MEMBER_GROUP,
     SYSDB_MEMBER_NETGROUP,
     SYSDB_MEMBER_SERVICE,
+    SYSDB_MEMBER_HOST,
+    SYSDB_MEMBER_IP_NETWORK,
 };
 
 /* These attributes are stored in the timestamp cache */
@@ -977,6 +981,12 @@ int sysdb_search_group_by_gid(TALLOC_CTX *mem_ctx,
                               const char **attrs,
                               struct ldb_message **msg);
 
+int sysdb_search_group_by_origgid(TALLOC_CTX *mem_ctx,
+                                  struct sss_domain_info *domain,
+                                  gid_t gid,
+                                  const char **attrs,
+                                  struct ldb_message **msg);
+
 int sysdb_search_group_by_sid_str(TALLOC_CTX *mem_ctx,
                                   struct sss_domain_info *domain,
                                   const char *sid_str,
@@ -1213,14 +1223,17 @@ int sysdb_search_users(TALLOC_CTX *mem_ctx,
                        size_t *msgs_count,
                        struct ldb_message ***msgs);
 
-#define SYSDB_SEARCH_WITH_TS_ONLY_TS_FILTER     0x0001
-#define SYSDB_SEARCH_WITH_TS_ONLY_SYSDB_FILTER  0x0002
+enum sysdb_cache_type {
+    SYSDB_CACHE_TYPE_NONE,
+    SYSDB_CACHE_TYPE_TIMESTAMP,
+    SYSDB_CACHE_TYPE_PERSISTENT
+};
 
 errno_t sysdb_search_with_ts_attr(TALLOC_CTX *mem_ctx,
                                   struct sss_domain_info *domain,
                                   struct ldb_dn *base_dn,
                                   enum ldb_scope scope,
-                                  int optflags,
+                                  enum sysdb_cache_type search_cache,
                                   const char *filter,
                                   const char *attrs[],
                                   struct ldb_result **_result);

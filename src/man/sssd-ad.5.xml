@@ -193,15 +193,17 @@ ad_enabled_domains = sales.example.com, eng.example.com
                     <term>ad_hostname (string)</term>
                     <listitem>
                         <para>
-                            Optional. May be set on machines where the
-                            hostname(5) does not reflect the fully qualified
-                            name used in the Active Directory domain to
-                            identify this host.
+                            Optional. On machines where the hostname(5) does
+                            not reflect the fully qualified name, sssd will try
+                            to expand the short name. If it is not possible or
+                            the short name should be really used instead, set
+                            this parameter explicitly.
                         </para>
                         <para>
                             This field is used to determine the host principal
-                            in use in the keytab. It must match the hostname
-                            for which the keytab was issued.
+                            in use in the keytab and to perform dynamic DNS
+                            updates. It must match the hostname for which the
+                            keytab was issued.
                         </para>
                     </listitem>
                 </varlistentry>
@@ -370,7 +372,7 @@ DOM:dom1:(memberOf:1.2.840.113556.1.4.1941:=cn=nestedgroup,ou=groups,dc=example,
                             SID S-1-5-32-544) in GPO access control rules
                             will be ignored by SSSD.
                             See upstream issue tracker
-                            https://pagure.io/SSSD/sssd/issue/4099 .
+                            https://github.com/SSSD/sssd/issues/5063 .
                         </para>
                         <para>
                             Before performing access control SSSD applies group
@@ -405,13 +407,6 @@ DOM:dom1:(memberOf:1.2.840.113556.1.4.1941:=cn=nestedgroup,ou=groups,dc=example,
                             security filtering and access control are started,
                             the Authenticated Users group permissions on the GPO
                             always apply also to the user.
-                        </para>
-                        <para>
-                            NOTE: The current version of SSSD does not support
-                            host (computer) entries in the GPO 'Security
-                            Filtering' list. Only user and group entries are
-                            supported. Host entries in the list have no
-                            effect.
                         </para>
                         <para>
                             NOTE: If the operation mode is set to enforcing, it
@@ -1011,6 +1006,42 @@ ad_gpo_map_deny = +my_pam_service
                         </para>
                         <para>
                             Default: 86400:750 (24h and 15m)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>ad_update_samba_machine_account_password (boolean)</term>
+                    <listitem>
+                        <para>
+                            If enabled, when SSSD renews the machine account
+                            password, it will also be updated in Samba's
+                            database. This prevents Samba's copy of the machine
+                            account password from getting out of date when it is
+                            set up to use AD for authentication.
+                        </para>
+                        <para>
+                            Default: false
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>ad_use_ldaps (bool)</term>
+                    <listitem>
+                        <para>
+                            By default SSSD uses the plain LDAP port 389 and the
+                            Global Catalog port 3628. If this option is set to
+                            True SSSD will use the LDAPS port 636 and Global
+                            Catalog port 3629 with LDAPS protection. Since AD
+                            does not allow to have multiple encryption layers on
+                            a single connection and we still want to use
+                            SASL/GSSAPI or SASL/GSS-SPNEGO for authentication
+                            the SASL security property maxssf is set to 0 (zero)
+                            for those connections.
+                        </para>
+                        <para>
+                            Default: False
                         </para>
                     </listitem>
                 </varlistentry>

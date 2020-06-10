@@ -1029,6 +1029,18 @@ static int confdb_get_domain_internal(struct confdb_ctx *cdb,
         domain->pwfield = "x";
     }
 
+    if (domain->provider != NULL && strcasecmp(domain->provider, "proxy") == 0) {
+        /* The password field must be  reported as 'x' for proxy provider
+         * using files library, else pam_unix won't
+         * authenticate this entry. */
+        tmp = ldb_msg_find_attr_as_string(res->msgs[0],
+                                          CONFDB_PROXY_LIBNAME,
+                                          NULL);
+        if (tmp != NULL && strcasecmp(tmp, "files") == 0) {
+            domain->pwfield = "x";
+        }
+    }
+
     if (!domain->enumerate) {
         DEBUG(SSSDBG_TRACE_FUNC, "No enumeration for [%s]!\n", domain->name);
         DEBUG(SSSDBG_TRACE_FUNC,
@@ -1225,6 +1237,28 @@ static int confdb_get_domain_internal(struct confdb_ctx *cdb,
         DEBUG(SSSDBG_FATAL_FAILURE,
               "Invalid value for [%s]\n",
               CONFDB_DOMAIN_SSH_HOST_CACHE_TIMEOUT);
+        goto done;
+    }
+
+    /* Override the computer timeout, if specified */
+    ret = get_entry_as_uint32(res->msgs[0], &domain->computer_timeout,
+                              CONFDB_DOMAIN_COMPUTER_CACHE_TIMEOUT,
+                              entry_cache_timeout);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "Invalid value for [%s]\n",
+              CONFDB_DOMAIN_COMPUTER_CACHE_TIMEOUT);
+        goto done;
+    }
+
+    /* Override the resolver timeout, if specified */
+    ret = get_entry_as_uint32(res->msgs[0], &domain->resolver_timeout,
+                              CONFDB_DOMAIN_RESOLVER_CACHE_TIMEOUT,
+                              entry_cache_timeout);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "Invalid value for [%s]\n",
+               CONFDB_DOMAIN_RESOLVER_CACHE_TIMEOUT);
         goto done;
     }
 

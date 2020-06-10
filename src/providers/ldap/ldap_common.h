@@ -42,6 +42,8 @@
 /* Only the asterisk is allowed in wildcard requests */
 #define LDAP_ALLOWED_WILDCARDS "*"
 
+#define LDAP_ENUM_PURGE_TIMEOUT 10800
+
 /* a fd the child process would log into */
 extern int ldap_child_debug_fd;
 
@@ -88,6 +90,18 @@ struct sdap_auth_ctx {
     struct sdap_options *opts;
     struct sdap_service *service;
     struct sdap_service *chpass_service;
+};
+
+struct sdap_resolver_ctx {
+    struct sdap_id_ctx *id_ctx;
+
+    /* Enumeration/cleanup periodic task */
+    struct be_ptask *task;
+
+    /* enumeration loop timer */
+    struct timeval last_enum;
+    /* cleanup loop timer */
+    struct timeval last_purge;
 };
 
 struct tevent_req *
@@ -306,6 +320,28 @@ services_get_send(TALLOC_CTX *mem_ctx,
 errno_t
 services_get_recv(struct tevent_req *req, int *dp_error_out, int *sdap_ret);
 
+struct tevent_req *
+sdap_iphost_handler_send(TALLOC_CTX *mem_ctx,
+                         struct sdap_resolver_ctx *resolver_ctx,
+                         struct dp_resolver_data *resolver_data,
+                         struct dp_req_params *params);
+
+errno_t
+sdap_iphost_handler_recv(TALLOC_CTX *mem_ctx,
+                         struct tevent_req *req,
+                         struct dp_reply_std *data);
+
+struct tevent_req *
+sdap_ipnetwork_handler_send(TALLOC_CTX *mem_ctx,
+                            struct sdap_resolver_ctx *resolver_ctx,
+                            struct dp_resolver_data *resolver_data,
+                            struct dp_req_params *params);
+
+errno_t
+sdap_ipnetwork_handler_recv(TALLOC_CTX *mem_ctx,
+                            struct tevent_req *req,
+                            struct dp_reply_std *data);
+
 /* setup child logging */
 int sdap_setup_child(void);
 
@@ -393,6 +429,11 @@ sdap_id_ctx_conn_add(struct sdap_id_ctx *id_ctx,
 struct sdap_id_ctx *
 sdap_id_ctx_new(TALLOC_CTX *mem_ctx, struct be_ctx *bectx,
                 struct sdap_service *sdap_service);
+
+errno_t
+sdap_resolver_ctx_new(TALLOC_CTX *mem_ctx,
+                      struct sdap_id_ctx *id_ctx,
+                      struct sdap_resolver_ctx **out_ctx);
 
 errno_t sdap_refresh_init(struct be_ctx *be_ctx,
                           struct sdap_id_ctx *id_ctx);

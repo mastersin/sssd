@@ -48,10 +48,11 @@ START_TEST(test_debug_convert_old_level_old_format)
         SSSDBG_TRACE_FUNC,
         SSSDBG_TRACE_LIBS,
         SSSDBG_TRACE_INTERNAL,
-        SSSDBG_TRACE_ALL | SSSDBG_BE_FO
+        SSSDBG_TRACE_ALL | SSSDBG_BE_FO,
+        SSSDBG_TRACE_LDB
     };
 
-    for (old_level = 0; old_level <= 9; old_level++) {
+    for (old_level = 0; old_level < N_ELEMENTS(levels); old_level++) {
         expected_level |= levels[old_level];
 
         char *msg = NULL;
@@ -107,6 +108,10 @@ START_TEST(test_debug_convert_old_level_new_format)
     fail_unless(
         debug_convert_old_level(SSSDBG_TRACE_ALL) == SSSDBG_TRACE_ALL,
         "Invalid conversion of SSSDBG_TRACE_ALL"
+    );
+    fail_unless(
+        debug_convert_old_level(SSSDBG_TRACE_LDB) == SSSDBG_TRACE_LDB,
+        "Invalid conversion of SSSDBG_TRACE_LDB"
     );
     fail_unless(
         debug_convert_old_level(SSSDBG_MASK_ALL) == SSSDBG_MASK_ALL,
@@ -190,29 +195,29 @@ int test_helper_debug_check_message(int level)
     msg[fsize] = '\0';
 
     if (debug_timestamps == 1) {
-        char time_day[4] = {'\0', '\0', '\0', '\0'};
-        char time_month[4] = {'\0', '\0', '\0', '\0'};
-        int time_day_num = 0;
         int time_hour = 0;
         int time_min = 0;
         int time_sec = 0;
         int time_usec = 0;
+        int time_day = 0;
+        int time_month = 0;
         int time_year = 0;
         int scan_return = 0;
 
         if (debug_microseconds == 0) {
-            scan_return = sscanf(msg, "(%s %s %d %d:%d:%d %d)", time_day, time_month,
-                                 &time_day_num, &time_hour, &time_min, &time_sec, &time_year);
+            scan_return = sscanf(msg, "(%d-%d-%d %d:%d:%d)", &time_year,
+                                 &time_month, &time_day, &time_hour,
+                                 &time_min, &time_sec);
 
-            if (scan_return != 7) {
+            if (scan_return != 6) {
                 ret = DEBUG_TEST_NOK_TS;
                 goto done;
             }
             compare_to = talloc_asprintf(ctx,
-                                         "(%s %s %2d %.2d:%.2d:%.2d %.4d) "
+                                         "(%d-%02d-%02d %2d:%02d:%02d): "
                                          "[%s] [%s] (%#.4x): %s\n",
-                                         time_day, time_month, time_day_num,
-                                         time_hour, time_min, time_sec, time_year,
+                                         time_year, time_month, time_day,
+                                         time_hour, time_min, time_sec,
                                          debug_prg_name, function, level, body);
             if (compare_to == NULL) {
                 _errno = ENOMEM;
@@ -220,20 +225,20 @@ int test_helper_debug_check_message(int level)
                 goto done;
             }
         } else {
-            scan_return = sscanf(msg, "(%s %s %d %d:%d:%d:%d %d)", time_day, time_month,
-                                 &time_day_num, &time_hour, &time_min, &time_sec,
-                                 &time_usec, &time_year);
+            scan_return = sscanf(msg, "(%d-%d-%d %d:%d:%d:%d)", &time_year,
+                                 &time_month, &time_day, &time_hour,
+                                 &time_min, &time_sec, &time_usec);
 
-            if (scan_return != 8) {
+            if (scan_return != 7) {
                 ret = DEBUG_TEST_NOK_TS;
                 goto done;
             }
             compare_to = talloc_asprintf(ctx,
-                                         "(%s %s %2d %.2d:%.2d:%.2d:%.6d %.4d) "
+                                         "(%d-%02d-%02d %2d:%02d:%02d:%.6d): "
                                          "[%s] [%s] (%#.4x): %s\n",
-                                         time_day, time_month, time_day_num,
+                                         time_year, time_month, time_day,
                                          time_hour, time_min, time_sec, time_usec,
-                                         time_year, debug_prg_name, function, level, body);
+                                         debug_prg_name, function, level, body);
             if (compare_to == NULL) {
                 _errno = ENOMEM;
                 ret = DEBUG_TEST_ERROR;
@@ -335,7 +340,8 @@ START_TEST(test_debug_is_set_single_no_timestamp)
         SSSDBG_TRACE_FUNC,
         SSSDBG_TRACE_LIBS,
         SSSDBG_TRACE_INTERNAL,
-        SSSDBG_TRACE_ALL
+        SSSDBG_TRACE_ALL,
+        SSSDBG_TRACE_LDB
     };
     char *error_msg;
 
@@ -345,7 +351,7 @@ START_TEST(test_debug_is_set_single_no_timestamp)
     debug_prg_name = "sssd";
     sss_set_logger(sss_logger_str[FILES_LOGGER]);
 
-    for (i = 0; i <= 9; i++) {
+    for (i = 0; i < N_ELEMENTS(levels); i++) {
         debug_level = levels[i];
 
         errno = 0;
@@ -378,7 +384,8 @@ START_TEST(test_debug_is_set_single_timestamp)
         SSSDBG_TRACE_FUNC,
         SSSDBG_TRACE_LIBS,
         SSSDBG_TRACE_INTERNAL,
-        SSSDBG_TRACE_ALL
+        SSSDBG_TRACE_ALL,
+        SSSDBG_TRACE_LDB
     };
     char *error_msg;
 
@@ -389,7 +396,7 @@ START_TEST(test_debug_is_set_single_timestamp)
     sss_set_logger(sss_logger_str[FILES_LOGGER]);
 
 
-    for (i = 0; i <= 9; i++) {
+    for (i = 0; i < N_ELEMENTS(levels); i++) {
         debug_level = levels[i];
 
         errno = 0;
@@ -427,7 +434,8 @@ START_TEST(test_debug_is_set_single_timestamp_microseconds)
         SSSDBG_TRACE_FUNC,
         SSSDBG_TRACE_LIBS,
         SSSDBG_TRACE_INTERNAL,
-        SSSDBG_TRACE_ALL
+        SSSDBG_TRACE_ALL,
+        SSSDBG_TRACE_LDB
     };
     char *error_msg;
 
@@ -438,7 +446,7 @@ START_TEST(test_debug_is_set_single_timestamp_microseconds)
     sss_set_logger(sss_logger_str[FILES_LOGGER]);
 
 
-    for (i = 0; i <= 9; i++) {
+    for (i = 0; i < N_ELEMENTS(levels); i++) {
         debug_level = levels[i];
 
         errno = 0;
@@ -477,7 +485,8 @@ START_TEST(test_debug_is_notset_no_timestamp)
         SSSDBG_TRACE_FUNC,
         SSSDBG_TRACE_LIBS,
         SSSDBG_TRACE_INTERNAL,
-        SSSDBG_TRACE_ALL
+        SSSDBG_TRACE_ALL,
+        SSSDBG_TRACE_LDB
     };
     char *error_msg;
 
@@ -488,7 +497,7 @@ START_TEST(test_debug_is_notset_no_timestamp)
     sss_set_logger(sss_logger_str[FILES_LOGGER]);
 
 
-    for (i = 0; i <= 9; i++) {
+    for (i = 0; i < N_ELEMENTS(levels); i++) {
         debug_level = all_set & ~levels[i];
 
         errno = 0;
@@ -524,7 +533,8 @@ START_TEST(test_debug_is_notset_timestamp)
         SSSDBG_TRACE_FUNC,
         SSSDBG_TRACE_LIBS,
         SSSDBG_TRACE_INTERNAL,
-        SSSDBG_TRACE_ALL
+        SSSDBG_TRACE_ALL,
+        SSSDBG_TRACE_LDB
     };
     char *error_msg;
 
@@ -535,7 +545,7 @@ START_TEST(test_debug_is_notset_timestamp)
     sss_set_logger(sss_logger_str[FILES_LOGGER]);
 
 
-    for (i = 0; i <= 9; i++) {
+    for (i = 0; i < N_ELEMENTS(levels); i++) {
         debug_level = all_set & ~levels[i];
 
         errno = 0;
@@ -571,7 +581,8 @@ START_TEST(test_debug_is_notset_timestamp_microseconds)
         SSSDBG_TRACE_FUNC,
         SSSDBG_TRACE_LIBS,
         SSSDBG_TRACE_INTERNAL,
-        SSSDBG_TRACE_ALL
+        SSSDBG_TRACE_ALL,
+        SSSDBG_TRACE_LDB
     };
     char *error_msg;
 
@@ -581,7 +592,7 @@ START_TEST(test_debug_is_notset_timestamp_microseconds)
     debug_prg_name = "sssd";
     sss_set_logger(sss_logger_str[FILES_LOGGER]);
 
-    for (i = 0; i <= 9; i++) {
+    for (i = 0; i < N_ELEMENTS(levels); i++) {
         debug_level = all_set & ~levels[i];
 
         errno = 0;
@@ -616,12 +627,13 @@ START_TEST(test_debug_is_set_true)
         SSSDBG_TRACE_FUNC,
         SSSDBG_TRACE_LIBS,
         SSSDBG_TRACE_INTERNAL,
-        SSSDBG_TRACE_ALL
+        SSSDBG_TRACE_ALL,
+        SSSDBG_TRACE_LDB
     };
 
     debug_level = SSSDBG_MASK_ALL;
 
-    for (i = 0; i <= 9; i++) {
+    for (i = 0; i < N_ELEMENTS(levels); i++) {
         result = DEBUG_IS_SET(levels[i]);
         char *msg = NULL;
         msg = talloc_asprintf(NULL, "Test of level %#.4x failed - result is 0x%.4x", levels[i], result);
@@ -646,10 +658,11 @@ START_TEST(test_debug_is_set_false)
         SSSDBG_TRACE_FUNC,
         SSSDBG_TRACE_LIBS,
         SSSDBG_TRACE_INTERNAL,
-        SSSDBG_TRACE_ALL
+        SSSDBG_TRACE_ALL,
+        SSSDBG_TRACE_LDB
     };
 
-    for (i = 0; i <= 9; i++) {
+    for (i = 0; i < N_ELEMENTS(levels); i++) {
         debug_level = all_set & ~levels[i];
 
         result = DEBUG_IS_SET(levels[i]);

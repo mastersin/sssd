@@ -183,7 +183,9 @@ sdap_modify_passwd_send(TALLOC_CTX *mem_ctx,
                         const char *user_dn,
                         const char *new_password);
 
-errno_t sdap_modify_passwd_recv(struct tevent_req *req);
+errno_t sdap_modify_passwd_recv(struct tevent_req *req,
+                                TALLOC_CTX * mem_ctx,
+                                char **_user_error_message);
 
 struct tevent_req *
 sdap_modify_shadow_lastchange_send(TALLOC_CTX *mem_ctx,
@@ -362,6 +364,61 @@ enum_services_send(TALLOC_CTX *memctx,
 
 errno_t
 enum_services_recv(struct tevent_req *req);
+
+struct tevent_req *
+sdap_get_iphost_send(TALLOC_CTX *memctx,
+                     struct tevent_context *ev,
+                     struct sss_domain_info *dom,
+                     struct sysdb_ctx *sysdb,
+                     struct sdap_options *opts,
+                     struct sdap_search_base **search_bases,
+                     struct sdap_handle *sh,
+                     const char **attrs,
+                     const char *filter,
+                     int timeout,
+                     bool enumeration);
+errno_t
+sdap_get_iphost_recv(TALLOC_CTX *mem_ctx,
+                     struct tevent_req *req,
+                     char **usn_value);
+
+struct tevent_req *
+enum_iphosts_send(TALLOC_CTX *memctx,
+                  struct tevent_context *ev,
+                  struct sdap_id_ctx *id_ctx,
+                  struct sdap_id_op *op,
+                  bool purge);
+
+errno_t
+enum_iphosts_recv(struct tevent_req *req);
+
+struct tevent_req *
+sdap_get_ipnetwork_send(TALLOC_CTX *memctx,
+                        struct tevent_context *ev,
+                        struct sss_domain_info *dom,
+                        struct sysdb_ctx *sysdb,
+                        struct sdap_options *opts,
+                        struct sdap_search_base **search_bases,
+                        struct sdap_handle *sh,
+                        const char **attrs,
+                        const char *filter,
+                        int timeout,
+                        bool enumeration);
+
+errno_t
+sdap_get_ipnetwork_recv(TALLOC_CTX *mem_ctx,
+                        struct tevent_req *req,
+                        char **usn_value);
+
+struct tevent_req *
+enum_ipnetworks_send(TALLOC_CTX *memctx,
+                     struct tevent_context *ev,
+                     struct sdap_id_ctx *id_ctx,
+                     struct sdap_id_op *op,
+                     bool purge);
+
+errno_t
+enum_ipnetworks_recv(struct tevent_req *req);
 
 /* OID documented in
  * http://msdn.microsoft.com/en-us/library/windows/desktop/aa746475%28v=vs.85%29.aspx

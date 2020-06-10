@@ -1159,6 +1159,12 @@ static errno_t sdap_set_search_base(struct sdap_options *opts,
     case SDAP_AUTOFS_SEARCH_BASE:
         bases = &sdom->autofs_search_bases;
         break;
+    case SDAP_IPHOST_SEARCH_BASE:
+        bases = &sdom->iphost_search_bases;
+        break;
+    case SDAP_IPNETWORK_SEARCH_BASE:
+        bases = &sdom->ipnetwork_search_bases;
+        break;
     default:
         return EINVAL;
     }
@@ -1194,6 +1200,8 @@ errno_t sdap_set_config_options_with_rootdse(struct sysdb_attrs *rootdse,
             || !sdom->netgroup_search_bases
             || !sdom->host_search_bases
             || !sdom->sudo_search_bases
+            || !sdom->iphost_search_bases
+            || !sdom->ipnetwork_search_bases
             || !sdom->autofs_search_bases) {
         naming_context = get_naming_context(opts->basic, rootdse);
         if (naming_context == NULL) {
@@ -1269,6 +1277,22 @@ errno_t sdap_set_config_options_with_rootdse(struct sysdb_attrs *rootdse,
        ret = sdap_set_search_base(opts, sdom,
                                   SDAP_AUTOFS_SEARCH_BASE,
                                   naming_context);
+        if (ret != EOK) goto done;
+    }
+
+    /* IP host */
+    if (!sdom->iphost_search_bases) {
+        ret = sdap_set_search_base(opts, sdom,
+                                   SDAP_IPHOST_SEARCH_BASE,
+                                   naming_context);
+        if (ret != EOK) goto done;
+    }
+
+    /* IP network */
+    if (!sdom->ipnetwork_search_bases) {
+        ret = sdap_set_search_base(opts, sdom,
+                                   SDAP_IPNETWORK_SEARCH_BASE,
+                                   naming_context);
         if (ret != EOK) goto done;
     }
 
@@ -1453,6 +1477,18 @@ int sdap_get_server_opts_from_rootdse(TALLOC_CTX *memctx,
         !opts->sudorule_map[SDAP_AT_SUDO_USN].name) {
         opts->sudorule_map[SDAP_AT_SUDO_USN].name =
                     talloc_strdup(opts->sudorule_map,
+                                  opts->gen_map[SDAP_AT_ENTRY_USN].name);
+    }
+    if (opts->iphost_map &&
+        !opts->iphost_map[SDAP_AT_IPHOST_USN].name) {
+        opts->iphost_map[SDAP_AT_IPHOST_USN].name =
+                    talloc_strdup(opts->iphost_map,
+                                  opts->gen_map[SDAP_AT_ENTRY_USN].name);
+    }
+    if (opts->ipnetwork_map &&
+        !opts->ipnetwork_map[SDAP_AT_IPNETWORK_USN].name) {
+        opts->ipnetwork_map[SDAP_AT_IPNETWORK_USN].name =
+                    talloc_strdup(opts->ipnetwork_map,
                                   opts->gen_map[SDAP_AT_ENTRY_USN].name);
     }
 
@@ -1790,5 +1826,7 @@ void sdap_domain_copy_search_bases(struct sdap_domain *to,
     to->netgroup_search_bases = from->netgroup_search_bases;
     to->sudo_search_bases = from->sudo_search_bases;
     to->service_search_bases = from->service_search_bases;
+    to->iphost_search_bases = from->iphost_search_bases;
+    to->ipnetwork_search_bases = from->ipnetwork_search_bases;
     to->autofs_search_bases = from->autofs_search_bases;
 }

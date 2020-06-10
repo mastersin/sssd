@@ -31,6 +31,7 @@
 #include "providers/ldap/sdap_sudo.h"
 #include "providers/ldap/sdap_autofs.h"
 #include "providers/ldap/sdap_idmap.h"
+#include "providers/ldap/ldap_resolver_enum.h"
 #include "providers/fail_over_srv.h"
 #include "providers/be_refresh.h"
 
@@ -38,6 +39,7 @@ struct ldap_init_ctx {
     struct sdap_options *options;
     struct sdap_id_ctx *id_ctx;
     struct sdap_auth_ctx *auth_ctx;
+    struct sdap_resolver_ctx *resolver_ctx;
 };
 
 /* Please use this only for short lists */
@@ -703,4 +705,44 @@ errno_t sssm_ldap_sudo_init(TALLOC_CTX *mem_ctx,
                                  "built without sudo support, ignoring\n");
     return EOK;
 #endif
+}
+
+errno_t sssm_ldap_resolver_init(TALLOC_CTX *mem_ctx,
+                                struct be_ctx *be_ctx,
+                                void *module_data,
+                                struct dp_method *dp_methods)
+{
+    struct ldap_init_ctx *init_ctx;
+    errno_t ret;
+
+    DEBUG(SSSDBG_TRACE_INTERNAL, "Initializing LDAP resolver handler\n");
+    init_ctx = talloc_get_type(module_data, struct ldap_init_ctx);
+
+    ret = sdap_resolver_ctx_new(init_ctx, init_ctx->id_ctx,
+                                &init_ctx->resolver_ctx);
+    if (ret != EOK) {
+        return ret;
+    }
+
+    ret = ldap_resolver_setup_tasks(be_ctx, init_ctx->resolver_ctx,
+                                    ldap_resolver_enumeration_send,
+                                    ldap_resolver_enumeration_recv);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Unable to setup resolver background tasks [%d]: %s\n",
+              ret, sss_strerror(ret));
+        return ret;
+    }
+
+    dp_set_method(dp_methods, DPM_RESOLVER_HOSTS_HANDLER,
+                  sdap_iphost_handler_send, sdap_iphost_handler_recv,
+                  init_ctx->resolver_ctx, struct sdap_resolver_ctx,
+                  struct dp_resolver_data, struct dp_reply_std);
+
+    dp_set_method(dp_methods, DPM_RESOLVER_IP_NETWORK_HANDLER,
+                  sdap_ipnetwork_handler_send, sdap_ipnetwork_handler_recv,
+                  init_ctx->resolver_ctx, struct sdap_resolver_ctx,
+                  struct dp_resolver_data, struct dp_reply_std);
+
+    return EOK;
 }

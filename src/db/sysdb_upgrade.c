@@ -25,6 +25,8 @@
 #include "util/util.h"
 #include "db/sysdb_private.h"
 #include "db/sysdb_autofs.h"
+#include "db/sysdb_iphosts.h"
+#include "db/sysdb_ipnetworks.h"
 
 struct upgrade_ctx {
     struct ldb_context *ldb;
@@ -1017,7 +1019,7 @@ int sysdb_upgrade_09(struct sysdb_ctx *sysdb, const char **ver)
         goto done;
     }
 
-    /* Add Index for servicePort and serviceProtocol */
+    /* Add Index for ipHostNumber and ipNetworkNumber */
     ret = ldb_msg_add_empty(msg, "@IDXATTR", LDB_FLAG_MOD_ADD, NULL);
     if (ret != LDB_SUCCESS) {
         ret = ENOMEM;
@@ -2565,6 +2567,117 @@ int sysdb_upgrade_20(struct sysdb_ctx *sysdb, const char **ver)
 
 done:
     ret = finish_upgrade(ret, &ctx, ver);
+    return ret;
+}
+
+int sysdb_upgrade_21(struct sysdb_ctx *sysdb, const char **ver)
+{
+    TALLOC_CTX *tmp_ctx;
+    int ret;
+    struct ldb_message *msg;
+    struct upgrade_ctx *ctx;
+
+    tmp_ctx = talloc_new(NULL);
+    if (tmp_ctx == NULL) {
+        return ENOMEM;
+    }
+
+    ret = commence_upgrade(sysdb, sysdb->ldb, SYSDB_VERSION_0_22, &ctx);
+    if (ret) {
+        return ret;
+    }
+
+    /* Case insensitive search for ipHostNumber and ipNetworkNumber */
+    msg = ldb_msg_new(tmp_ctx);
+    if (msg == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    msg->dn = ldb_dn_new(tmp_ctx, sysdb->ldb, "@ATTRIBUTES");
+    if (msg->dn == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_msg_add_empty(msg, SYSDB_IP_HOST_ATTR_ADDRESS, LDB_FLAG_MOD_ADD, NULL);
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_msg_add_string(msg, SYSDB_IP_HOST_ATTR_ADDRESS, "CASE_INSENSITIVE");
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_msg_add_empty(msg, SYSDB_IP_NETWORK_ATTR_NUMBER,
+                            LDB_FLAG_MOD_ADD, NULL);
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_msg_add_string(msg, SYSDB_IP_NETWORK_ATTR_NUMBER,
+                             "CASE_INSENSITIVE");
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_modify(sysdb->ldb, msg);
+    if (ret != LDB_SUCCESS) {
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    talloc_zfree(msg);
+
+    /* Add new indexes */
+    msg = ldb_msg_new(tmp_ctx);
+    if (msg == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    msg->dn = ldb_dn_new(tmp_ctx, sysdb->ldb, "@INDEXLIST");
+    if (msg->dn == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    /* Add Index for ipHostNumber */
+    ret = ldb_msg_add_empty(msg, "@IDXATTR", LDB_FLAG_MOD_ADD, NULL);
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_msg_add_string(msg, "@IDXATTR", SYSDB_IP_HOST_ATTR_ADDRESS);
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_msg_add_string(msg, "@IDXATTR", SYSDB_IP_NETWORK_ATTR_NUMBER);
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_modify(sysdb->ldb, msg);
+    if (ret != LDB_SUCCESS) {
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    /* conversion done, update version number */
+    ret = update_version(ctx);
+
+done:
+    ret = finish_upgrade(ret, &ctx, ver);
+    talloc_free(tmp_ctx);
     return ret;
 }
 

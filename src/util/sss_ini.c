@@ -320,7 +320,7 @@ static int sss_ini_add_snippets(struct sss_ini *self,
     return ret;
 
 #else /* HAVE_LIBINI_CONFIG_V1_3 */
-    return EOK
+    return EOK;
 #endif /* ! HAVE_LIBINI_CONFIG_V1_3 */
 }
 
@@ -865,6 +865,7 @@ int sss_ini_read_sssd_conf(struct sss_ini *self,
 
     ret = sss_ini_parse(self);
     if (ret != EOK) {
+        sss_ini_config_print_errors(self->error_list);
         DEBUG(SSSDBG_FATAL_FAILURE, "Failed to parse configuration.\n");
         return ERR_INI_PARSE_FAILED;
     }

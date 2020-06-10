@@ -35,6 +35,7 @@ static errno_t be_refresh_get_values_ex(TALLOC_CTX *mem_ctx,
                                         struct ldb_dn *base_dn,
                                         const char *key_attr,
                                         const char *value_attr,
+                                        enum sysdb_cache_type search_cache,
                                         char ***_values)
 {
     TALLOC_CTX *tmp_ctx = NULL;
@@ -64,7 +65,7 @@ static errno_t be_refresh_get_values_ex(TALLOC_CTX *mem_ctx,
 
     ret = sysdb_search_with_ts_attr(tmp_ctx, domain, base_dn,
                                     LDB_SCOPE_SUBTREE,
-                                    SYSDB_SEARCH_WITH_TS_ONLY_TS_FILTER,
+                                    search_cache,
                                     filter, attrs,
                                     &res);
     if (ret != EOK) {
@@ -102,6 +103,7 @@ static errno_t be_refresh_get_values(TALLOC_CTX *mem_ctx,
     struct ldb_dn *base_dn = NULL;
     errno_t ret;
     const char *key_attr;
+    enum sysdb_cache_type search_cache = SYSDB_CACHE_TYPE_TIMESTAMP;
 
     switch (type) {
     case BE_REFRESH_TYPE_INITGROUPS:
@@ -118,6 +120,8 @@ static errno_t be_refresh_get_values(TALLOC_CTX *mem_ctx,
         break;
     case BE_REFRESH_TYPE_NETGROUPS:
         key_attr = SYSDB_CACHE_EXPIRE;
+        // Netgroup will reside in persistent cache rather than timestamp one
+        search_cache = SYSDB_CACHE_TYPE_PERSISTENT;
         base_dn = sysdb_netgroup_base_dn(mem_ctx, domain);
         break;
     default:
@@ -132,7 +136,7 @@ static errno_t be_refresh_get_values(TALLOC_CTX *mem_ctx,
 
     ret = be_refresh_get_values_ex(mem_ctx, domain, period,
                                    base_dn, key_attr,
-                                   attr_name, _values);
+                                   attr_name, search_cache, _values);
 
     talloc_free(base_dn);
     return ret;
@@ -385,6 +389,10 @@ static errno_t be_refresh_step(struct tevent_req *req)
         if (state->index == BE_REFRESH_TYPE_SENTINEL) {
             state->domain = get_next_domain(state->domain,
                                             SSS_GND_DESCEND);
+            /* we can update just subdomains */
+            if (state->domain != NULL && !IS_SUBDOMAIN(state->domain)) {
+                break;
+            }
             state->index = 0;
             continue;
         }

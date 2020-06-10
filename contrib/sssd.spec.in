@@ -5,6 +5,8 @@
 %global rhel6_minor %(%{__grep} -o "6\\.[0-9]*" /etc/redhat-release |%{__sed} -s 's/6.//')
 %global rhel7_minor %(%{__grep} -o "7\\.[0-9]*" /etc/redhat-release |%{__sed} -s 's/7.//')
 
+%global samba_package_version %(rpm -q samba-devel --queryformat %{version}-%{release})
+
 %if 0%{?rhel} && 0%{?rhel} <= 6
 %{!?__python2: %global __python2 /usr/bin/python2}
 %{!?python2_sitelib: %global python2_sitelib %(%{__python2} -c "from distutils.sysconfig import get_python_lib; print(get_python_lib())")}
@@ -154,7 +156,7 @@ Release: 0@PRERELEASE_VERSION@%{?dist}
 Group: Applications/System
 Summary: System Security Services Daemon
 License: GPLv3+
-URL: https://pagure.io/SSSD/sssd/
+URL: https://github.com/SSSD/sssd
 Source0: %{name}-%{version}.tar.gz
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
@@ -172,6 +174,9 @@ Requires: sssd-proxy = %{version}-%{release}
 Requires: python3-sssdconfig = %{version}-%{release}
 %else
 Requires: python2-sssdconfig = %{version}-%{release}
+%endif
+%if (0%{?fedora} >= 30 || 0%{?rhel} >= 8)
+Recommends: logrotate
 %endif
 
 %global servicename sssd
@@ -272,7 +277,7 @@ BuildRequires: libnfsidmap-devel
 BuildRequires: nfs-utils-lib-devel
 %endif
 
-BuildRequires: samba4-devel
+BuildRequires: samba-devel
 BuildRequires: libsmbclient-devel
 %if (0%{?detect_idmap_version} == 1)
 BuildRequires: samba-winbind
@@ -335,6 +340,8 @@ subpackages such as sssd-ldap.
 Summary: SSSD Client libraries for NSS and PAM
 Group: Applications/System
 License: LGPLv3+
+Requires: libsss_nss_idmap = %{version}-%{release}
+Requires: libsss_idmap = %{version}-%{release}
 Requires(post): /sbin/ldconfig
 Requires(postun): /sbin/ldconfig
 
@@ -365,6 +372,7 @@ Summary: Userspace tools for use with the SSSD
 Group: Applications/System
 License: GPLv3+
 Requires: sssd-common = %{version}-%{release}
+Requires: libsss_simpleifp = %{version}-%{release}
 # required by sss_obfuscate
 %if (0%{?with_python3} == 1)
 Requires: python3-sss = %{version}-%{release}
@@ -375,6 +383,9 @@ Requires: python2-sssdconfig = %{version}-%{release}
 %endif
 %if (0%{?use_systemd} == 0)
 Requires: /sbin/service
+%endif
+%if (0%{?fedora} >= 30 || 0%{?rhel} >= 8)
+Recommends: sssd-dbus
 %endif
 
 %description tools
@@ -474,6 +485,7 @@ License: GPLv3+
 Conflicts: sssd < %{version}-%{release}
 Requires: sssd-common = %{version}-%{release}
 Requires: sssd-krb5-common = %{version}-%{release}
+Requires: libsss_idmap = %{version}-%{release}
 
 %description ldap
 Provides the LDAP back end that the SSSD can utilize to fetch identity data
@@ -508,6 +520,7 @@ Summary: Common files needed for supporting PAC processing
 Group: Applications/System
 License: GPLv3+
 Requires: sssd-common = %{version}-%{release}
+Requires: libsss_idmap = %{version}-%{release}
 
 %description common-pac
 Provides common files needed by SSSD providers such as IPA and Active Directory
@@ -518,11 +531,13 @@ Summary: The IPA back end of the SSSD
 Group: Applications/System
 License: GPLv3+
 Conflicts: sssd < %{version}-%{release}
+Requires: samba-client-libs >= %{samba_package_version}
 Requires: sssd-common = %{version}-%{release}
 Requires: sssd-krb5-common = %{version}-%{release}
 Requires: libipa_hbac = %{version}-%{release}
 Requires: bind-utils
 Requires: sssd-common-pac = %{version}-%{release}
+Requires: libsss_idmap = %{version}-%{release}
 
 %description ipa
 Provides the IPA back end that the SSSD can utilize to fetch identity data
@@ -533,9 +548,11 @@ Summary: The AD back end of the SSSD
 Group: Applications/System
 License: GPLv3+
 Conflicts: sssd < %{version}-%{release}
+Requires: samba-client-libs >= %{samba_package_version}
 Requires: sssd-common = %{version}-%{release}
 Requires: sssd-krb5-common = %{version}-%{release}
 Requires: sssd-common-pac = %{version}-%{release}
+Requires: libsss_idmap = %{version}-%{release}
 Requires: bind-utils
 
 %description ad
@@ -715,6 +732,7 @@ Provides library that simplifies D-Bus API for the SSSD InfoPipe responder.
 Summary: The SSSD libwbclient implementation
 Group: Applications/System
 License: GPLv3+ and LGPLv3+
+Requires: libsss_nss_idmap = %{version}-%{release}
 
 %description libwbclient
 The SSSD libwbclient implementation.
@@ -731,6 +749,8 @@ Development libraries for the SSSD libwbclient implementation.
 Summary: SSSD's idmap_sss Backend for Winbind
 Group:  Applications/System
 License: GPLv3+ and LGPLv3+
+Requires: libsss_nss_idmap = %{version}-%{release}
+Requires: libsss_idmap = %{version}-%{release}
 
 %description winbind-idmap
 The idmap_sss module provides a way for Winbind to call SSSD to map UIDs/GIDs
@@ -799,6 +819,8 @@ autoreconf -ivf
     --disable-static \
 %if (0%{?use_openssl} == 1)
     --with-crypto=libcrypto \
+%else
+    --with-crypto=nss \
 %endif
     --disable-rpath \
 %if %{with sssd_user}
@@ -1061,13 +1083,11 @@ done
 %dir %{_sysconfdir}/rwtab.d
 %config(noreplace) %{_sysconfdir}/rwtab.d/sssd
 %dir %{_datadir}/sssd
-%{_sysconfdir}/pam.d/sssd-shadowutils
+%config(noreplace) %{_sysconfdir}/pam.d/sssd-shadowutils
 %dir %{_libdir}/%{name}/conf
 %{_libdir}/%{name}/conf/sssd.conf
 
 %{_datadir}/sssd/cfg_rules.ini
-%{_datadir}/sssd/sssd.api.conf
-%{_datadir}/sssd/sssd.api.d
 %{_mandir}/man1/sss_ssh_authorizedkeys.1*
 %{_mandir}/man1/sss_ssh_knownhostsproxy.1*
 %{_mandir}/man5/sssd.conf.5*
@@ -1232,6 +1252,9 @@ done
 %defattr(-,root,root,-)
 %dir %{python2_sitelib}/SSSDConfig
 %{python2_sitelib}/SSSDConfig/*.py*
+%dir %{_datadir}/sssd
+%{_datadir}/sssd/sssd.api.conf
+%{_datadir}/sssd/sssd.api.d
 %endif
 
 %if (0%{?with_python3} == 1)
@@ -1241,6 +1264,9 @@ done
 %{python3_sitelib}/SSSDConfig/*.py*
 %dir %{python3_sitelib}/SSSDConfig/__pycache__
 %{python3_sitelib}/SSSDConfig/__pycache__/*.py*
+%dir %{_datadir}/sssd
+%{_datadir}/sssd/sssd.api.conf
+%{_datadir}/sssd/sssd.api.d
 %endif
 
 %if (0%{?with_python2} == 1)

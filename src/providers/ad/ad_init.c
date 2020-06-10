@@ -37,6 +37,7 @@
 #include "providers/krb5/krb5_auth.h"
 #include "providers/krb5/krb5_init_shared.h"
 #include "providers/ad/ad_id.h"
+#include "providers/ad/ad_resolver.h"
 #include "providers/ad/ad_srv.h"
 #include "providers/be_dyndns.h"
 #include "providers/ad/ad_subdomains.h"
@@ -46,6 +47,7 @@ struct ad_init_ctx {
     struct ad_options *options;
     struct ad_id_ctx *id_ctx;
     struct krb5_ctx *auth_ctx;
+    struct ad_resolver_ctx *resolver_ctx;
 };
 
 #define AD_COMPAT_ON "1"
@@ -138,6 +140,7 @@ static errno_t ad_init_options(TALLOC_CTX *mem_ctx,
     char *ad_servers = NULL;
     char *ad_backup_servers = NULL;
     char *ad_realm;
+    bool ad_use_ldaps = false;
     errno_t ret;
 
     ad_sasl_initialize();
@@ -154,12 +157,14 @@ static errno_t ad_init_options(TALLOC_CTX *mem_ctx,
     ad_servers = dp_opt_get_string(ad_options->basic, AD_SERVER);
     ad_backup_servers = dp_opt_get_string(ad_options->basic, AD_BACKUP_SERVER);
     ad_realm = dp_opt_get_string(ad_options->basic, AD_KRB5_REALM);
+    ad_use_ldaps = dp_opt_get_bool(ad_options->basic, AD_USE_LDAPS);
 
     /* Set up the failover service */
     ret = ad_failover_init(ad_options, be_ctx, ad_servers, ad_backup_servers,
                            ad_realm, AD_SERVICE_NAME, AD_GC_SERVICE_NAME,
                            dp_opt_get_string(ad_options->basic, AD_DOMAIN),
                            false, /* will be set in ad_get_auth_options() */
+                           ad_use_ldaps,
                            (size_t) -1,
                            (size_t) -1,
                            &ad_options->service);
@@ -184,11 +189,13 @@ static errno_t ad_init_srv_plugin(struct be_ctx *be_ctx,
     const char *ad_site_override;
     bool sites_enabled;
     errno_t ret;
+    bool ad_use_ldaps;
 
     hostname = dp_opt_get_string(ad_options->basic, AD_HOSTNAME);
     ad_domain = dp_opt_get_string(ad_options->basic, AD_DOMAIN);
     ad_site_override = dp_opt_get_string(ad_options->basic, AD_SITE);
     sites_enabled = dp_opt_get_bool(ad_options->basic, AD_ENABLE_DNS_SITES);
+    ad_use_ldaps = dp_opt_get_bool(ad_options->basic, AD_USE_LDAPS);
 
 
     if (!sites_enabled) {
@@ -205,7 +212,8 @@ static errno_t ad_init_srv_plugin(struct be_ctx *be_ctx,
     srv_ctx = ad_srv_plugin_ctx_init(be_ctx, be_ctx, be_ctx->be_res,
                                      default_host_dbs, ad_options->id,
                                      hostname, ad_domain,
-                                     ad_site_override);
+                                     ad_site_override,
+                                     ad_use_ldaps);
     if (srv_ctx == NULL) {
         DEBUG(SSSDBG_FATAL_FAILURE, "Out of memory?\n");
         return ENOMEM;
@@ -669,4 +677,48 @@ errno_t sssm_ad_sudo_init(TALLOC_CTX *mem_ctx,
                                 "built without sudo support, ignoring\n");
     return EOK;
 #endif
+}
+
+errno_t sssm_ad_resolver_init(TALLOC_CTX *mem_ctx,
+                              struct be_ctx *be_ctx,
+                              void *module_data,
+                              struct dp_method *dp_methods)
+{
+    struct ad_init_ctx *init_ctx;
+    errno_t ret;
+
+    DEBUG(SSSDBG_TRACE_INTERNAL, "Initializing AD resolver handler\n");
+    init_ctx = talloc_get_type(module_data, struct ad_init_ctx);
+
+    ret = ad_resolver_ctx_init(init_ctx, init_ctx->id_ctx,
+                               &init_ctx->resolver_ctx);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Unable to initialize AD resolver context\n");
+        return ret;
+    }
+
+    ret = ad_resolver_setup_tasks(be_ctx, init_ctx->resolver_ctx,
+                                  ad_resolver_enumeration_send,
+                                  ad_resolver_enumeration_recv);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Unable to setup resolver background tasks [%d]: %s\n",
+              ret, sss_strerror(ret));
+        return ret;
+    }
+
+    dp_set_method(dp_methods, DPM_RESOLVER_HOSTS_HANDLER,
+                  sdap_iphost_handler_send, sdap_iphost_handler_recv,
+                  init_ctx->resolver_ctx->sdap_resolver_ctx,
+                  struct sdap_resolver_ctx,
+                  struct dp_resolver_data, struct dp_reply_std);
+
+    dp_set_method(dp_methods, DPM_RESOLVER_IP_NETWORK_HANDLER,
+                  sdap_ipnetwork_handler_send, sdap_ipnetwork_handler_recv,
+                  init_ctx->resolver_ctx->sdap_resolver_ctx,
+                  struct sdap_resolver_ctx,
+                  struct dp_resolver_data, struct dp_reply_std);
+
+    return EOK;
 }

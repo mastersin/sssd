@@ -120,6 +120,7 @@ struct pam_test_ctx {
 /* Must be global because it is needed in some wrappers */
 struct pam_test_ctx *pam_test_ctx;
 
+#ifdef HAVE_NSS
 static errno_t setup_nss_db(void)
 {
     int ret;
@@ -389,6 +390,7 @@ static void cleanup_nss_db(void)
         DEBUG(SSSDBG_OP_FAILURE, "Failed to remove " NSS_DB_PATH "\n");
     }
 }
+#endif
 
 struct pam_ctx *mock_pctx(TALLOC_CTX *mem_ctx)
 {
@@ -412,6 +414,8 @@ struct pam_ctx *mock_pctx(TALLOC_CTX *mem_ctx)
 
     ret = p11_refresh_certmap_ctx(pctx, NULL);
     assert_int_equal(ret, 0);
+
+    pctx->initgroups_scheme = PAM_INITGR_NO_SESSION;
 
     return pctx;
 }
@@ -501,6 +505,7 @@ void test_pam_setup(struct sss_test_conf_param dom_params[],
 static void pam_test_setup_common(void)
 {
     errno_t ret;
+    time_t now;
 
 #ifndef HAVE_NSS
     putenv(discard_const("SOFTHSM2_CONF=" ABS_BUILD_DIR "/src/tests/test_CA/softhsm2_one.conf"));
@@ -518,15 +523,22 @@ static void pam_test_setup_common(void)
                                                pam_test_ctx->tctx->dom->name);
     assert_non_null(pam_test_ctx->wrong_user_fqdn);
 
-    /* integer values cannot be set by pam_params */
-    pam_test_ctx->pctx->id_timeout = 5;
+    /* integer values cannot be set by pam_params, since we are expecting that
+     * the PAM id cache stay valid during a test we have to make sure the
+     * timeout is long enough that even a run e.g. delayed by running with
+     * valgrind can pass. */
+    pam_test_ctx->pctx->id_timeout = 60;
 
+    now = time(NULL);
     /* Prime the cache with a valid user */
     ret = sysdb_add_user(pam_test_ctx->tctx->dom,
                          pam_test_ctx->pam_user_fqdn,
                          123, 456, "pam user",
                          "/home/pamuser", "/bin/sh", NULL,
-                         NULL, 300, 0);
+                         NULL, 300, now);
+    assert_int_equal(ret, EOK);
+    ret = sysdb_set_initgr_expire_timestamp(pam_test_ctx->tctx->dom,
+                                            pam_test_ctx->pam_user_fqdn);
     assert_int_equal(ret, EOK);
 
     /* Add entry to the initgr cache to make sure no initgr request is sent to
@@ -542,7 +554,10 @@ static void pam_test_setup_common(void)
                          pam_test_ctx->wrong_user_fqdn,
                          321, 654, "wrong user",
                          "/home/wronguser", "/bin/sh", NULL,
-                         NULL, 300, 0);
+                         NULL, 300, now);
+    assert_int_equal(ret, EOK);
+    ret = sysdb_set_initgr_expire_timestamp(pam_test_ctx->tctx->dom,
+                                            pam_test_ctx->wrong_user_fqdn);
     assert_int_equal(ret, EOK);
 
     /* Add entry to the initgr cache to make sure no initgr request is sent to
@@ -559,6 +574,7 @@ static int pam_test_setup(void **state)
     struct sss_test_conf_param dom_params[] = {
         { "enumerate", "false" },
         { "cache_credentials", "true" },
+        { "entry_cache_timeout", "300" },
         { NULL, NULL },             /* Sentinel */
     };
 
@@ -815,22 +831,20 @@ static void mock_input_pam(TALLOC_CTX *mem_ctx,
                            const char *pwd,
                            const char *fa2)
 {
-    return mock_input_pam_ex(mem_ctx, name, pwd, fa2, NULL, true);
+    return mock_input_pam_ex(mem_ctx, name, pwd, fa2, NULL, false);
 }
 
 static void mock_input_pam_cert(TALLOC_CTX *mem_ctx, const char *name,
                                 const char *pin, const char *token_name,
                                 const char *module_name, const char *key_id,
                                 const char *service,
-                                acct_cb_t acct_cb, const char *cert,
-                                bool only_one_provider_call)
+                                acct_cb_t acct_cb, const char *cert)
 {
     size_t buf_size;
     uint8_t *m_buf;
     uint8_t *buf;
     struct pam_items pi = { 0 };
     int ret;
-    bool already_mocked = false;
     size_t needed_size;
 
     if (name != NULL) {
@@ -884,14 +898,10 @@ static void mock_input_pam_cert(TALLOC_CTX *mem_ctx, const char *name,
 
     if (acct_cb != NULL) {
         mock_account_recv(0, 0, NULL, acct_cb, discard_const(cert));
-        already_mocked = true;
     }
 
     if (name != NULL) {
         mock_parse_inp(name, NULL, EOK);
-        if (!(only_one_provider_call && already_mocked)) {
-            mock_account_recv_simple();
-        }
     }
 }
 
@@ -2057,7 +2067,7 @@ void test_pam_preauth_no_logon_name(void **state)
     int ret;
 
     mock_input_pam_cert(pam_test_ctx, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                        NULL, false);
+                        NULL);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2082,8 +2092,9 @@ void test_pam_auth_no_upn_logon_name(void **state)
     assert_int_equal(ret, EOK);
 
     mock_input_pam_ex(pam_test_ctx, "upn@"TEST_DOM_NAME, "12345", NULL, NULL,
-                      true);
+                      false);
     mock_account_recv_simple();
+    mock_parse_inp("upn@"TEST_DOM_NAME, NULL, EOK);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2121,7 +2132,8 @@ void test_pam_auth_upn_logon_name(void **state)
 
     mock_input_pam_ex(pam_test_ctx, "upn@"TEST_DOM_NAME, "12345", NULL, NULL,
                       true);
-    mock_account_recv_simple();
+
+    mock_parse_inp("pamuser", NULL, EOK);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2156,7 +2168,7 @@ void test_pam_preauth_cert_nocert(void **state)
 
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        NULL, NULL, false);
+                        NULL, NULL);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2299,7 +2311,7 @@ void test_pam_preauth_cert_nomatch(void **state)
     set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, NULL, false);
+                        test_lookup_by_cert_cb, NULL);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2321,7 +2333,7 @@ void test_pam_preauth_cert_match(void **state)
     set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001, false);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2345,7 +2357,7 @@ void test_pam_preauth_cert_match_gdm_smartcard(void **state)
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL,
                         "gdm-smartcard", test_lookup_by_cert_cb,
-                        SSSD_TEST_CERT_0001, false);
+                        SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2368,7 +2380,7 @@ void test_pam_preauth_cert_match_wrong_user(void **state)
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
                         test_lookup_by_cert_wrong_user_cb,
-                        SSSD_TEST_CERT_0001, false);
+                        SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2399,8 +2411,9 @@ void test_pam_preauth_cert_no_logon_name(void **state)
      * request will be done with the username found by the certificate
      * lookup. */
     mock_input_pam_cert(pam_test_ctx, NULL, NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001, false);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001);
     mock_account_recv_simple();
+    mock_parse_inp("pamuser", NULL, EOK);
     mock_parse_inp("pamuser", NULL, EOK);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
@@ -2428,7 +2441,7 @@ void test_pam_preauth_cert_no_logon_name_with_hint(void **state)
      * during pre-auth and there is no need for an extra mocked response as in
      * test_pam_preauth_cert_no_logon_name. */
     mock_input_pam_cert(pam_test_ctx, NULL, NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001, false);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2450,8 +2463,7 @@ void test_pam_preauth_cert_no_logon_name_double_cert(void **state)
     set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
 
     mock_input_pam_cert(pam_test_ctx, NULL, NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_double_cb, SSSD_TEST_CERT_0001,
-                        false);
+                        test_lookup_by_cert_double_cb, SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2474,8 +2486,7 @@ void test_pam_preauth_cert_no_logon_name_double_cert_with_hint(void **state)
     pam_test_ctx->rctx->domains->user_name_hint = true;
 
     mock_input_pam_cert(pam_test_ctx, NULL, NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_double_cb, SSSD_TEST_CERT_0001,
-                        false);
+                        test_lookup_by_cert_double_cb, SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2497,7 +2508,7 @@ void test_pam_preauth_no_cert_no_logon_name(void **state)
     set_cert_auth_param(pam_test_ctx->pctx, "/no/path");
 
     mock_input_pam_cert(pam_test_ctx, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-                        NULL, false);
+                        NULL);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2519,7 +2530,7 @@ void test_pam_preauth_cert_no_logon_name_no_match(void **state)
     set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
 
     mock_input_pam_cert(pam_test_ctx, NULL, NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, NULL, false);
+                        test_lookup_by_cert_cb, NULL);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2549,7 +2560,7 @@ void test_pam_cert_auth(void **state)
     mock_input_pam_cert(pam_test_ctx, "pamuser", "123456", "SSSD Test Token",
                         TEST_MODULE_NAME,
                         "C554C9F82C2A9D58B70921C143304153A8A42F17", NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001, true);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2587,7 +2598,7 @@ void test_pam_ecc_cert_auth(void **state)
                         "SSSD Test ECC Token",
                         TEST_MODULE_NAME,
                         "190E513C9A3DFAACDE5D2D0592F0FDFF559C10CB", NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_ECC_CERT_0001, true);
+                        test_lookup_by_cert_cb, SSSD_TEST_ECC_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2624,9 +2635,10 @@ void test_pam_cert_auth_no_logon_name(void **state)
     mock_input_pam_cert(pam_test_ctx, NULL, "123456", "SSSD Test Token",
                         TEST_MODULE_NAME,
                         "C554C9F82C2A9D58B70921C143304153A8A42F17", NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001, true);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001);
 
     mock_account_recv_simple();
+    mock_parse_inp("pamuser", NULL, EOK);
     mock_parse_inp("pamuser", NULL, EOK);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
@@ -2659,7 +2671,7 @@ void test_pam_cert_auth_no_logon_name_no_key_id(void **state)
      * in the cache and no second request to the backend is needed. */
     mock_input_pam_cert(pam_test_ctx, NULL, "123456", "SSSD Test Token",
                         TEST_MODULE_NAME, NULL, NULL,
-                        NULL, NULL, false);
+                        NULL, NULL);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2686,8 +2698,7 @@ void test_pam_cert_auth_double_cert(void **state)
     mock_input_pam_cert(pam_test_ctx, "pamuser", "123456", "SSSD Test Token",
                         TEST_MODULE_NAME,
                         "C554C9F82C2A9D58B70921C143304153A8A42F17", NULL,
-                        test_lookup_by_cert_double_cb, SSSD_TEST_CERT_0001,
-                        true);
+                        test_lookup_by_cert_double_cb, SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2719,7 +2730,7 @@ void test_pam_cert_preauth_2certs_one_mapping(void **state)
     ret = test_lookup_by_cert_cb(discard_const(SSSD_TEST_CERT_0001));
     assert_int_equal(ret, EOK);
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, NULL, false);
+                        test_lookup_by_cert_cb, NULL);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2747,7 +2758,7 @@ void test_pam_cert_preauth_2certs_two_mappings(void **state)
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
                         test_lookup_by_cert_cb_2nd_cert_same_user,
-                        SSSD_TEST_CERT_0001, false);
+                        SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2776,8 +2787,7 @@ void test_pam_cert_auth_2certs_one_mapping(void **state)
     mock_input_pam_cert(pam_test_ctx, "pamuser", "123456", "SSSD Test Token",
                         TEST_MODULE_NAME,
                         "C554C9F82C2A9D58B70921C143304153A8A42F17", NULL,
-                        test_lookup_by_cert_double_cb, SSSD_TEST_CERT_0001,
-                        true);
+                        test_lookup_by_cert_double_cb, SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2810,7 +2820,7 @@ void test_pam_cert_preauth_uri_token1(void **state)
     putenv(discard_const("SOFTHSM2_CONF=" ABS_BUILD_DIR "/src/tests/test_CA/softhsm2_2tokens.conf"));
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001, false);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2840,7 +2850,7 @@ void test_pam_cert_preauth_uri_token2(void **state)
     putenv(discard_const("SOFTHSM2_CONF=" ABS_BUILD_DIR "/src/tests/test_CA/softhsm2_2tokens.conf"));
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0002, false);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0002);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2879,7 +2889,7 @@ void test_pam_preauth_expired_crl_file(void **state)
     set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        NULL, NULL, false);
+                        NULL, NULL);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2911,7 +2921,7 @@ void test_pam_preauth_expired_crl_file_soft(void **state)
     set_cert_auth_param(pam_test_ctx->pctx, CA_DB);
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001, false);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0001);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2948,7 +2958,7 @@ void test_pam_preauth_ocsp(void **state)
 #endif
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        NULL, NULL, false);
+                        NULL, NULL);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -2994,7 +3004,7 @@ void test_pam_preauth_ocsp_no_ocsp(void **state)
 #endif
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0005, false);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0005);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -3032,7 +3042,7 @@ void test_pam_preauth_ocsp_soft_ocsp(void **state)
 #endif
 
     mock_input_pam_cert(pam_test_ctx, "pamuser", NULL, NULL, NULL, NULL, NULL,
-                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0005, false);
+                        test_lookup_by_cert_cb, SSSD_TEST_CERT_0005);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_PREAUTH);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -3253,6 +3263,7 @@ void test_appsvc_posix_dom(void **state)
 
     /* The domain is POSIX, the request will skip over it */
     mock_input_pam_ex(pam_test_ctx, "pamuser", NULL, NULL, "app_svc", false);
+    mock_parse_inp("pamuser", NULL, EOK);
     pam_test_ctx->exp_pam_status = PAM_USER_UNKNOWN;
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
@@ -3272,7 +3283,7 @@ void test_not_appsvc_posix_dom(void **state)
     int ret;
 
     /* A different service than the app one can authenticate against a POSIX domain */
-    mock_input_pam_ex(pam_test_ctx, "pamuser", NULL, NULL, "not_app_svc", true);
+    mock_input_pam_ex(pam_test_ctx, "pamuser", NULL, NULL, "not_app_svc", false);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -3316,7 +3327,7 @@ void test_appsvc_app_dom(void **state)
     int ret;
 
     /* The domain is POSIX, the request will skip over it */
-    mock_input_pam_ex(pam_test_ctx, "pamuser", NULL, NULL, "app_svc", true);
+    mock_input_pam_ex(pam_test_ctx, "pamuser", NULL, NULL, "app_svc", false);
 
     will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
     will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
@@ -3337,6 +3348,7 @@ void test_not_appsvc_app_dom(void **state)
 
     /* A different service than the app one can authenticate against a POSIX domain */
     mock_input_pam_ex(pam_test_ctx, "pamuser", NULL, NULL, "not_app_svc", false);
+    mock_parse_inp("pamuser", NULL, EOK);
 
     pam_test_ctx->exp_pam_status = PAM_USER_UNKNOWN;
 
@@ -3549,16 +3561,20 @@ int main(int argc, const char *argv[])
     test_dom_suite_cleanup(TESTS_PATH, TEST_CONF_DB, TEST_DOM_NAME);
     test_dom_suite_setup(TESTS_PATH);
 
+#ifdef HAVE_NSS
     cleanup_nss_db();
     rv = setup_nss_db();
     if (rv != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "setup_nss_db failed.\n");
         exit(-1);
     }
+#endif
 
     rv = cmocka_run_group_tests(tests, NULL, NULL);
     if (rv == 0 && !no_cleanup) {
+#ifdef HAVE_NSS
         cleanup_nss_db();
+#endif
         test_dom_suite_cleanup(TESTS_PATH, TEST_CONF_DB, TEST_DOM_NAME);
     }
 

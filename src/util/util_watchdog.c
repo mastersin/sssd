@@ -54,9 +54,8 @@ static void watchdog_detect_timeshift(void)
         if (write(watchdog_ctx.pipefd[1], "1", 1) != 1) {
             if (getpid() == getpgrp()) {
                 kill(-getpgrp(), SIGTERM);
-            } else {
-                _exit(1);
             }
+            _exit(1);
         }
     }
 }
@@ -72,12 +71,11 @@ static void watchdog_handler(int sig)
     watchdog_detect_timeshift();
 
     /* if a pre-defined number of ticks passed by kills itself */
-    if (__sync_add_and_fetch(&watchdog_ctx.ticks, 1) > WATCHDOG_MAX_TICKS) {
+    if (__sync_add_and_fetch(&watchdog_ctx.ticks, 1) >= WATCHDOG_MAX_TICKS) {
         if (getpid() == getpgrp()) {
             kill(-getpgrp(), SIGTERM);
-        } else {
-            _exit(1);
         }
+        _exit(SSS_WATCHDOG_EXIT_CODE);
     }
 }
 
@@ -160,7 +158,7 @@ static void watchdog_fd_read_handler(struct tevent_context *ev,
               "[%d]: %s\n", ret, sss_strerror(ret));
         orderly_shutdown(1);
     }
-    if (strncmp(debug_prg_name, "sssd[be[", sizeof("sssd[be[") - 1) == 0) {
+    if (strncmp(debug_prg_name, "be[", sizeof("be[") - 1) == 0) {
         kill(getpid(), SIGUSR2);
         DEBUG(SSSDBG_IMPORTANT_INFO, "SIGUSR2 sent to %s\n", debug_prg_name);
     }

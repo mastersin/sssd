@@ -1293,7 +1293,7 @@ static CK_RV get_preferred_rsa_mechanism(TALLOC_CTX *mem_ctx,
         { CKM_SHA256_RSA_PKCS, "CKM_SHA256_RSA_PKCS", EVP_sha256(), "sha256" },
         { CKM_SHA224_RSA_PKCS, "CKM_SHA224_RSA_PKCS", EVP_sha224(), "sha224" },
         { CKM_SHA1_RSA_PKCS,   "CKM_SHA1_RSA_PKCS",   EVP_sha1(),   "sha1" },
-        { 0, NULL }
+        { 0, NULL, NULL, NULL }
     };
 
     *preferred_mechanism = CKM_SHA1_RSA_PKCS;
@@ -1546,35 +1546,38 @@ static errno_t wait_for_card(CK_FUNCTION_LIST *module, CK_SLOT_ID *slot_id)
     CK_RV rv;
     CK_SLOT_INFO info;
 
-    rv = module->C_WaitForSlotEvent(wait_flags, slot_id, NULL);
-    if (rv != CKR_OK) {
-        if (rv != CKR_FUNCTION_NOT_SUPPORTED) {
+    do {
+        rv = module->C_WaitForSlotEvent(wait_flags, slot_id, NULL);
+        if (rv != CKR_OK && rv != CKR_FUNCTION_NOT_SUPPORTED) {
             DEBUG(SSSDBG_OP_FAILURE,
                   "C_WaitForSlotEvent failed [%lu][%s].\n",
                   rv, p11_kit_strerror(rv));
             return EIO;
         }
 
-        /* Poor man's wait */
-        do {
+        if (rv == CKR_FUNCTION_NOT_SUPPORTED) {
+            /* Poor man's wait */
             sleep(10);
-            rv = module->C_GetSlotInfo(*slot_id, &info);
-            if (rv != CKR_OK) {
-                DEBUG(SSSDBG_OP_FAILURE, "C_GetSlotInfo failed\n");
-                return EIO;
-            }
-            DEBUG(SSSDBG_TRACE_ALL,
-                  "Description [%s] Manufacturer [%s] flags [%lu] "
-                  "removable [%s] token present [%s].\n",
-                  info.slotDescription, info.manufacturerID, info.flags,
-                  (info.flags & CKF_REMOVABLE_DEVICE) ? "true": "false",
-                  (info.flags & CKF_TOKEN_PRESENT) ? "true": "false");
-            if ((info.flags & CKF_REMOVABLE_DEVICE)
-                    && (info.flags & CKF_TOKEN_PRESENT)) {
-                break;
-            }
-        } while (true);
-    }
+        }
+
+        rv = module->C_GetSlotInfo(*slot_id, &info);
+        if (rv != CKR_OK) {
+            DEBUG(SSSDBG_OP_FAILURE, "C_GetSlotInfo failed\n");
+            return EIO;
+        }
+        DEBUG(SSSDBG_TRACE_ALL,
+              "Description [%s] Manufacturer [%s] flags [%lu] "
+              "removable [%s] token present [%s].\n",
+              info.slotDescription, info.manufacturerID, info.flags,
+              (info.flags & CKF_REMOVABLE_DEVICE) ? "true": "false",
+              (info.flags & CKF_TOKEN_PRESENT) ? "true": "false");
+
+        /* Check if really a token is present */
+        if ((info.flags & CKF_REMOVABLE_DEVICE)
+                && (info.flags & CKF_TOKEN_PRESENT)) {
+            break;
+        }
+    } while (true);
 
     return EOK;
 }

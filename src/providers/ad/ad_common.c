@@ -104,6 +104,24 @@ ad_create_default_sdap_options(TALLOC_CTX *mem_ctx,
         goto fail;
     }
 
+    /* IP host map */
+    ret = sdap_copy_map(id_opts,
+                        ad_iphost_map,
+                        SDAP_OPTS_IPHOST,
+                        &id_opts->iphost_map);
+    if (ret != EOK) {
+        goto fail;
+    }
+
+    /* IP network map */
+    ret = sdap_copy_map(id_opts,
+                        ad_ipnetwork_map,
+                        SDAP_OPTS_IPNETWORK,
+                        &id_opts->ipnetwork_map);
+    if (ret != EOK) {
+        goto fail;
+    }
+
     return id_opts;
 
 fail:
@@ -205,6 +223,26 @@ ad_create_sdap_options(TALLOC_CTX *mem_ctx,
                        ad_service_map,
                        SDAP_OPTS_SERVICES,
                        &id_opts->service_map);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    /* IP host map */
+    ret = sdap_get_map(id_opts,
+                       cdb, conf_path,
+                       ad_iphost_map,
+                       SDAP_OPTS_IPHOST,
+                       &id_opts->iphost_map);
+    if (ret != EOK) {
+        goto done;
+    }
+
+    /* IP network map */
+    ret = sdap_get_map(id_opts,
+                       cdb, conf_path,
+                       ad_ipnetwork_map,
+                       SDAP_OPTS_IPNETWORK,
+                       &id_opts->ipnetwork_map);
     if (ret != EOK) {
         goto done;
     }
@@ -406,6 +444,35 @@ ad_create_1way_trust_options(TALLOC_CTX *mem_ctx,
     return ad_options;
 }
 
+static errno_t
+ad_try_to_get_fqdn(const char *hostname,
+                   char *buf,
+                   size_t buflen)
+{
+    int ret;
+    struct addrinfo *res;
+    struct addrinfo hints;
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_CANONNAME;
+
+    ret = getaddrinfo(hostname, NULL, &hints, &res);
+    if (ret != 0) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "getaddrinfo failed: %s\n",
+              gai_strerror(ret));
+        return ret;
+    }
+
+    strncpy(buf, res->ai_canonname, buflen-1);
+    buf[buflen-1] = '\0';
+
+    freeaddrinfo(res);
+
+    return EOK;
+}
+
 errno_t
 ad_get_common_options(TALLOC_CTX *mem_ctx,
                       struct confdb_ctx *cdb,
@@ -421,6 +488,7 @@ ad_get_common_options(TALLOC_CTX *mem_ctx,
     char *realm;
     char *ad_hostname;
     char hostname[HOST_NAME_MAX + 1];
+    char fqdn[HOST_NAME_MAX + 1];
     char *case_sensitive_opt;
     const char *opt_override;
 
@@ -468,6 +536,19 @@ ad_get_common_options(TALLOC_CTX *mem_ctx,
             goto done;
         }
         hostname[HOST_NAME_MAX] = '\0';
+
+        if (strchr(hostname, '.') == NULL) {
+            ret = ad_try_to_get_fqdn(hostname, fqdn, sizeof(fqdn));
+            if (ret == EOK) {
+                DEBUG(SSSDBG_CONF_SETTINGS,
+                      "The hostname [%s] has been expanded to FQDN [%s]. "
+                      "If sssd should really use the short hostname, please "
+                      "set ad_hostname explicitly.\n", hostname, fqdn);
+                strncpy(hostname, fqdn, HOST_NAME_MAX);
+                hostname[HOST_NAME_MAX] = '\0';
+            }
+        }
+
         DEBUG(SSSDBG_CONF_SETTINGS,
               "Setting ad_hostname to [%s].\n", hostname);
         ret = dp_opt_set_string(opts->basic, AD_HOSTNAME, hostname);
@@ -729,6 +810,7 @@ ad_failover_init(TALLOC_CTX *mem_ctx, struct be_ctx *bectx,
                  const char *ad_gc_service,
                  const char *ad_domain,
                  bool use_kdcinfo,
+                 bool ad_use_ldaps,
                  size_t n_lookahead_primary,
                  size_t n_lookahead_backup,
                  struct ad_service **_service)
@@ -744,6 +826,16 @@ ad_failover_init(TALLOC_CTX *mem_ctx, struct be_ctx *bectx,
     if (!service) {
         ret = ENOMEM;
         goto done;
+    }
+
+    if (ad_use_ldaps) {
+        service->ldap_scheme = "ldaps";
+        service->port = LDAPS_PORT;
+        service->gc_port = AD_GC_LDAPS_PORT;
+    } else {
+        service->ldap_scheme = "ldap";
+        service->port = LDAP_PORT;
+        service->gc_port = AD_GC_PORT;
     }
 
     service->sdap = talloc_zero(service, struct sdap_service);
@@ -927,7 +1019,8 @@ ad_resolve_callback(void *private_data, struct fo_server *server)
         goto done;
     }
 
-    new_uri = talloc_asprintf(service->sdap, "ldap://%s", srv_name);
+    new_uri = talloc_asprintf(service->sdap, "%s://%s", service->ldap_scheme,
+                                                        srv_name);
     if (!new_uri) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Failed to copy URI\n");
         ret = ENOMEM;
@@ -935,7 +1028,7 @@ ad_resolve_callback(void *private_data, struct fo_server *server)
     }
     DEBUG(SSSDBG_CONF_SETTINGS, "Constructed uri '%s'\n", new_uri);
 
-    sockaddr = resolv_get_sockaddr_address(tmp_ctx, srvaddr, LDAP_PORT);
+    sockaddr = resolv_get_sockaddr_address(tmp_ctx, srvaddr, service->port);
     if (sockaddr == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "resolv_get_sockaddr_address failed.\n");
         ret = EIO;
@@ -951,8 +1044,12 @@ ad_resolve_callback(void *private_data, struct fo_server *server)
     talloc_zfree(service->gc->uri);
     talloc_zfree(service->gc->sockaddr);
     if (sdata && sdata->gc) {
-        new_port = fo_get_server_port(server);
-        new_port = (new_port == 0) ? AD_GC_PORT : new_port;
+        if (service->gc_port == AD_GC_LDAPS_PORT) {
+            new_port = service->gc_port;
+        } else {
+            new_port = fo_get_server_port(server);
+            new_port = (new_port == 0) ? service->gc_port : new_port;
+        }
 
         service->gc->uri = talloc_asprintf(service->gc, "%s:%d",
                                            new_uri, new_port);
@@ -1003,6 +1100,36 @@ done:
     }
     talloc_free(tmp_ctx);
     return;
+}
+
+void ad_set_ssf_and_mech_for_ldaps(struct sdap_options *id_opts)
+{
+    int ret;
+
+    DEBUG(SSSDBG_TRACE_ALL, "Setting ssf and mech for ldaps usage.\n");
+    ret = dp_opt_set_int(id_opts->basic, SDAP_SASL_MINSSF, 0);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to set SASL minssf for ldaps usage, ignored.\n");
+    }
+    ret = dp_opt_set_int(id_opts->basic, SDAP_SASL_MAXSSF, 0);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to set SASL maxssf for ldaps usage, ignored.\n");
+    }
+
+#ifndef ALLOW_GSS_SPNEGO_FOR_ZERO_MAXSSF
+    /* There is an issue in cyrus-sasl with respect to GSS-SPNEGO and
+     * maxssf==0. Until the fix
+     * https://github.com/cyrusimap/cyrus-sasl/pull/603 is widely used we
+     * switch to GSSAPI by default when using AD with LDAPS where maxssf==0 is
+     * required. */
+    ret = dp_opt_set_string(id_opts->basic, SDAP_SASL_MECH, "GSSAPI");
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to set SASL mech for ldaps usage, ignored.\n");
+    }
+#endif
 }
 
 static errno_t
@@ -1061,6 +1188,10 @@ ad_set_sdap_options(struct ad_options *ad_opts,
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "Cannot set the SASL-related options\n");
         goto done;
+    }
+
+    if (dp_opt_get_bool(ad_opts->basic, AD_USE_LDAPS)) {
+        ad_set_ssf_and_mech_for_ldaps(id_opts);
     }
 
     /* Warn if the user is doing something silly like overriding the schema
@@ -1370,6 +1501,33 @@ ad_id_ctx_init(struct ad_options *ad_opts, struct be_ctx *bectx)
     return ad_ctx;
 }
 
+errno_t
+ad_resolver_ctx_init(TALLOC_CTX *mem_ctx,
+                     struct ad_id_ctx *ad_id_ctx,
+                     struct ad_resolver_ctx **out_ctx)
+{
+    struct sdap_resolver_ctx *sdap_ctx;
+    struct ad_resolver_ctx *ad_ctx;
+    errno_t ret;
+
+    ad_ctx = talloc_zero(mem_ctx, struct ad_resolver_ctx);
+    if (ad_ctx == NULL) {
+        return ENOMEM;
+    }
+    ad_ctx->ad_id_ctx = ad_id_ctx;
+
+    ret = sdap_resolver_ctx_new(ad_ctx, ad_id_ctx->sdap_id_ctx, &sdap_ctx);
+    if (ret != EOK) {
+        talloc_free(ad_ctx);
+        return ret;
+    }
+    ad_ctx->sdap_resolver_ctx = sdap_ctx;
+
+    *out_ctx = ad_ctx;
+
+    return EOK;
+}
+
 struct sdap_id_conn_ctx *
 ad_get_dom_ldap_conn(struct ad_id_ctx *ad_ctx, struct sss_domain_info *dom)
 {
@@ -1479,9 +1637,26 @@ errno_t ad_inherit_opts_if_needed(struct dp_option *parent_opts,
     const char *parent_val = NULL;
     char *dummy = NULL;
     char *option_list[2] = { NULL, NULL };
+    bool is_default = true;
 
-    parent_val = dp_opt_get_cstring(parent_opts, opt_id);
-    if (parent_val != NULL) {
+    switch (parent_opts[opt_id].type) {
+    case DP_OPT_STRING:
+        parent_val = dp_opt_get_cstring(parent_opts, opt_id);
+        break;
+    case DP_OPT_BOOL:
+        /* For booleans it is hard to say if the option is set or not since
+         * both possible values are valid ones. So we check if the value is
+         * different from the default and skip if it is the default. In this
+         * case the sub-domain option would either be the default as well or
+         * manully set and in both cases we do not have to change it. */
+        is_default = (parent_opts[opt_id].val.boolean
+                                == parent_opts[opt_id].def_val.boolean);
+        break;
+    default:
+        DEBUG(SSSDBG_TRACE_FUNC, "Unsupported type, skipping.\n");
+    }
+
+    if (parent_val != NULL || !is_default) {
         ret = confdb_get_string(cdb, NULL, subdom_conf_path,
                                 parent_opts[opt_id].opt_name, NULL, &dummy);
         if (ret != EOK) {

@@ -29,6 +29,7 @@
 #include "responder/common/responder.h"
 #include "responder/common/cache_req/cache_req.h"
 #include "responder/ssh/ssh_private.h"
+#include "responder/pam/pam_helpers.h"
 #include "lib/certmap/sss_certmap.h"
 
 struct ssh_cmd_ctx {
@@ -157,10 +158,27 @@ static errno_t ssh_cmd_refresh_certmap_ctx(struct ssh_ctx *ssh_ctx,
     size_t c;
     int ret;
     bool rule_added;
+    bool all_rules = false;
+    bool no_rules = false;
+    bool rules_present = false;
+
+    ssh_ctx->cert_rules_error = false;
+
+    if (ssh_ctx->cert_rules == NULL || ssh_ctx->cert_rules[0] == NULL) {
+        all_rules = true;
+    } else if (ssh_ctx->cert_rules[0] != NULL
+                    && ssh_ctx->cert_rules[1] == NULL) {
+        if (strcmp(ssh_ctx->cert_rules[0], "all_rules") == 0) {
+            all_rules = true;
+        } else if (strcmp(ssh_ctx->cert_rules[0], "no_rules") == 0) {
+            no_rules = true;
+        }
+    }
 
     if (!ssh_ctx->use_cert_keys
             || ssh_ctx->certmap_last_read
-                    >= ssh_ctx->rctx->get_domains_last_call.tv_sec) {
+                    >= ssh_ctx->rctx->get_domains_last_call.tv_sec
+            || no_rules) {
         DEBUG(SSSDBG_TRACE_ALL, "No certmap update needed.\n");
         return EOK;
     }
@@ -179,10 +197,10 @@ static errno_t ssh_cmd_refresh_certmap_ctx(struct ssh_ctx *ssh_ctx,
         }
 
         for (c = 0; certmap_list[c] != NULL; c++) {
+            rules_present = true;
 
-            if (ssh_ctx->cert_rules != NULL
-                        && !string_in_list(certmap_list[c]->name,
-                                           ssh_ctx->cert_rules, true)) {
+            if (!all_rules && !string_in_list(certmap_list[c]->name,
+                                              ssh_ctx->cert_rules, true)) {
                 DEBUG(SSSDBG_TRACE_ALL, "Skipping matching rule [%s], it is "
                       "not listed in the ssh_use_certificate_matching_rules "
                       "option.\n", certmap_list[c]->name);
@@ -212,11 +230,27 @@ static errno_t ssh_cmd_refresh_certmap_ctx(struct ssh_ctx *ssh_ctx,
     }
 
     if (!rule_added) {
-        DEBUG(SSSDBG_TRACE_ALL,
-              "No matching rule added, all certificates will be used.\n");
+        if (!rules_present) {
+            DEBUG(SSSDBG_TRACE_FUNC,
+                  "No rules available, trying to add default matching rule.\n");
+            ret = sss_certmap_add_rule(sss_certmap_ctx, SSS_CERTMAP_MIN_PRIO,
+                                       CERT_AUTH_DEFAULT_MATCHING_RULE,
+                                       NULL, NULL);
+            if (ret != 0) {
+                DEBUG(SSSDBG_OP_FAILURE,
+                      "Failed to add default matching rule [%d][%s].\n",
+                      ret, sss_strerror(ret));
+                goto done;
+            }
+        } else {
+            DEBUG(SSSDBG_CONF_SETTINGS,
+                  "No matching rule added, please check "
+                  "ssh_use_certificate_matching_rules option values for "
+                  "typos.\n");
 
-        sss_certmap_free_ctx(sss_certmap_ctx);
-        sss_certmap_ctx = NULL;
+            ret = EINVAL;
+            goto done;
+        }
     }
 
     ret = EOK;
@@ -228,6 +262,7 @@ done:
         ssh_ctx->certmap_last_read = ssh_ctx->rctx->get_domains_last_call.tv_sec;
     } else {
         sss_certmap_free_ctx(sss_certmap_ctx);
+        ssh_ctx->cert_rules_error = true;
     }
 
     return ret;
@@ -297,12 +332,12 @@ static errno_t ssh_cmd_get_host_pubkeys(struct cli_ctx *cli_ctx)
           "Requesting SSH host public keys for [%s] from [%s]\n",
           cmd_ctx->name, cmd_ctx->domain ? cmd_ctx->domain : "<ALL>");
 
-    subreq = cache_req_host_by_name_send(cmd_ctx, cli_ctx->ev,
-                                         cli_ctx->rctx,
-                                         cli_ctx->rctx->ncache, 0,
-                                         cmd_ctx->domain,
-                                         cmd_ctx->name,
-                                         cmd_ctx->alias, attrs);
+    subreq = cache_req_ssh_host_id_by_name_send(cmd_ctx, cli_ctx->ev,
+                                               cli_ctx->rctx,
+					       cli_ctx->rctx->ncache, 0,
+					       cmd_ctx->domain,
+					       cmd_ctx->name,
+					       cmd_ctx->alias, attrs);
     if (subreq == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create tevent request!\n");
         ret = ENOMEM;
@@ -333,7 +368,7 @@ static void ssh_cmd_get_host_pubkeys_done(struct tevent_req *subreq)
     cmd_ctx = tevent_req_callback_data(subreq, struct ssh_cmd_ctx);
     ssh_ctx = talloc_get_type(cmd_ctx->cli_ctx->rctx->pvt_ctx, struct ssh_ctx);
 
-    ret = cache_req_host_by_name_recv(cmd_ctx, subreq, &result);
+    ret = cache_req_ssh_host_id_by_name_recv(cmd_ctx, subreq, &result);
     talloc_zfree(subreq);
 
     if (ret == EOK || ret == ENOENT) {

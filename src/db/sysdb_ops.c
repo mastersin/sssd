@@ -23,6 +23,8 @@
 #include "db/sysdb_private.h"
 #include "db/sysdb_services.h"
 #include "db/sysdb_autofs.h"
+#include "db/sysdb_iphosts.h"
+#include "db/sysdb_ipnetworks.h"
 #include "util/crypto/sss_crypto.h"
 #include "util/cert.h"
 #include <time.h>
@@ -774,14 +776,13 @@ int sysdb_search_group_by_name(TALLOC_CTX *mem_ctx,
     return sysdb_search_by_name(mem_ctx, domain, name, SYSDB_GROUP, attrs, msg);
 }
 
-/* Please note that sysdb_search_group_by_gid() is not aware of MPGs. If MPG
- * support is needed either the caller must handle it or sysdb_getgrgid() or
- * sysdb_getgrgid_attrs() should be used. */
-int sysdb_search_group_by_gid(TALLOC_CTX *mem_ctx,
-                              struct sss_domain_info *domain,
-                              gid_t gid,
-                              const char **attrs,
-                              struct ldb_message **msg)
+static int
+sysdb_search_group_by_id(TALLOC_CTX *mem_ctx,
+                         struct sss_domain_info *domain,
+                         const char *filterfmt,
+                         gid_t gid,
+                         const char **attrs,
+                         struct ldb_message **msg)
 {
     TALLOC_CTX *tmp_ctx;
     const char *def_attrs[] = { SYSDB_NAME, SYSDB_GIDNUM, NULL };
@@ -802,7 +803,7 @@ int sysdb_search_group_by_gid(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    filter = talloc_asprintf(tmp_ctx, SYSDB_GRGID_FILTER, (unsigned long)gid);
+    filter = talloc_asprintf(tmp_ctx, filterfmt, (unsigned long)gid);
     if (!filter) {
         ret = ENOMEM;
         goto done;
@@ -831,6 +832,29 @@ done:
 
     talloc_zfree(tmp_ctx);
     return ret;
+}
+
+/* Please note that sysdb_search_group_by_gid() is not aware of MPGs. If MPG
+ * support is needed either the caller must handle it or sysdb_getgrgid() or
+ * sysdb_getgrgid_attrs() should be used. */
+int sysdb_search_group_by_gid(TALLOC_CTX *mem_ctx,
+                              struct sss_domain_info *domain,
+                              gid_t gid,
+                              const char **attrs,
+                              struct ldb_message **msg)
+{
+    return sysdb_search_group_by_id(mem_ctx, domain, SYSDB_GRGID_FILTER,
+                                    gid, attrs, msg);
+}
+
+int sysdb_search_group_by_origgid(TALLOC_CTX *mem_ctx,
+                                  struct sss_domain_info *domain,
+                                  gid_t gid,
+                                  const char **attrs,
+                                  struct ldb_message **msg)
+{
+    return sysdb_search_group_by_id(mem_ctx, domain, SYSDB_GRORIGGID_FILTER,
+                                    gid, attrs, msg);
 }
 
 int sysdb_search_group_by_sid_str(TALLOC_CTX *mem_ctx,
@@ -4986,6 +5010,12 @@ errno_t sysdb_remove_attrs(struct sss_domain_info *domain,
 
     case SYSDB_MEMBER_SERVICE:
         msg->dn = sysdb_svc_dn(domain->sysdb, msg, domain->name, name);
+        break;
+    case SYSDB_MEMBER_HOST:
+        msg->dn = sysdb_host_dn(msg, domain, name);
+        break;
+    case SYSDB_MEMBER_IP_NETWORK:
+        msg->dn = sysdb_ipnetwork_dn(msg, domain, name);
         break;
     }
     if (!msg->dn) {

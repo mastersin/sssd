@@ -170,6 +170,9 @@ int debug_convert_old_level(int old_level)
     if (old_level >= 9)
         new_level |= SSSDBG_TRACE_ALL | SSSDBG_BE_FO;
 
+    if (old_level >= 10)
+        new_level |= SSSDBG_TRACE_LDB;
+
     return new_level;
 }
 
@@ -270,8 +273,6 @@ void sss_vdebug_fn(const char *file,
 {
     struct timeval tv;
     struct tm *tm;
-    char datetime[20];
-    int year;
 
 #ifdef WITH_JOURNALD
     errno_t ret;
@@ -300,24 +301,16 @@ void sss_vdebug_fn(const char *file,
     if (debug_timestamps) {
         gettimeofday(&tv, NULL);
         tm = localtime(&tv.tv_sec);
-        year = tm->tm_year + 1900;
-        /* get date time without year */
-        memcpy(datetime, ctime(&tv.tv_sec), 19);
-        datetime[19] = '\0';
+        debug_printf("(%d-%02d-%02d %2d:%02d:%02d",
+                     tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                     tm->tm_hour, tm->tm_min, tm->tm_sec);
         if (debug_microseconds) {
-            debug_printf("(%s:%.6ld %d) [%s] [%s] (%#.4x): ",
-                         datetime, tv.tv_usec,
-                         year, debug_prg_name,
-                         function, level);
-        } else {
-            debug_printf("(%s %d) [%s] [%s] (%#.4x): ",
-                         datetime, year,
-                         debug_prg_name, function, level);
+            debug_printf(":%.6ld", tv.tv_usec);
         }
-    } else {
-        debug_printf("[%s] [%s] (%#.4x): ",
-                     debug_prg_name, function, level);
+        debug_printf("): ");
     }
+
+    debug_printf("[%s] [%s] (%#.4x): ", debug_prg_name, function, level);
 
     debug_vprintf(format, ap);
     if (flags & APPEND_LINE_FEED) {
@@ -355,7 +348,7 @@ void ldb_debug_messages(void *context, enum ldb_debug_level level,
         loglevel = SSSDBG_TRACE_FUNC;
         break;
     case LDB_DEBUG_TRACE:
-        loglevel = SSSDBG_TRACE_ALL;
+        loglevel = SSSDBG_TRACE_LDB;
         break;
     }
 

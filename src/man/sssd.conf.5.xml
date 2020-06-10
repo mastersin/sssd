@@ -314,7 +314,7 @@
                             </para>
                             <para>
                                 Each domain can have an individual format string configured.
-                                see DOMAIN SECTIONS for more info on this option.
+                                See DOMAIN SECTIONS for more info on this option.
                             </para>
                         </listitem>
                     </varlistentry>
@@ -1446,15 +1446,17 @@ pam_account_locked_message = Account locked, please contact help desk.
                     <term>pam_cert_db_path (string)</term>
                     <listitem>
                         <para>
-                            The path to the certificate database which contain
-                            the PKCS#11 modules to access the Smartcard.
+                            The path to the certificate database.
                         </para>
                         <para>
                             Default:
                             <itemizedlist>
                                 <listitem><para>/etc/pki/nssdb (NSS version,
-                                                path to a NSS
-                                                database)</para></listitem>
+                                                path to a NSS database which
+                                                contains the PKCS#11 modules
+                                                to access the Smartcard and
+                                                the trusted CA certificates)
+                                                </para></listitem>
                                 <listitem><para>/etc/sssd/pki/sssd_auth_ca_db.pem
                                                 (OpenSSL version, path to a file
                                                 with trusted CA certificates in
@@ -1599,7 +1601,7 @@ pam_p11_allowed_services = +my_pam_service, -login
                         <para>
                             Example:
                             <programlisting>
-p11_uri = slot-description=My%20Smartcar%20Reader
+p11_uri = slot-description=My%20Smartcard%20Reader
                             </programlisting>
                             or
                             <programlisting>
@@ -1612,6 +1614,38 @@ p11_uri = library-description=OpenSC%20smartcard%20framework;slot-id=2
                         </para>
                         <para>
                             Default: none
+                        </para>
+                    </listitem>
+                </varlistentry>
+                <varlistentry>
+                    <term>pam_initgroups_scheme</term>
+                    <listitem>
+                        <para>
+                            The PAM responder can force an online lookup to get
+                            the current group memberships of the user trying to
+                            log in. This option controls when this should be
+                            done and the following values are allowed:
+                            <variablelist>
+                            <varlistentry><term>always</term>
+                                <listitem><para>Always do an online lookup,
+                                please note that pam_id_timeout still
+                                applies</para></listitem>
+                            </varlistentry>
+                            <varlistentry><term>no_session</term>
+                                <listitem><para>Only do an online
+                                lookup if there is no active session of the
+                                user, i.e. if the user is currently not logged
+                                in</para></listitem>
+                            </varlistentry>
+                            <varlistentry><term>never</term>
+                                <listitem><para>Never force an online lookup,
+                                use the data from the cache as long as they are
+                                not expired</para></listitem>
+                            </varlistentry>
+                            </variablelist>
+                        </para>
+                        <para>
+                            Default: no_session
                         </para>
                     </listitem>
                 </varlistentry>
@@ -1760,12 +1794,27 @@ p11_uri = library-description=OpenSC%20smartcard%20framework;slot-id=2
                             will be ignored.
                         </para>
                         <para>
-                            If a non-existing rule name is given all rules will
-                            be ignored and all available certificates will be
-                            used to derive ssh keys.
+                            There are two special key words 'all_rules' and
+                            'no_rules' which will enable all or no rules,
+                            respectively. The latter means that no certificates
+                            will be filtered out and ssh keys will be generated
+                            from all valid certificates.
                         </para>
                         <para>
-                            Default: not set, all found rules are used
+                            If no rules are configured using 'all_rules' will
+                            enable a default rule which enables all
+                            certificates suitable for client authentication.
+                            This is the same behavior as for the PAM responder
+                            if certificate authentication is enabled.
+                        </para>
+                        <para>
+                            A non-existing rule name is considered an error.
+                            If as a result no rule is selected all certificates
+                            will be ignored.
+                        </para>
+                        <para>
+                            Default: not set, equivalent to 'all_rules,
+                            all found rules or the default rule are used
                         </para>
                     </listitem>
                 </varlistentry>
@@ -2202,6 +2251,20 @@ p11_uri = library-description=OpenSC%20smartcard%20framework;slot-id=2
                     </listitem>
                 </varlistentry>
 
+                <varlistentry>
+                    <term>entry_cache_resolver_timeout (integer)</term>
+                    <listitem>
+                        <para>
+                            How many seconds should nss_sss consider
+                            hosts and networks entries valid before asking
+                            the backend again
+                        </para>
+                        <para>
+                            Default: entry_cache_timeout
+                        </para>
+                    </listitem>
+                </varlistentry>
+
                 <varlistentry condition="with_sudo">
                     <term>entry_cache_sudo_timeout (integer)</term>
                     <listitem>
@@ -2244,6 +2307,19 @@ p11_uri = library-description=OpenSC%20smartcard%20framework;slot-id=2
                 </varlistentry>
 
                 <varlistentry>
+                    <term>entry_cache_computer_timeout (integer)</term>
+                    <listitem>
+                        <para>
+                            How many seconds to keep the local computer
+                            entry before asking the backend again
+                        </para>
+                        <para>
+                            Default: entry_cache_timeout
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>refresh_expired_interval (integer)</term>
                     <listitem>
                         <para>
@@ -2266,6 +2342,19 @@ p11_uri = library-description=OpenSC%20smartcard%20framework;slot-id=2
                         <para>
                             You can consider setting this value to
                             3/4 * entry_cache_timeout.
+                        </para>
+                        <para>
+                            Cache entry will be refreshed by background task
+                            when 2/3 of cache timeout has already passed.
+                            If there are existing cached entries, the background
+                            task will refer to their original cache timeout
+                            values instead of current configuration value.
+                            This may lead to a situation in which background refresh
+                            task appears to not be working. This is done
+                            by design to improve offline mode operation and
+                            reuse of existing valid cache entries.
+                            To make this change instant the user may want to
+                            manually invalidate existing cache.
                         </para>
                         <para>
                             Default: 0 (disabled)
@@ -2424,8 +2513,9 @@ p11_uri = library-description=OpenSC%20smartcard%20framework;slot-id=2
                             name is requested.
                         </para>
                         <para>
-                            Default: FALSE (TRUE if default_domain_suffix is
-                            used)
+                            Default: FALSE (TRUE for trusted
+                            domain/sub-domains or if default_domain_suffix
+                            is used)
                         </para>
                     </listitem>
                 </varlistentry>
@@ -2840,6 +2930,42 @@ p11_uri = library-description=OpenSC%20smartcard%20framework;slot-id=2
                         </para>
                         <para>
                             <quote>none</quote> disables hostid explicitly.
+                        </para>
+                        <para>
+                            Default: The value of <quote>id_provider</quote> is used if it
+                            is set.
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>resolver_provider (string)</term>
+                    <listitem>
+                        <para>
+                            The provider which should handle hosts and networks
+                            lookups. Supported resolver providers are:
+                        </para>
+                        <para>
+                            <quote>proxy</quote> to forward lookups to another
+                            NSS library. See <quote>proxy_resolver_lib_name</quote>
+                        </para>
+                        <para>
+                            <quote>ldap</quote> to fetch hosts and networks stored in LDAP. See
+                            <citerefentry>
+                                <refentrytitle>sssd-ldap</refentrytitle>
+                                <manvolnum>5</manvolnum>
+                            </citerefentry> for more information on configuring LDAP.
+                        </para>
+                        <para>
+                            <quote>ad</quote> to fetch hosts and networks stored in AD. See
+                            <citerefentry>
+                                <refentrytitle>sssd-ad</refentrytitle>
+                                <manvolnum>5</manvolnum>
+                            </citerefentry> for more information on configuring
+                            the AD provider.
+                        </para>
+                        <para>
+                            <quote>none</quote> disallows fetching hosts and networks explicitly.
                         </para>
                         <para>
                             Default: The value of <quote>id_provider</quote> is used if it
@@ -3285,6 +3411,20 @@ auto_private_groups = false
                             library are in the form of
                             _nss_$(libName)_$(function), for example
                             _nss_files_getpwent.
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>proxy_resolver_lib_name (string)</term>
+                    <listitem>
+                        <para>
+                            The name of the NSS library to use for hosts and
+                            networks lookups in proxy domains. The NSS
+                            functions searched for in the
+                            library are in the form of
+                            _nss_$(libName)_$(function), for example
+                            _nss_dns_gethostbyname2_r.
                         </para>
                     </listitem>
                 </varlistentry>

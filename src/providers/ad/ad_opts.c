@@ -24,6 +24,8 @@
 #include "db/sysdb_services.h"
 #include "db/sysdb_autofs.h"
 #include "db/sysdb_sudo.h"
+#include "db/sysdb_iphosts.h"
+#include "db/sysdb_ipnetworks.h"
 #include "providers/ldap/ldap_common.h"
 #include "config.h"
 
@@ -54,6 +56,8 @@ struct dp_option ad_basic_opts[] = {
     { "krb5_confd_path", DP_OPT_STRING, { KRB5_MAPPING_DIR }, NULL_STRING },
     { "ad_maximum_machine_account_password_age", DP_OPT_NUMBER, { .number = 30 }, NULL_NUMBER },
     { "ad_machine_account_password_renewal_opts", DP_OPT_STRING, { "86400:750" }, NULL_STRING },
+    { "ad_update_samba_machine_account_password", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
+    { "ad_use_ldaps", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     DP_OPTION_TERMINATOR
 };
 
@@ -84,9 +88,11 @@ struct dp_option ad_def_ldap_opts[] = {
     { "ldap_sudo_hostnames", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_sudo_ip", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_sudo_include_netgroups", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
-    { "ldap_sudo_include_regexp", DP_OPT_BOOL, BOOL_TRUE, BOOL_FALSE },
+    { "ldap_sudo_include_regexp", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "ldap_autofs_search_base", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_autofs_map_master_name", DP_OPT_STRING, { "auto.master" }, NULL_STRING },
+    { "ldap_iphost_search_base", DP_OPT_STRING, NULL_STRING, NULL_STRING },
+    { "ldap_ipnetwork_search_base", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_schema", DP_OPT_STRING, { "ad" }, NULL_STRING },
     { "ldap_pwmodify_mode", DP_OPT_STRING, { "exop" }, NULL_STRING },
     { "ldap_offline_timeout", DP_OPT_NUMBER, { .number = 60 }, NULL_NUMBER },
@@ -100,10 +106,11 @@ struct dp_option ad_def_ldap_opts[] = {
     { "ldap_tls_cipher_suite", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_id_use_start_tls", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "ldap_id_mapping", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
-    { "ldap_sasl_mech", DP_OPT_STRING, { "gssapi" }, NULL_STRING },
+    { "ldap_sasl_mech", DP_OPT_STRING, { "GSS-SPNEGO" }, NULL_STRING },
     { "ldap_sasl_authid", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_sasl_realm", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_sasl_minssf", DP_OPT_NUMBER, { .number = -1 }, NULL_NUMBER },
+    { "ldap_sasl_maxssf", DP_OPT_NUMBER, { .number = -1 }, NULL_NUMBER },
     { "ldap_krb5_keytab", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "ldap_krb5_init_creds", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
     /* use the same parm name as the krb5 module so we set it only once */
@@ -137,6 +144,7 @@ struct dp_option ad_def_ldap_opts[] = {
     { "ldap_deref_threshold", DP_OPT_NUMBER, { .number = 10 }, NULL_NUMBER },
     { "ldap_sasl_canonicalize", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "ldap_connection_expire_timeout", DP_OPT_NUMBER, { .number = 900 }, NULL_NUMBER },
+    { "ldap_connection_expire_offset", DP_OPT_NUMBER, { .number = 0 }, NULL_NUMBER },
     { "ldap_disable_paging", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "ldap_idmap_range_min", DP_OPT_NUMBER, { .number = 200000 }, NULL_NUMBER },
     { "ldap_idmap_range_max", DP_OPT_NUMBER, { .number = 2000200000LL }, NULL_NUMBER },
@@ -273,6 +281,22 @@ struct sdap_attr_map ad_autofs_entry_map[] = {
     { "ldap_autofs_entry_object_class", "nisObject", SYSDB_AUTOFS_ENTRY_OC, NULL },
     { "ldap_autofs_entry_key", "cn", SYSDB_AUTOFS_ENTRY_KEY, NULL },
     { "ldap_autofs_entry_value", "nisMapEntry", SYSDB_AUTOFS_ENTRY_VALUE, NULL },
+    SDAP_ATTR_MAP_TERMINATOR
+};
+
+struct sdap_attr_map ad_iphost_map[] = {
+    { "ldap_iphost_object_class", "device", SYSDB_IP_HOST_CLASS, NULL },
+    { "ldap_iphost_name", "cn", SYSDB_NAME, NULL },
+    { "ldap_iphost_number", "ipHostNumber", SYSDB_IP_HOST_ATTR_ADDRESS, NULL },
+    { "ldap_iphost_entry_usn", NULL, SYSDB_USN, NULL },
+    SDAP_ATTR_MAP_TERMINATOR
+};
+
+struct sdap_attr_map ad_ipnetwork_map[] = {
+    { "ldap_ipnetwork_object_class", "ipNetwork", SYSDB_IP_NETWORK_CLASS, NULL },
+    { "ldap_ipnetwork_name", "cn", SYSDB_NAME, NULL },
+    { "ldap_ipnetwork_number", "ipNetworkNumber", SYSDB_IP_NETWORK_ATTR_NUMBER, NULL },
+    { "ldap_ipnetwork_entry_usn", NULL, SYSDB_USN, NULL },
     SDAP_ATTR_MAP_TERMINATOR
 };
 

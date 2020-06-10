@@ -451,6 +451,61 @@ done:
     return EOK;
 }
 
+static errno_t nss_getby_addr(struct cli_ctx *cli_ctx,
+                              enum cache_req_type type,
+                              enum sss_mc_type memcache,
+                              nss_protocol_fill_packet_fn fill_fn)
+{
+    struct cache_req_data *data;
+    struct nss_cmd_ctx *cmd_ctx;
+    struct tevent_req *subreq;
+    uint8_t *addr;
+    uint32_t addrlen;
+    uint32_t af;
+    errno_t ret;
+
+    cmd_ctx = nss_cmd_ctx_create(cli_ctx, cli_ctx, type, fill_fn);
+    if (cmd_ctx == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    cmd_ctx->flags = 0;
+    ret = nss_protocol_parse_addr(cli_ctx, &af, &addrlen, &addr);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to parse address: %s\n",
+	      strerror(ret));
+        goto done;
+    }
+
+    data = cache_req_data_addr(cmd_ctx, type, af, addrlen, addr);
+    if (data == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to set cache request data!\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    subreq = nss_get_object_send(cmd_ctx, cli_ctx->ev, cli_ctx,
+                                 data, memcache, NULL, 0);
+    if (subreq == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create tevent request!\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    tevent_req_set_callback(subreq, nss_getby_done, cmd_ctx);
+
+    ret = EOK;
+
+done:
+    if (ret != EOK) {
+        talloc_free(cmd_ctx);
+        return nss_protocol_done(cli_ctx, ret);
+    }
+
+    return EOK;
+}
+
 static errno_t invalidate_cache(struct nss_cmd_ctx *cmd_ctx,
                                 struct cache_req_result *result)
 {
@@ -731,11 +786,13 @@ done:
     talloc_free(cmd_ctx);
 }
 
-static void nss_setnetgrent_done(struct tevent_req *subreq);
+static void sss_nss_setnetgrent_done(struct tevent_req *subreq);
 
-static errno_t nss_setnetgrent(struct cli_ctx *cli_ctx,
-                               enum cache_req_type type,
-                               nss_protocol_fill_packet_fn fill_fn)
+/* This function's name started to collide with external nss symbol,
+ * so it has additional sss_* prefix unlike other functions here. */
+static errno_t sss_nss_setnetgrent(struct cli_ctx *cli_ctx,
+                                   enum cache_req_type type,
+                                   nss_protocol_fill_packet_fn fill_fn)
 {
     struct nss_ctx *nss_ctx;
     struct nss_state_ctx *state_ctx;
@@ -777,7 +834,7 @@ static errno_t nss_setnetgrent(struct cli_ctx *cli_ctx,
         goto done;
     }
 
-    tevent_req_set_callback(subreq, nss_setnetgrent_done, cmd_ctx);
+    tevent_req_set_callback(subreq, sss_nss_setnetgrent_done, cmd_ctx);
 
     ret = EOK;
 
@@ -790,7 +847,7 @@ done:
     return EOK;
 }
 
-static void nss_setnetgrent_done(struct tevent_req *subreq)
+static void sss_nss_setnetgrent_done(struct tevent_req *subreq)
 {
     struct nss_cmd_ctx *cmd_ctx;
     errno_t ret;
@@ -1040,8 +1097,8 @@ static errno_t nss_cmd_initgroups_ex(struct cli_ctx *cli_ctx)
 
 static errno_t nss_cmd_setnetgrent(struct cli_ctx *cli_ctx)
 {
-    return nss_setnetgrent(cli_ctx, CACHE_REQ_NETGROUP_BY_NAME,
-                           nss_protocol_fill_setnetgrent);
+    return sss_nss_setnetgrent(cli_ctx, CACHE_REQ_NETGROUP_BY_NAME,
+                               nss_protocol_fill_setnetgrent);
 }
 
 static errno_t nss_cmd_getnetgrent(struct cli_ctx *cli_ctx)
@@ -1219,6 +1276,93 @@ static errno_t nss_cmd_getlistbycert(struct cli_ctx *cli_ctx)
     return nss_getlistby_cert(cli_ctx, CACHE_REQ_USER_BY_CERT);
 }
 
+static errno_t nss_cmd_gethostbyname(struct cli_ctx *cli_ctx)
+{
+    return nss_getby_name(cli_ctx, false, CACHE_REQ_IP_HOST_BY_NAME, NULL,
+                          SSS_MC_NONE, nss_protocol_fill_hostent);
+}
+
+static errno_t nss_cmd_gethostbyaddr(struct cli_ctx *cli_ctx)
+{
+    return nss_getby_addr(cli_ctx, CACHE_REQ_IP_HOST_BY_ADDR,
+                          SSS_MC_NONE, nss_protocol_fill_hostent);
+}
+
+static errno_t nss_cmd_sethostent(struct cli_ctx *cli_ctx)
+{
+    struct nss_ctx *nss_ctx;
+
+    nss_ctx = talloc_get_type(cli_ctx->rctx->pvt_ctx, struct nss_ctx);
+
+    return nss_setent(cli_ctx, CACHE_REQ_ENUM_HOST, nss_ctx->hostent);
+}
+
+static errno_t nss_cmd_gethostent(struct cli_ctx *cli_ctx)
+{
+    struct nss_ctx *nss_ctx;
+    struct nss_state_ctx *state_ctx;
+
+    nss_ctx = talloc_get_type(cli_ctx->rctx->pvt_ctx, struct nss_ctx);
+    state_ctx = talloc_get_type(cli_ctx->state_ctx, struct nss_state_ctx);
+
+    return nss_getent(cli_ctx, CACHE_REQ_ENUM_HOST,
+                      &state_ctx->hostent, nss_protocol_fill_hostent,
+                      nss_ctx->hostent);
+}
+
+static errno_t nss_cmd_endhostent(struct cli_ctx *cli_ctx)
+{
+    struct nss_state_ctx *state_ctx;
+
+    state_ctx = talloc_get_type(cli_ctx->state_ctx, struct nss_state_ctx);
+
+    return nss_endent(cli_ctx, &state_ctx->hostent);
+}
+
+static errno_t nss_cmd_getnetbyname(struct cli_ctx *cli_ctx)
+{
+    return nss_getby_name(cli_ctx, false, CACHE_REQ_IP_NETWORK_BY_NAME, NULL,
+                          SSS_MC_NONE, nss_protocol_fill_netent);
+}
+
+static errno_t nss_cmd_getnetbyaddr(struct cli_ctx *cli_ctx)
+{
+    return nss_getby_addr(cli_ctx, CACHE_REQ_IP_NETWORK_BY_ADDR,
+                          SSS_MC_NONE, nss_protocol_fill_netent);
+}
+
+
+static errno_t nss_cmd_setnetent(struct cli_ctx *cli_ctx)
+{
+    struct nss_ctx *nss_ctx;
+
+    nss_ctx = talloc_get_type(cli_ctx->rctx->pvt_ctx, struct nss_ctx);
+
+    return nss_setent(cli_ctx, CACHE_REQ_ENUM_IP_NETWORK, nss_ctx->netent);
+}
+
+static errno_t nss_cmd_getnetent(struct cli_ctx *cli_ctx)
+{
+    struct nss_ctx *nss_ctx;
+    struct nss_state_ctx *state_ctx;
+
+    nss_ctx = talloc_get_type(cli_ctx->rctx->pvt_ctx, struct nss_ctx);
+    state_ctx = talloc_get_type(cli_ctx->state_ctx, struct nss_state_ctx);
+
+    return nss_getent(cli_ctx, CACHE_REQ_ENUM_IP_NETWORK,
+                      &state_ctx->netent, nss_protocol_fill_netent,
+                      nss_ctx->netent);
+}
+
+static errno_t nss_cmd_endnetent(struct cli_ctx *cli_ctx)
+{
+    struct nss_state_ctx *state_ctx;
+
+    state_ctx = talloc_get_type(cli_ctx->state_ctx, struct nss_state_ctx);
+
+    return nss_endent(cli_ctx, &state_ctx->netent);
+}
+
 struct sss_cmd_table *get_nss_cmds(void)
 {
     static struct sss_cmd_table nss_cmds[] = {
@@ -1256,6 +1400,17 @@ struct sss_cmd_table *get_nss_cmds(void)
         { SSS_NSS_GETGRNAM_EX, nss_cmd_getgrnam_ex },
         { SSS_NSS_GETGRGID_EX, nss_cmd_getgrgid_ex },
         { SSS_NSS_INITGR_EX, nss_cmd_initgroups_ex },
+        { SSS_NSS_GETHOSTBYNAME, nss_cmd_gethostbyname },
+        { SSS_NSS_GETHOSTBYNAME2, nss_cmd_gethostbyname },
+        { SSS_NSS_GETHOSTBYADDR, nss_cmd_gethostbyaddr },
+        { SSS_NSS_SETHOSTENT, nss_cmd_sethostent },
+        { SSS_NSS_GETHOSTENT, nss_cmd_gethostent },
+        { SSS_NSS_ENDHOSTENT, nss_cmd_endhostent },
+        { SSS_NSS_GETNETBYNAME, nss_cmd_getnetbyname },
+        { SSS_NSS_GETNETBYADDR, nss_cmd_getnetbyaddr },
+        { SSS_NSS_SETNETENT, nss_cmd_setnetent },
+        { SSS_NSS_GETNETENT, nss_cmd_getnetent },
+        { SSS_NSS_ENDNETENT, nss_cmd_endnetent },
         { SSS_CLI_NULL, NULL }
     };
 

@@ -135,6 +135,42 @@ def sudo_rule(base_dn, name, users=(), hosts=(), commands=()):
     return ("cn=" + name + ",ou=sudoers," + base_dn, attr_list)
 
 
+def ip_host(base_dn, name, aliases=(), addresses=()):
+    """
+    Generate an RFC2307 ipHost add-modlist for passing to ldap.add*.
+    """
+    attr_list = [
+        ('objectClass', [b'top', b'device', b'ipHost']),
+    ]
+    if (len(aliases)) > 0:
+        alias_list = [alias.encode('utf-8') for alias in aliases]
+        alias_list.insert(0, name.encode('utf-8'))
+        attr_list.append(('cn', alias_list))
+    else:
+        attr_list.append(('cn', [name.encode('utf-8')]))
+    if len(addresses) > 0:
+        addr_list = [addr.encode('utf-8') for addr in addresses]
+        attr_list.append(('ipHostNumber', addr_list))
+    return ("cn=" + name + ",ou=Hosts," + base_dn, attr_list)
+
+
+def ip_net(base_dn, name, address, aliases=()):
+    """
+    Generate an RFC2307 ipNetwork add-modlist for passing to ldap.add*.
+    """
+    attr_list = [
+        ('objectClass', [b'top', b'ipNetwork']),
+        ('ipNetworkNumber', [address.encode('utf-8')]),
+    ]
+    if (len(aliases)) > 0:
+        alias_list = [alias.encode('utf-8') for alias in aliases]
+        alias_list.insert(0, name.encode('utf-8'))
+        attr_list.append(('cn', alias_list))
+    else:
+        attr_list.append(('cn', [name.encode('utf-8')]))
+    return ("cn=" + name + ",ou=Networks," + base_dn, attr_list)
+
+
 class List(list):
     """LDAP add-modlist list"""
 
@@ -187,3 +223,13 @@ class List(list):
                       base_dn=None):
         self.append(sudo_rule(base_dn or self.base_dn,
                               name, users, hosts, commands))
+
+    def add_host(self, name, aliases=[], addresses=[], base_dn=None):
+        """Add an RFC2307 ipHost add-modlist."""
+        self.append(ip_host(base_dn or self.base_dn,
+                            name, aliases, addresses))
+
+    def add_ipnet(self, name, address, aliases=[], base_dn=None):
+        """Add an RFC2307 ipNetwork add-modlist."""
+        self.append(ip_net(base_dn or self.base_dn,
+                           name, address, aliases))

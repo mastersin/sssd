@@ -387,42 +387,6 @@ static errno_t gpo_cache_store_file(const char *smb_path,
 }
 
 static errno_t
-gpo_cache_remove_file(const char *smb_path,
-                      const char *smb_cse_suffix)
-{
-    errno_t ret = EOK;
-    char *filename = NULL;
-    TALLOC_CTX *tmp_ctx = NULL;
-
-    tmp_ctx = talloc_new(NULL);
-    if (tmp_ctx == NULL) {
-        ret = ENOMEM;
-        goto done;
-    }
-
-    filename = talloc_asprintf(tmp_ctx, GPO_CACHE_PATH"%s%s", smb_path, smb_cse_suffix);
-    if (filename == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
-        ret = ENOMEM;
-        goto done;
-    }
-    ret = unlink(filename);
-    if (ret == -1) {
-        if (ENOENT == errno) {
-            ret = EOK;
-        } else {
-            ret = errno;
-            DEBUG(SSSDBG_CRIT_FAILURE, "failed to unlink %s\n", filename);
-            goto done;
-        }
-    }
-
-done:
-    talloc_free(tmp_ctx);
-    return ret;
-}
-
-static errno_t
 parse_ini_file_with_libini(struct ini_cfgobj *ini_config,
                            int *_gpt_version)
 {
@@ -563,12 +527,11 @@ copy_smb_file_to_gpo_cache(SMBCCTX *smbc_ctx,
                            const char *smb_server,
                            const char *smb_share,
                            const char *smb_path,
-                           const char *smb_cse_suffix,
-                           bool optional)
+                           const char *smb_cse_suffix)
 {
     char *smb_uri = NULL;
     char *gpt_main_folder = NULL;
-    SMBCFILE *file;
+    SMBCFILE *file = NULL;
     int ret;
     uint8_t *buf = NULL;
     int buflen = 0;
@@ -593,48 +556,41 @@ copy_smb_file_to_gpo_cache(SMBCCTX *smbc_ctx,
     errno = 0;
     file = smbc_getFunctionOpen(smbc_ctx)(smbc_ctx, smb_uri, O_RDONLY, 0755);
     if (file == NULL) {
-        /*
-         * DCs may use upper case names for the main folder, where GPTs are
-         * stored. libsmbclient does not allow us to request case insensitive
-         * file name lookups on DCs with case sensitive file systems.
-         */
-        gpt_main_folder = strstr(smb_uri, "/Machine/");
-        if (gpt_main_folder == NULL) {
-            /* At this moment we do not use any GPO from user settings,
-             * but it can change in the future so let's keep the following
-             * line around to make this part of the code 'just work' also
-             * with the user GPO settings. */
-            gpt_main_folder = strstr(smb_uri, "/User/");
-        }
-        if (gpt_main_folder != NULL) {
-            ++gpt_main_folder;
-            while (gpt_main_folder != NULL && *gpt_main_folder != '/') {
-                *gpt_main_folder = toupper(*gpt_main_folder);
+        // ENOENT: A directory component in pathname does not exist
+        if (errno == ENOENT) {
+            /*
+             * DCs may use upper case names for the main folder, where GPTs are
+             * stored. libsmbclient does not allow us to request case insensitive
+             * file name lookups on DCs with case sensitive file systems.
+             */
+            gpt_main_folder = strstr(smb_uri, "/Machine/");
+            if (gpt_main_folder == NULL) {
+                /* At this moment we do not use any GPO from user settings,
+                 * but it can change in the future so let's keep the following
+                 * line around to make this part of the code 'just work' also
+                 * with the user GPO settings. */
+                gpt_main_folder = strstr(smb_uri, "/User/");
+            }
+            if (gpt_main_folder != NULL) {
                 ++gpt_main_folder;
+                while (gpt_main_folder != NULL && *gpt_main_folder != '/') {
+                    *gpt_main_folder = toupper(*gpt_main_folder);
+                    ++gpt_main_folder;
+                }
+
+                DEBUG(SSSDBG_TRACE_FUNC, "smb_uri: %s\n", smb_uri);
+
+                errno = 0;
+                file = smbc_getFunctionOpen(smbc_ctx)(smbc_ctx, smb_uri, O_RDONLY, 0755);
             }
-
-            DEBUG(SSSDBG_TRACE_FUNC, "smb_uri: %s\n", smb_uri);
-
-            errno = 0;
-            file = smbc_getFunctionOpen(smbc_ctx)(smbc_ctx, smb_uri, O_RDONLY, 0755);
         }
-    }
 
-    if (file == NULL) {
-        ret = errno;
-        if (optional && ENOENT == ret) {
-            DEBUG(SSSDBG_TRACE_FUNC, "%s does not exist in sysvol, purging caced copy\n", smb_uri);
-            ret = gpo_cache_remove_file(smb_path, smb_cse_suffix);
-            if (ret != EOK && ret != ENOENT) {
-                DEBUG(SSSDBG_CRIT_FAILURE, "failed to purge stale cached %s\n", smb_uri);
-                goto done;
-            }
-            ret = EOK;
-        } else {
+        if (file == NULL) {
+            ret = errno;
             DEBUG(SSSDBG_CRIT_FAILURE, "smbc_getFunctionOpen failed [%d][%s]\n",
                   ret, strerror(ret));
+            goto done;
         }
-        goto done;
     }
 
     buf = talloc_array(tmp_ctx, uint8_t, SMB_BUFFER_SIZE);
@@ -655,8 +611,6 @@ copy_smb_file_to_gpo_cache(SMBCCTX *smbc_ctx,
 
     DEBUG(SSSDBG_TRACE_ALL, "smb_buflen: %d\n", buflen);
 
-    smbc_getFunctionClose(smbc_ctx)(smbc_ctx, file);
-
     ret = gpo_cache_store_file(smb_path, smb_cse_suffix, buf, buflen);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
@@ -666,6 +620,10 @@ copy_smb_file_to_gpo_cache(SMBCCTX *smbc_ctx,
     }
 
  done:
+    if (file != NULL) {
+        smbc_getFunctionClose(smbc_ctx)(smbc_ctx, file);
+    }
+
     talloc_free(tmp_ctx);
     return ret;
 }
@@ -724,7 +682,7 @@ perform_smb_operations(int cached_gpt_version,
 
     /* download ini file */
     ret = copy_smb_file_to_gpo_cache(smbc_ctx, smb_server, smb_share, smb_path,
-                                     GPT_INI, false);
+                                     GPT_INI);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "copy_smb_file_to_gpo_cache failed [%d][%s]\n",
@@ -744,21 +702,21 @@ perform_smb_operations(int cached_gpt_version,
     if (sysvol_gpt_version > cached_gpt_version) {
         /* download policy file */
         ret = copy_smb_file_to_gpo_cache(smbc_ctx, smb_server, smb_share,
-                                         smb_path, smb_cse_suffix, true);
-        if (ret != EOK && ret != ENOENT) {
+                                         smb_path, smb_cse_suffix);
+        if (ret != EOK) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "copy_smb_file_to_gpo_cache failed [%d][%s]\n",
                   ret, strerror(ret));
             goto done;
         }
-        ret = EOK;
     }
 
  done:
-    *_sysvol_gpt_version = sysvol_gpt_version;
-
-    if (_sysvol_gpt_version >= 0)
+    if (sysvol_gpt_version >= 0)
         ret = EOK;
+
+    if (ret == EOK)
+        *_sysvol_gpt_version = sysvol_gpt_version;
 
     smbc_free_context(smbc_ctx, 0);
     return ret;
@@ -816,7 +774,7 @@ main(int argc, const char *argv[])
 
     DEBUG_INIT(debug_level);
 
-    debug_prg_name = talloc_asprintf(NULL, "[sssd[gpo_child[%d]]]", getpid());
+    debug_prg_name = talloc_asprintf(NULL, "gpo_child[%d]", getpid());
     if (debug_prg_name == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "talloc_asprintf failed.\n");
         goto fail;

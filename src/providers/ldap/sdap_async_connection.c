@@ -148,6 +148,8 @@ static void sdap_sys_connect_done(struct tevent_req *subreq)
     const char *sasl_mech;
     int sasl_minssf;
     ber_len_t ber_sasl_minssf;
+    int sasl_maxssf;
+    ber_len_t ber_sasl_maxssf;
 
     ret = sss_ldap_init_recv(subreq, &state->sh->ldap, &sd);
     talloc_zfree(subreq);
@@ -288,6 +290,18 @@ static void sdap_sys_connect_done(struct tevent_req *subreq)
             if (lret != LDAP_OPT_SUCCESS) {
                 DEBUG(SSSDBG_CRIT_FAILURE, "Failed to set LDAP MIN SSF option "
                                             "to %d\n", sasl_minssf);
+                goto fail;
+            }
+        }
+
+        sasl_maxssf = dp_opt_get_int(state->opts->basic, SDAP_SASL_MAXSSF);
+        if (sasl_maxssf >= 0) {
+            ber_sasl_maxssf = (ber_len_t)sasl_maxssf;
+            lret = ldap_set_option(state->sh->ldap, LDAP_OPT_X_SASL_SSF_MAX,
+                                   &ber_sasl_maxssf);
+            if (lret != LDAP_OPT_SUCCESS) {
+                DEBUG(SSSDBG_CRIT_FAILURE, "Failed to set LDAP MAX SSF option "
+                                            "to %d\n", sasl_maxssf);
                 goto fail;
             }
         }
@@ -1803,6 +1817,8 @@ static void sdap_cli_auth_step(struct tevent_req *req)
     struct tevent_req *subreq;
     time_t now;
     int expire_timeout;
+    int expire_offset;
+
     const char *sasl_mech = dp_opt_get_string(state->opts->basic,
                                               SDAP_SASL_MECH);
     const char *user_dn = dp_opt_get_string(state->opts->basic,
@@ -1832,6 +1848,16 @@ static void sdap_cli_auth_step(struct tevent_req *req)
      */
     now = time(NULL);
     expire_timeout = dp_opt_get_int(state->opts->basic, SDAP_EXPIRE_TIMEOUT);
+    expire_offset = dp_opt_get_int(state->opts->basic, SDAP_EXPIRE_OFFSET);
+    if (expire_offset > 0) {
+        expire_timeout += sss_rand() % (expire_offset + 1);
+    } else if (expire_offset < 0) {
+        DEBUG(SSSDBG_MINOR_FAILURE,
+              "Negative value [%d] of ldap_connection_expire_offset "
+              "is not allowed.\n",
+              expire_offset);
+    }
+
     DEBUG(SSSDBG_CONF_SETTINGS, "expire timeout is %d\n", expire_timeout);
     if (!state->sh->expire_time
             || (state->sh->expire_time > (now + expire_timeout))) {

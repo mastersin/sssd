@@ -33,7 +33,19 @@ import ldap_ent
 from util import *
 
 LDAP_BASE_DN = "dc=example,dc=com"
-INTERACTIVE_TIMEOUT = 4
+
+# Enumeration is run periodically. It is scheduled during SSSD startup
+# and then it runs every four seconds. We do not know precisely when
+# the enumeration refresh is triggered so sleeping for four seconds is
+# not enough, we have to sleep longer time to adapt for delays (it is
+# not scheduled on precise time because of other sssd operation, it
+# takes some time to finish so each run moves it further away from
+# exact 4 seconds period, cpu scheduler, context switches, ...).
+# I agree that just little bit longer timeout may work as well.
+# However we can be sure when using twice the period because we know
+# that enumeration was indeed run at least once.
+ENUMERATION_TIMEOUT = 4
+INTERACTIVE_TIMEOUT = ENUMERATION_TIMEOUT*2
 
 
 @pytest.fixture(scope="module")
@@ -151,7 +163,7 @@ def format_interactive_conf(ldap_conn, schema):
             ldap_enumeration_refresh_timeout    = {0}
             ldap_purge_cache_timeout            = 1
             entry_cache_timeout                 = {0}
-        """).format(INTERACTIVE_TIMEOUT)
+        """).format(ENUMERATION_TIMEOUT)
 
 
 def create_conf_file(contents):
@@ -412,7 +424,7 @@ def user_and_groups_rfc2307_bis(request, ldap_conn):
 def test_add_remove_user(ldap_conn, blank_rfc2307):
     """Test user addition and removal are reflected by SSSD"""
     e = ldap_ent.user(ldap_conn.ds_inst.base_dn, "user", 2001, 2000)
-    time.sleep(INTERACTIVE_TIMEOUT/2)
+    time.sleep(INTERACTIVE_TIMEOUT)
     # Add the user
     ent.assert_passwd(ent.contains_only())
     ldap_conn.add_s(*e)
@@ -427,7 +439,7 @@ def test_add_remove_user(ldap_conn, blank_rfc2307):
 def test_add_remove_group_rfc2307(ldap_conn, blank_rfc2307):
     """Test RFC2307 group addition and removal are reflected by SSSD"""
     e = ldap_ent.group(ldap_conn.ds_inst.base_dn, "group", 2001)
-    time.sleep(INTERACTIVE_TIMEOUT/2)
+    time.sleep(INTERACTIVE_TIMEOUT)
     # Add the group
     ent.assert_group(ent.contains_only())
     ldap_conn.add_s(*e)
@@ -442,7 +454,7 @@ def test_add_remove_group_rfc2307(ldap_conn, blank_rfc2307):
 def test_add_remove_group_rfc2307_bis(ldap_conn, blank_rfc2307_bis):
     """Test RFC2307bis group addition and removal are reflected by SSSD"""
     e = ldap_ent.group_bis(ldap_conn.ds_inst.base_dn, "group", 2001)
-    time.sleep(INTERACTIVE_TIMEOUT/2)
+    time.sleep(INTERACTIVE_TIMEOUT)
     # Add the group
     ent.assert_group(ent.contains_only())
     ldap_conn.add_s(*e)
@@ -456,7 +468,7 @@ def test_add_remove_group_rfc2307_bis(ldap_conn, blank_rfc2307_bis):
 
 def test_add_remove_membership_rfc2307(ldap_conn, user_and_group_rfc2307):
     """Test user membership addition and removal are reflected by SSSD"""
-    time.sleep(INTERACTIVE_TIMEOUT/2)
+    time.sleep(INTERACTIVE_TIMEOUT)
     # Add user to group
     ent.assert_group_by_name("group", dict(mem=ent.contains_only()))
     ldap_conn.modify_s("cn=group,ou=Groups," + ldap_conn.ds_inst.base_dn,
@@ -478,7 +490,7 @@ def test_add_remove_membership_rfc2307_bis(ldap_conn,
     """
     base_dn_bytes = ldap_conn.ds_inst.base_dn.encode('utf-8')
 
-    time.sleep(INTERACTIVE_TIMEOUT/2)
+    time.sleep(INTERACTIVE_TIMEOUT)
     # Add user to group1
     ent.assert_group_by_name("group1", dict(mem=ent.contains_only()))
     ldap_conn.modify_s("cn=group1,ou=Groups," + ldap_conn.ds_inst.base_dn,

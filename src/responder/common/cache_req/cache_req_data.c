@@ -96,6 +96,8 @@ cache_req_data_create(TALLOC_CTX *mem_ctx,
     case CACHE_REQ_OBJECT_BY_NAME:
     case CACHE_REQ_AUTOFS_MAP_ENTRIES:
     case CACHE_REQ_AUTOFS_MAP_BY_NAME:
+    case CACHE_REQ_IP_HOST_BY_NAME:
+    case CACHE_REQ_IP_NETWORK_BY_NAME:
         if (input->name.input == NULL) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Bug: name cannot be NULL!\n");
             ret = ERR_INTERNAL;
@@ -104,6 +106,17 @@ cache_req_data_create(TALLOC_CTX *mem_ctx,
 
         data->name.input = talloc_strdup(data, input->name.input);
         if (data->name.input == NULL) {
+            ret = ENOMEM;
+            goto done;
+        }
+        break;
+    case CACHE_REQ_IP_HOST_BY_ADDR:
+    case CACHE_REQ_IP_NETWORK_BY_ADDR:
+        data->addr.af = input->addr.af;
+        data->addr.len = input->addr.len;
+        data->addr.data = talloc_memdup(data, input->addr.data,
+                                        input->addr.len);
+        if (data->addr.data == NULL) {
             ret = ENOMEM;
             goto done;
         }
@@ -142,6 +155,8 @@ cache_req_data_create(TALLOC_CTX *mem_ctx,
     case CACHE_REQ_ENUM_USERS:
     case CACHE_REQ_ENUM_GROUPS:
     case CACHE_REQ_ENUM_SVC:
+    case CACHE_REQ_ENUM_HOST:
+    case CACHE_REQ_ENUM_IP_NETWORK:
         break;
     case CACHE_REQ_SVC_BY_NAME:
         if (input->svc.name->input == NULL) {
@@ -187,7 +202,7 @@ cache_req_data_create(TALLOC_CTX *mem_ctx,
         }
 
         break;
-    case CACHE_REQ_HOST_BY_NAME:
+    case CACHE_REQ_SSH_HOST_ID_BY_NAME:
         if (input->name.input == NULL) {
             DEBUG(SSSDBG_CRIT_FAILURE, "Bug: name cannot be NULL!\n");
             ret = ERR_INTERNAL;
@@ -361,17 +376,33 @@ cache_req_data_svc(TALLOC_CTX *mem_ctx,
 }
 
 struct cache_req_data *
-cache_req_data_host(TALLOC_CTX *mem_ctx,
-                    enum cache_req_type type,
-                    const char *name,
-                    const char *alias,
-                    const char **attrs)
+cache_req_data_ssh_host_id(TALLOC_CTX *mem_ctx,
+                           enum cache_req_type type,
+                           const char *name,
+                           const char *alias,
+                           const char **attrs)
 {
     struct cache_req_data input = {0};
 
     input.name.input = name;
     input.alias = alias;
     input.attrs = attrs;
+
+    return cache_req_data_create(mem_ctx, type, &input);
+}
+
+struct cache_req_data *
+cache_req_data_addr(TALLOC_CTX *mem_ctx,
+                    enum cache_req_type type,
+                    uint32_t af,
+                    uint32_t addrlen,
+                    uint8_t *addr)
+{
+    struct cache_req_data input = {0};
+
+    input.addr.af = af;
+    input.addr.len = addrlen;
+    input.addr.data = addr;
 
     return cache_req_data_create(mem_ctx, type, &input);
 }

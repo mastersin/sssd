@@ -117,6 +117,8 @@ const char *dp_target_to_string(enum dp_targets target)
         return "subdomains";
     case DPT_SESSION:
         return "session";
+    case DPT_RESOLVER:
+        return "resolver";
     case DP_TARGET_SENTINEL:
         return NULL;
     }
@@ -291,6 +293,12 @@ static errno_t dp_target_init(struct be_ctx *be_ctx,
          * configured so we shall just continue. */
         DEBUG(SSSDBG_CONF_SETTINGS, "Target [%s] is not supported by "
               "module [%s].\n", target->name, target->module_name);
+
+        /* Target is not initialized in this case so we can free
+         * its resources. However this is not an error so we return EOK. */
+        talloc_zfree(target->methods);
+        target->initialized = false;
+
         ret = EOK;
         goto done;
     } else if (ret != EOK) {
@@ -301,7 +309,7 @@ static errno_t dp_target_init(struct be_ctx *be_ctx,
 
 done:
     if (ret != EOK) {
-        talloc_free(target->methods);
+        talloc_zfree(target->methods);
     }
 
     return ret;

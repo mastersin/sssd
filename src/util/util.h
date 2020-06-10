@@ -103,6 +103,8 @@ extern int dbus_activated;
 #define FLAGS_GEN_CONF 0x0008
 #define FLAGS_NO_WATCHDOG 0x0010
 
+#define SSS_WATCHDOG_EXIT_CODE 70 /* to match EX_SOFTWARE in sysexits.h */
+
 #define PIPE_INIT { -1, -1 }
 
 #define PIPE_FD_CLOSE(fd) do {      \
@@ -183,6 +185,7 @@ struct main_context {
 errno_t server_common_rotate_logs(struct confdb_ctx *confdb,
                                   const char *conf_entry);
 int die_if_parent_died(void);
+int check_pidfile(const char *file);
 int pidfile(const char *file);
 int server_setup(const char *name, int flags,
                  uid_t uid, gid_t gid,
@@ -365,6 +368,11 @@ errno_t check_and_open_readonly(const char *filename, int *fd,
 /* These two functions accept addr in network order */
 bool check_ipv4_addr(struct in_addr *addr, uint8_t check);
 bool check_ipv6_addr(struct in6_addr *addr, uint8_t check);
+
+/* Returns the canonical form of an IPv4 or IPv6 address */
+errno_t sss_canonicalize_ip_address(TALLOC_CTX *mem_ctx,
+                                    const char *address,
+                                    char **canonical_address);
 
 const char * const * get_known_services(void);
 

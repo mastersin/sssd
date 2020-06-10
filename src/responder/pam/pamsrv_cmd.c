@@ -23,6 +23,7 @@
 #include <time.h>
 #include "util/util.h"
 #include "util/auth_utils.h"
+#include "util/find_uid.h"
 #include "db/sysdb.h"
 #include "confdb/confdb.h"
 #include "responder/common/responder_packet.h"
@@ -32,7 +33,6 @@
 #include "responder/pam/pamsrv.h"
 #include "responder/pam/pam_helpers.h"
 #include "responder/common/cache_req/cache_req.h"
-#include "db/sysdb.h"
 
 enum pam_verbosity {
     PAM_VERBOSITY_NO_MESSAGES = 0,
@@ -42,6 +42,44 @@ enum pam_verbosity {
 };
 
 #define DEFAULT_PAM_VERBOSITY PAM_VERBOSITY_IMPORTANT
+
+struct pam_initgroup_enum_str {
+    enum pam_initgroups_scheme scheme;
+    const char *option;
+};
+
+struct pam_initgroup_enum_str pam_initgroup_enum_str[] = {
+    { PAM_INITGR_NEVER, "never" },
+    { PAM_INITGR_NO_SESSION, "no_session" },
+    { PAM_INITGR_ALWAYS, "always" },
+    { PAM_INITGR_INVALID, NULL }
+};
+
+enum pam_initgroups_scheme pam_initgroups_string_to_enum(const char *str)
+{
+    size_t c;
+
+    for (c = 0 ; pam_initgroup_enum_str[c].option != NULL; c++) {
+        if (strcasecmp(pam_initgroup_enum_str[c].option, str) == 0) {
+            return pam_initgroup_enum_str[c].scheme;
+        }
+    }
+
+    return PAM_INITGR_INVALID;
+}
+
+const char *pam_initgroup_enum_to_string(enum pam_initgroups_scheme scheme) {
+    size_t c;
+
+    for (c = 0 ; pam_initgroup_enum_str[c].option != NULL; c++) {
+        if (pam_initgroup_enum_str[c].scheme == scheme) {
+            return pam_initgroup_enum_str[c].option;
+        }
+    }
+
+    return NULL;
+}
+
 
 static errno_t
 pam_null_last_online_auth_with_curr_token(struct sss_domain_info *domain,
@@ -1352,7 +1390,7 @@ static errno_t check_cert(TALLOC_CTX *mctx,
                             &cert_verification_opts);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "Failed to read certificate_verification from confdb: [%d]: %s\n",
+              "Failed to read '"CONFDB_MONITOR_CERT_VERIFICATION"' from confdb: [%d]: %s\n",
               ret, sss_strerror(ret));
         return ret;
     }
@@ -1361,7 +1399,7 @@ static errno_t check_cert(TALLOC_CTX *mctx,
                             CONFDB_PAM_P11_URI, NULL, &uri);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "Failed to read certificate_verification from confdb: [%d]: %s\n",
+              "Failed to read '"CONFDB_PAM_P11_URI"' from confdb: [%d]: %s\n",
               ret, sss_strerror(ret));
         return ret;
     }
@@ -1846,12 +1884,16 @@ done:
     pam_check_user_done(preq, ret);
 }
 
-static void pam_dp_send_acct_req_done(struct tevent_req *req);
+static void pam_check_user_search_next(struct tevent_req *req);
+static void pam_check_user_search_lookup(struct tevent_req *req);
+static void pam_check_user_search_done(struct pam_auth_req *preq, int ret,
+                                       struct cache_req_result *result);
+
+/* lookup the user uid from the cache first,
+ * then we'll refresh initgroups if needed */
 static int pam_check_user_search(struct pam_auth_req *preq)
 {
-    int ret;
     struct tevent_req *dpreq;
-    struct pam_ctx *pctx;
     struct cache_req_data *data;
 
     data = cache_req_data_name(preq,
@@ -1861,23 +1903,8 @@ static int pam_check_user_search(struct pam_auth_req *preq)
         return ENOMEM;
     }
 
-    pctx = talloc_get_type(preq->cctx->rctx->pvt_ctx, struct pam_ctx);
-
-    /* The initgr cache is used to make sure that during a single PAM session
-     * (auth, acct_mgtm, ....) the backend is contacted only once. logon_name
-     * is the name provided by the PAM client and will not be modified during
-     * the request, so it makes sense to use it here instead od the pd->user. */
-    ret = pam_initgr_check_timeout(pctx->id_table, preq->pd->logon_name);
-    if (ret == EOK) {
-        /* Entry is still valid, force to lookup in the cache first */
-        cache_req_data_set_bypass_cache(data, false);
-    } else if (ret == ENOENT) {
-        /* Call the data provider first */
-        cache_req_data_set_bypass_cache(data, true);
-    } else {
-        DEBUG(SSSDBG_OP_FAILURE, "Could not look up initgroup timeout\n");
-        return EIO;
-    }
+    cache_req_data_set_bypass_cache(data, false);
+    cache_req_data_set_bypass_dp(data, true);
 
     dpreq = cache_req_send(preq,
                            preq->cctx->rctx->ev,
@@ -1893,17 +1920,19 @@ static int pam_check_user_search(struct pam_auth_req *preq)
         return ENOMEM;
     }
 
-    tevent_req_set_callback(dpreq, pam_dp_send_acct_req_done, preq);
+    tevent_req_set_callback(dpreq, pam_check_user_search_next, preq);
 
     /* tell caller we are in an async call */
     return EAGAIN;
 }
 
-static void pam_dp_send_acct_req_done(struct tevent_req *req)
+static void pam_check_user_search_next(struct tevent_req *req)
 {
-    struct cache_req_result *result;
     struct pam_auth_req *preq;
     struct pam_ctx *pctx;
+    struct cache_req_result *result = NULL;
+    struct cache_req_data *data;
+    struct tevent_req *dpreq;
     int ret;
 
     preq = tevent_req_callback_data(req, struct pam_auth_req);
@@ -1917,6 +1946,120 @@ static void pam_dp_send_acct_req_done(struct tevent_req *req)
         talloc_zfree(preq->cctx);
         return;
     }
+
+    DEBUG(SSSDBG_TRACE_ALL, "PAM initgroups scheme [%s].\n",
+          pam_initgroup_enum_to_string(pctx->initgroups_scheme));
+
+    if (ret == EOK) {
+        bool user_has_session = false;
+
+        if (pctx->initgroups_scheme == PAM_INITGR_NO_SESSION) {
+            uid_t uid = ldb_msg_find_attr_as_uint64(result->msgs[0],
+                                                    SYSDB_UIDNUM, 0);
+            if (!uid) {
+                DEBUG(SSSDBG_CRIT_FAILURE, "A user with no UID?\n");
+                talloc_zfree(preq->cctx);
+                return;
+            }
+
+            /* If a user already has a session on the system, we take the
+             * cache for granted and do not force an online lookup. This is
+             * because in most cases the user is just trying to authenticate
+             * but not create a new session (sudo, lockscreen, polkit, etc.)
+             * An online refresh in this situation would just delay operations
+             * without providing any useful additional information.
+             */
+            (void)check_if_uid_is_active(uid, &user_has_session);
+
+            DEBUG(SSSDBG_TRACE_ALL, "Found %s session for uid %"SPRIuid".\n",
+                                    user_has_session ? "a" : "no", uid);
+        }
+
+        /* The initgr cache is used to make sure that during a single PAM
+         * session (auth, acct_mgtm, ....) the backend is contacted only
+         * once. logon_name is the name provided by the PAM client and
+         * will not be modified during the request, so it makes sense to
+         * use it here instead od the pd->user.
+         */
+        ret = pam_initgr_check_timeout(pctx->id_table, preq->pd->logon_name);
+        if (ret != EOK && ret != ENOENT) {
+            DEBUG(SSSDBG_OP_FAILURE, "Could not look up initgroup timeout\n");
+        }
+
+        if ((ret == EOK) || user_has_session
+                || pctx->initgroups_scheme == PAM_INITGR_NEVER) {
+            DEBUG(SSSDBG_TRACE_ALL, "No new initgroups needed because:\n");
+            if (ret == EOK) {
+                DEBUG(SSSDBG_TRACE_ALL, "PAM initgr cache still valid.\n");
+            } else if (user_has_session) {
+                DEBUG(SSSDBG_TRACE_ALL, "there is a active session for "
+                                        "user [%s].\n", preq->pd->logon_name);
+            } else if (pctx->initgroups_scheme == PAM_INITGR_NEVER) {
+                DEBUG(SSSDBG_TRACE_ALL, "initgroups scheme is 'never'.\n");
+            }
+            pam_check_user_search_done(preq, EOK, result);
+            return;
+        }
+    }
+
+    /* If we get here it means the user was not found or does not have a
+     * session, or initgr has not been cached before, so we force a new
+     * online lookup */
+    data = cache_req_data_name(preq,
+                               CACHE_REQ_INITGROUPS,
+                               preq->pd->logon_name);
+    if (data == NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE, "Out of memory\n");
+        talloc_zfree(preq->cctx);
+        return;
+    }
+    cache_req_data_set_bypass_cache(data, true);
+    cache_req_data_set_bypass_dp(data, false);
+
+    dpreq = cache_req_send(preq,
+                           preq->cctx->rctx->ev,
+                           preq->cctx->rctx,
+                           preq->cctx->rctx->ncache,
+                           0,
+                           preq->req_dom_type,
+                           NULL,
+                           data);
+    if (!dpreq) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Out of memory sending data provider request\n");
+        talloc_zfree(preq->cctx);
+        return;
+    }
+
+    tevent_req_set_callback(dpreq, pam_check_user_search_lookup, preq);
+}
+
+static void pam_check_user_search_lookup(struct tevent_req *req)
+{
+    struct cache_req_result *result;
+    struct pam_auth_req *preq;
+    int ret;
+
+    preq = tevent_req_callback_data(req, struct pam_auth_req);
+
+    ret = cache_req_single_domain_recv(preq, req, &result);
+    talloc_zfree(req);
+    if (ret != EOK && ret != ENOENT) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Fatal error, killing connection!\n");
+        talloc_zfree(preq->cctx);
+        return;
+    }
+
+    pam_check_user_search_done(preq, ret, result);
+}
+
+static void pam_check_user_search_done(struct pam_auth_req *preq, int ret,
+                                       struct cache_req_result *result)
+{
+    struct pam_ctx *pctx;
+
+    pctx = talloc_get_type(preq->cctx->rctx->pvt_ctx, struct pam_ctx);
 
     if (ret == EOK) {
         preq->user_obj = result->msgs[0];

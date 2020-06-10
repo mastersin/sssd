@@ -136,15 +136,13 @@ static void become_daemon(void)
     close_low_fds();
 }
 
-int pidfile(const char *file)
+int check_pidfile(const char *file)
 {
     char pid_str[32];
     pid_t pid;
     int fd;
     int ret, err;
     ssize_t len;
-    size_t size;
-    ssize_t written;
     ssize_t pidlen = sizeof(pid_str) - 1;
 
     fd = open(file, O_RDONLY, 0644);
@@ -153,10 +151,10 @@ int pidfile(const char *file)
         errno = 0;
         len = sss_atomic_read_s(fd, pid_str, pidlen);
         ret = errno;
+        close(fd);
         if (len == -1) {
             DEBUG(SSSDBG_CRIT_FAILURE,
                   "read failed [%d][%s].\n", ret, strerror(ret));
-            close(fd);
             return EINVAL;
         }
 
@@ -170,18 +168,15 @@ int pidfile(const char *file)
             ret = kill(pid, 0);
             /* succeeded in signaling the process -> another sssd process */
             if (ret == 0) {
-                close(fd);
                 return EEXIST;
             }
             if (ret != 0 && errno != ESRCH) {
                 err = errno;
-                close(fd);
                 return err;
             }
         }
 
         /* nothing in the file or no process */
-        close(fd);
         ret = unlink(file);
         /* non-fatal failure */
         if (ret != EOK) {
@@ -196,6 +191,22 @@ int pidfile(const char *file)
         }
     }
 
+    return 0;
+}
+
+int pidfile(const char *file)
+{
+    char pid_str[32];
+    int fd;
+    int ret, err;
+    size_t size;
+    ssize_t written;
+
+    ret = check_pidfile(file);
+    if (ret != EOK) {
+        return ret;
+    }
+
     fd = open(file, O_CREAT | O_WRONLY | O_EXCL, 0644);
     err = errno;
     if (fd == -1) {
@@ -208,22 +219,19 @@ int pidfile(const char *file)
 
     errno = 0;
     written = sss_atomic_write_s(fd, pid_str, size);
+    err = errno;
+    close(fd);
     if (written == -1) {
-        err = errno;
         DEBUG(SSSDBG_CRIT_FAILURE,
               "write failed [%d][%s]\n", err, strerror(err));
-        close(fd);
         return err;
     }
 
     if (written != size) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Wrote %zd bytes expected %zu\n", written, size);
-        close(fd);
         return EIO;
     }
-
-    close(fd);
 
     return 0;
 }
@@ -242,7 +250,8 @@ void orderly_shutdown(int status)
         kill(-getpgrp(), SIGTERM);
     }
 #endif
-    if (status == 0) sss_log(SSS_LOG_INFO, "Shutting down");
+    DEBUG(SSSDBG_IMPORTANT_INFO, "Shutting down (status = %d)", status);
+    sss_log(SSS_LOG_INFO, "Shutting down (status = %d)", status);
     exit(status);
 }
 

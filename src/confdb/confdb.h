@@ -138,6 +138,7 @@
 #define CONFDB_PAM_APP_SERVICES "pam_app_services"
 #define CONFDB_PAM_P11_ALLOWED_SERVICES "pam_p11_allowed_services"
 #define CONFDB_PAM_P11_URI "p11_uri"
+#define CONFDB_PAM_INITGROUPS_SCHEME "pam_initgroups_scheme"
 
 /* SUDO */
 #define CONFDB_SUDO_CONF_ENTRY "config/sudo"
@@ -199,6 +200,7 @@
 #define CONFDB_DOMAIN_HOSTID_PROVIDER "hostid_provider"
 #define CONFDB_DOMAIN_SUBDOMAINS_PROVIDER "subdomains_provider"
 #define CONFDB_DOMAIN_SESSION_PROVIDER "session_provider"
+#define CONFDB_DOMAIN_RESOLVER_PROVIDER "resolver_provider"
 #define CONFDB_DOMAIN_COMMAND "command"
 #define CONFDB_DOMAIN_TIMEOUT "timeout"
 #define CONFDB_DOMAIN_ATTR "cn"
@@ -230,6 +232,8 @@
 #define CONFDB_DOMAIN_AUTOFS_CACHE_TIMEOUT "entry_cache_autofs_timeout"
 #define CONFDB_DOMAIN_SUDO_CACHE_TIMEOUT "entry_cache_sudo_timeout"
 #define CONFDB_DOMAIN_SSH_HOST_CACHE_TIMEOUT "entry_cache_ssh_host_timeout"
+#define CONFDB_DOMAIN_COMPUTER_CACHE_TIMEOUT "entry_cache_computer_timeout"
+#define CONFDB_DOMAIN_RESOLVER_CACHE_TIMEOUT "entry_cache_resolver_timeout"
 #define CONFDB_DOMAIN_PWD_EXPIRATION_WARNING "pwd_expiration_warning"
 #define CONFDB_DOMAIN_REFRESH_EXPIRED_INTERVAL "refresh_expired_interval"
 #define CONFDB_DOMAIN_OFFLINE_TIMEOUT "offline_timeout"
@@ -252,6 +256,7 @@
 
 /* Proxy Provider */
 #define CONFDB_PROXY_LIBNAME "proxy_lib_name"
+#define CONFDB_PROXY_RESOLVER_LIBNAME "proxy_resolver_lib_name"
 #define CONFDB_PROXY_PAM_TARGET "proxy_pam_target"
 #define CONFDB_PROXY_FAST_ALIAS "proxy_fast_alias"
 #define CONFDB_PROXY_MAX_CHILDREN "proxy_max_children"
@@ -373,6 +378,8 @@ struct sss_domain_info {
     uint32_t autofsmap_timeout;
     uint32_t sudo_timeout;
     uint32_t ssh_host_timeout;
+    uint32_t computer_timeout;
+    uint32_t resolver_timeout;
 
     uint32_t refresh_expired_interval;
     uint32_t subdomain_refresh_interval;

@@ -445,6 +445,7 @@ dist_noinst_SCRIPTS = \
     $(EXTRA_SCRIPTS) \
     src/config/setup.py \
     src/config/SSSDConfig/ipachangeconf.py \
+    src/config/SSSDConfig/sssdoptions.py \
     src/config/SSSDConfig/__init__.py \
     src/config/SSSDConfigTest.py \
     src/config/SSSDConfigTest.py2.sh \
@@ -546,6 +547,8 @@ SSSD_CACHE_REQ_OBJ = \
 	src/responder/common/cache_req/plugins/cache_req_enum_users.c \
 	src/responder/common/cache_req/plugins/cache_req_enum_groups.c \
 	src/responder/common/cache_req/plugins/cache_req_enum_svc.c \
+	src/responder/common/cache_req/plugins/cache_req_enum_ip_hosts.c \
+	src/responder/common/cache_req/plugins/cache_req_enum_ip_networks.c \
 	src/responder/common/cache_req/plugins/cache_req_user_by_name.c \
 	src/responder/common/cache_req/plugins/cache_req_user_by_upn.c \
 	src/responder/common/cache_req/plugins/cache_req_user_by_id.c \
@@ -562,10 +565,14 @@ SSSD_CACHE_REQ_OBJ = \
 	src/responder/common/cache_req/plugins/cache_req_svc_by_name.c \
 	src/responder/common/cache_req/plugins/cache_req_svc_by_port.c \
 	src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c \
-	src/responder/common/cache_req/plugins/cache_req_host_by_name.c \
+	src/responder/common/cache_req/plugins/cache_req_ssh_host_id_by_name.c \
 	src/responder/common/cache_req/plugins/cache_req_autofs_map_entries.c \
 	src/responder/common/cache_req/plugins/cache_req_autofs_map_by_name.c \
 	src/responder/common/cache_req/plugins/cache_req_autofs_entry_by_name.c \
+	src/responder/common/cache_req/plugins/cache_req_ip_host_by_name.c \
+	src/responder/common/cache_req/plugins/cache_req_ip_host_by_addr.c \
+	src/responder/common/cache_req/plugins/cache_req_ip_network_by_name.c \
+	src/responder/common/cache_req/plugins/cache_req_ip_network_by_addr.c \
 	$(NULL)
 
 SSSD_RESPONDER_IFACE_OBJ = \
@@ -781,6 +788,9 @@ dist_noinst_HEADERS = \
     src/db/sysdb_services.h \
     src/db/sysdb_ssh.h \
     src/db/sysdb_domain_resolution_order.h \
+    src/db/sysdb_computer.h \
+    src/db/sysdb_iphosts.h \
+    src/db/sysdb_ipnetworks.h \
     src/confdb/confdb.h \
     src/confdb/confdb_private.h \
     src/confdb/confdb_setup.h \
@@ -825,7 +835,9 @@ dist_noinst_HEADERS = \
     src/providers/ldap/sdap_users.h \
     src/providers/ldap/sdap_dyndns.h \
     src/providers/ldap/sdap_async_enum.h \
+    src/providers/ldap/sdap_async_resolver_enum.h \
     src/providers/ldap/sdap_ops.h \
+    src/providers/ldap/ldap_resolver_enum.h \
     src/providers/ipa/ipa_common.h \
     src/providers/ipa/ipa_config.h \
     src/providers/ipa/ipa_access.h \
@@ -850,6 +862,7 @@ dist_noinst_HEADERS = \
     src/providers/ad/ad_opts.h \
     src/providers/ad/ad_domain_info.h \
     src/providers/ad/ad_subdomains.h \
+    src/providers/ad/ad_resolver.h \
     src/providers/proxy/proxy.h \
     src/providers/files/files_private.h \
     src/tools/tools_util.h \
@@ -1247,7 +1260,10 @@ libsss_util_la_SOURCES = \
     src/db/sysdb_gpo.c \
     src/db/sysdb_certmap.c \
     src/db/sysdb_domain_resolution_order.c \
+    src/db/sysdb_iphosts.c \
+    src/db/sysdb_ipnetworks.c \
     src/util/sss_pam_data.c \
+    src/db/sysdb_computer.c \
     src/util/util.c \
     src/util/util_ext.c \
     src/util/util_preauth.c \
@@ -1580,6 +1596,8 @@ sssd_nss_SOURCES = \
     src/responder/nss/nss_protocol_grent.c \
     src/responder/nss/nss_protocol_netgr.c \
     src/responder/nss/nss_protocol_svcent.c \
+    src/responder/nss/nss_protocol_hostent.c \
+    src/responder/nss/nss_protocol_netent.c \
     src/responder/nss/nss_protocol_sid.c \
     src/responder/nss/nss_utils.c \
     src/responder/nss/nss_iface.c \
@@ -1902,6 +1920,7 @@ sssd_be_SOURCES = \
     src/providers/data_provider/dp_target_subdomains.c \
     src/providers/data_provider/dp_target_id.c \
     src/providers/data_provider/dp_target_auth.c \
+    src/providers/data_provider/dp_target_resolver.c \
     src/util/session_recording.c \
     $(SSSD_FAILOVER_OBJ)
 sssd_be_LDADD = \
@@ -2710,6 +2729,8 @@ nss_srv_tests_SOURCES = \
      src/responder/nss/nss_protocol_grent.c \
      src/responder/nss/nss_protocol_netgr.c \
      src/responder/nss/nss_protocol_svcent.c \
+     src/responder/nss/nss_protocol_hostent.c \
+     src/responder/nss/nss_protocol_netent.c \
      src/responder/nss/nss_protocol_sid.c \
      src/responder/nss/nss_utils.c \
      src/responder/nss/nsssrv_mmap_cache.c
@@ -3053,6 +3074,7 @@ test_ipa_idmap_LDADD = \
 test_utils_SOURCES = \
     src/tests/cmocka/test_utils.c \
     src/tests/cmocka/test_string_utils.c \
+    src/tests/cmocka/test_sss_ptr_hash.c \
     src/p11_child/p11_child_common_utils.c \
     $(NULL)
 if BUILD_SSH
@@ -4087,6 +4109,8 @@ libnss_sss_la_SOURCES = \
     src/sss_client/nss_group.c \
     src/sss_client/nss_netgroup.c \
     src/sss_client/nss_services.c \
+    src/sss_client/nss_hosts.c \
+    src/sss_client/nss_ipnetworks.c \
     src/sss_client/sss_cli.h \
     src/sss_client/nss_compat.h \
     src/sss_client/nss_common.h \
@@ -4206,7 +4230,10 @@ pkglib_LTLIBRARIES += libsss_ldap_common.la
 libsss_ldap_common_la_SOURCES = \
     src/providers/ldap/ldap_id.c \
     src/providers/ldap/ldap_id_enum.c \
+    src/providers/ldap/ldap_resolver_enum.c \
+    src/providers/ldap/ldap_resolver_cleanup.c \
     src/providers/ldap/sdap_async_enum.c \
+    src/providers/ldap/sdap_async_resolver_enum.c \
     src/providers/ldap/ldap_id_cleanup.c \
     src/providers/ldap/ldap_id_netgroup.c \
     src/providers/ldap/ldap_id_services.c \
@@ -4215,6 +4242,8 @@ libsss_ldap_common_la_SOURCES = \
     src/providers/ldap/ldap_options.c \
     src/providers/ldap/ldap_opts.c \
     src/providers/ldap/sdap_access.c \
+    src/providers/ldap/sdap_iphost.c \
+    src/providers/ldap/sdap_ipnetwork.c \
     src/providers/ldap/sdap_async.c \
     src/providers/ldap/sdap_async_users.c \
     src/providers/ldap/sdap_async_groups.c \
@@ -4226,6 +4255,8 @@ libsss_ldap_common_la_SOURCES = \
     src/providers/ldap/sdap_async_netgroups.c \
     src/providers/ldap/sdap_async_hosts.c \
     src/providers/ldap/sdap_async_services.c \
+    src/providers/ldap/sdap_async_iphost.c \
+    src/providers/ldap/sdap_async_ipnetwork.c \
     src/providers/ldap/sdap_online_check.c \
     src/providers/ldap/sdap_ad_groups.c \
     src/providers/ldap/sdap_child_helpers.c \
@@ -4345,6 +4376,8 @@ libsss_proxy_la_SOURCES = \
     src/providers/proxy/proxy_id.c \
     src/providers/proxy/proxy_netgroup.c \
     src/providers/proxy/proxy_services.c \
+    src/providers/proxy/proxy_hosts.c \
+    src/providers/proxy/proxy_ipnetworks.c \
     src/providers/proxy/proxy_auth.c \
     src//util/nss_dl_load.c \
     $(NULL)
@@ -4535,6 +4568,7 @@ libsss_ad_la_SOURCES = \
     src/providers/ad/ad_subdomains.c \
     src/providers/ad/ad_domain_info.c \
     src/providers/ad/ad_refresh.c \
+    src/providers/ad/ad_resolver.c \
     $(NULL)
 
 
@@ -5297,8 +5331,12 @@ if BUILD_PYTHON_BINDINGS
 $(abs_builddir)/src/config/SSSDConfig/ipachangeconf.py:
 	-cp $(srcdir)/src/config/SSSDConfig/ipachangeconf.py $(builddir)/src/config/SSSDConfig/
 
+$(abs_builddir)/src/config/SSSDConfig/sssdoptions.py:
+	-cp $(srcdir)/src/config/SSSDConfig/sssdoptions.py $(builddir)/src/config/SSSDConfig/
+
 SSSDCONFIG_MODULES = \
-    $(abs_builddir)/src/config/SSSDConfig/ipachangeconf.py
+    $(abs_builddir)/src/config/SSSDConfig/ipachangeconf.py \
+    $(abs_builddir)/src/config/SSSDConfig/sssdoptions.py
 else
 SSSSCONFIG_MODULES =
 endif
@@ -5419,6 +5457,10 @@ if BUILD_PYTHON2_BINDINGS
 		rm -f $(builddir)/src/config/SSSDConfig/ipachangeconf.py ; \
 	fi
 
+	if [ ! $(srcdir)/src/config/SSSDConfig/sssdoptions.py -ef $(builddir)/src/config/SSSDConfig/sssdoptions.py ]; then \
+		rm -f $(builddir)/src/config/SSSDConfig/sssdoptions.py ; \
+	fi
+
 	rm -f $(builddir)/src/config/SSSDConfig/*.pyc
 
 	cd $(builddir)/src/config; $(PYTHON2) setup.py build --build-base $(abs_builddir)/src/config clean --all
@@ -5426,6 +5468,10 @@ endif
 if BUILD_PYTHON3_BINDINGS
 	if [ ! $(srcdir)/src/config/SSSDConfig/ipachangeconf.py -ef $(builddir)/src/config/SSSDConfig/ipachangeconf.py ]; then \
 		rm -f $(builddir)/src/config/SSSDConfig/ipachangeconf.py ; \
+	fi
+
+	if [ ! $(srcdir)/src/config/SSSDConfig/sssdoptions.py -ef $(builddir)/src/config/SSSDConfig/sssdoptions.py ]; then \
+		rm -f $(builddir)/src/config/SSSDConfig/sssdoptions.py ; \
 	fi
 
 	rm -f $(builddir)/src/config/SSSDConfig/__pycache__/*.pyc

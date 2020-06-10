@@ -376,7 +376,7 @@ them please use argument --without-python3-bindings when running configure.])])
     SSS_CLEAN_PYTHON_VARIABLES
 fi
 
-if test x$HAVE_PYTHON3_BINDINGS = xyes; then
+if test x$HAVE_PYTHON3 = xyes; then
     PYTHON_EXEC=$PYTHON3
 else
     PYTHON_EXEC=$PYTHON2
@@ -465,7 +465,17 @@ AC_CACHE_CHECK(
     [sss_cv_attribute_fallthrough],
     [AC_COMPILE_IFELSE(
          [AC_LANG_SOURCE(
-             [ __attribute__ ((fallthrough)); ])
+             [ void test_fun(int arg) {
+                   switch (arg) {
+                   case 1:
+                   __attribute__ ((fallthrough));
+                   case 2: ++arg;
+                           break;
+                   default: --arg;
+                            break;
+                   }
+               }
+             ])
          ],[
              sss_cv_attribute_fallthrough=yes
              sss_cv_attribute_fallthrough_val="__attribute__ ((fallthrough))"

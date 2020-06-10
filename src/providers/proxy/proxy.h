@@ -65,6 +65,16 @@ struct proxy_auth_ctx {
     int timeout_ms;
 };
 
+struct proxy_resolver_ctx {
+    struct sss_nss_ops ops;
+};
+
+struct proxy_module_ctx {
+    struct proxy_id_ctx *id_ctx;
+    struct proxy_auth_ctx *auth_ctx;
+    struct proxy_resolver_ctx *resolver_ctx;
+};
+
 struct proxy_child_ctx {
     struct proxy_auth_ctx *auth_ctx;
     struct be_req *be_req;
@@ -137,6 +147,30 @@ get_serv_byport(struct proxy_id_ctx *ctx,
 errno_t enum_services(struct proxy_id_ctx *ctx,
                       struct sysdb_ctx *sysdb,
                       struct sss_domain_info *dom);
+
+/* From proxy_hosts.c */
+struct tevent_req *
+proxy_hosts_handler_send(TALLOC_CTX *mem_ctx,
+                      struct proxy_resolver_ctx *proxy_resolver_ctx,
+                      struct dp_resolver_data *resolver_data,
+                      struct dp_req_params *params);
+
+errno_t
+proxy_hosts_handler_recv(TALLOC_CTX *mem_ctx,
+                         struct tevent_req *req,
+                         struct dp_reply_std *data);
+
+/* From proxy_ipnetworks.c */
+struct tevent_req *
+proxy_nets_handler_send(TALLOC_CTX *mem_ctx,
+                        struct proxy_resolver_ctx *proxy_resolver_ctx,
+                        struct dp_resolver_data *resolver_data,
+                        struct dp_req_params *params);
+
+errno_t
+proxy_nets_handler_recv(TALLOC_CTX *mem_ctx,
+                        struct tevent_req *req,
+                        struct dp_reply_std *data);
 
 errno_t
 proxy_client_init(struct sbus_connection *conn,

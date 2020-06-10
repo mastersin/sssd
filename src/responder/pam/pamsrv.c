@@ -54,6 +54,7 @@
 #else
 #define DEFAULT_PAM_CERT_DB_PATH SYSCONFDIR"/sssd/pki/sssd_auth_ca_db.pem"
 #endif
+#define DEFAULT_PAM_INITGROUPS_SCHEME "no_session"
 
 static errno_t get_trusted_uids(struct pam_ctx *pctx)
 {
@@ -168,6 +169,7 @@ static int pam_process_init(TALLOC_CTX *mem_ctx,
     int ret;
     int id_timeout;
     int fd_limit;
+    char *tmpstr = NULL;
 
     pam_cmds = get_pam_cmds();
     ret = sss_process_init(mem_ctx, ev, cdb,
@@ -307,6 +309,29 @@ static int pam_process_init(TALLOC_CTX *mem_ctx,
         }
     }
 
+    ret = confdb_get_string(pctx->rctx->cdb, pctx, CONFDB_PAM_CONF_ENTRY,
+                            CONFDB_PAM_INITGROUPS_SCHEME,
+                            DEFAULT_PAM_INITGROUPS_SCHEME, &tmpstr);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "Failed to determine initgroups scheme.\n");
+        goto done;
+    }
+    DEBUG(SSSDBG_TRACE_INTERNAL, "Found value [%s] for option [%s].\n", tmpstr,
+                                 CONFDB_PAM_INITGROUPS_SCHEME);
+
+    if (tmpstr == NULL) {
+        pctx->initgroups_scheme = PAM_INITGR_NO_SESSION;
+    } else {
+        pctx->initgroups_scheme = pam_initgroups_string_to_enum(tmpstr);
+        if (pctx->initgroups_scheme == PAM_INITGR_INVALID) {
+            DEBUG(SSSDBG_FATAL_FAILURE, "Unknown value [%s] for option %s.\n",
+                                        tmpstr, CONFDB_PAM_INITGROUPS_SCHEME);
+            ret = EINVAL;
+            goto done;
+        }
+    }
+
     /* The responder is initialized. Now tell it to the monitor. */
     ret = sss_monitor_service_init(rctx, rctx->ev, SSS_BUS_PAM,
                                    SSS_PAM_SBUS_SERVICE_NAME,
@@ -408,7 +433,7 @@ int main(int argc, const char *argv[])
               "debugging might not work!\n");
     }
 
-    ret = server_setup("sssd[pam]", 0, uid, gid, CONFDB_PAM_CONF_ENTRY, &main_ctx);
+    ret = server_setup("pam", 0, uid, gid, CONFDB_PAM_CONF_ENTRY, &main_ctx);
     if (ret != EOK) return 2;
 
     ret = die_if_parent_died();
