@@ -3311,6 +3311,9 @@ p11_uri = library-description=OpenSC%20smartcard%20framework;slot-id=2
                             auto_private_groups
                         </para>
                         <para>
+                            case_sensitive
+                        </para>
+                        <para>
                             Example:
                             <programlisting>
 subdomain_inherit = ldap_purge_cache_timeout
