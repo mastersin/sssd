@@ -71,6 +71,8 @@
 #define DEBUG_MGS_LEN 1024
 #define MAX_AUTHTOK_SIZE (1024*1024)
 #define CHECK_AND_RETURN_PI_STRING(s) ((s != NULL && *s != '\0')? s : "(not available)")
+#define SERVICE_IS_GDM_SMARTCARD(pitem) (strcmp((pitem)->pam_service, \
+                                                "gdm-smartcard") == 0)
 
 static void logger(pam_handle_t *pamh, int level, const char *fmt, ...) {
     va_list ap;
@@ -1833,8 +1835,13 @@ static int prompt_sc_pin(pam_handle_t *pamh, struct pam_items *pi)
     struct pam_message m[2] = { { 0 }, { 0 } };
     struct pam_response *resp = NULL;
     struct cert_auth_info *cai = pi->selected_cert;
+    struct cert_auth_info empty_cai = { NULL, NULL, discard_const("Smartcard"),
+                                        NULL, NULL, NULL, NULL, NULL, NULL };
 
-    if (cai == NULL || cai->token_name == NULL || *cai->token_name == '\0') {
+    if (cai == NULL && SERVICE_IS_GDM_SMARTCARD(pi)) {
+        cai = &empty_cai;
+    } else if (cai == NULL || cai->token_name == NULL
+                    || *cai->token_name == '\0') {
         return PAM_SYSTEM_ERR;
     }
 
@@ -2186,6 +2193,9 @@ static int get_authtok_for_authentication(pam_handle_t *pamh,
                     }
                 }
                 ret = prompt_sc_pin(pamh, pi);
+            } else if (SERVICE_IS_GDM_SMARTCARD(pi)) {
+               /* Use pin prompt as fallback for gdm-smartcard */
+                ret = prompt_sc_pin(pamh, pi);
             } else {
                 ret = prompt_password(pamh, pi, _("Password: "));
             }
@@ -2422,8 +2432,8 @@ static int get_authtok_for_password_change(pam_handle_t *pamh,
     return PAM_SUCCESS;
 }
 
-#define SC_ENTER_LABEL_FMT "Please enter smart card labeled\n %s"
-#define SC_ENTER_FMT "Please enter smart card"
+#define SC_ENTER_LABEL_FMT "Please insert smart card labeled\n %s"
+#define SC_ENTER_FMT "Please insert smart card"
 
 static int check_login_token_name(pam_handle_t *pamh, struct pam_items *pi,
                                   int retries, bool quiet_mode)
@@ -2457,6 +2467,8 @@ static int check_login_token_name(pam_handle_t *pamh, struct pam_items *pi,
                         && strcmp(login_token_name,
                                   pi->cert_list->token_name) != 0)) {
 
+        free_cert_list(pi->cert_list);
+        pi->cert_list = NULL;
         if (retries < 0) {
             ret = PAM_AUTHINFO_UNAVAIL;
             goto done;
@@ -2494,7 +2506,7 @@ static int pam_sss(enum sss_cli_command task, pam_handle_t *pamh,
 {
     int ret;
     int pam_status;
-    struct pam_items pi;
+    struct pam_items pi = { 0 };
     uint32_t flags = 0;
     const int *exp_data;
     int *pw_exp_data;
@@ -2568,7 +2580,8 @@ static int pam_sss(enum sss_cli_command task, pam_handle_t *pamh,
                         /*
                          * Since we are only interested in the result message
                          * and will always use password authentication
-                         * as a fallback, errors can be ignored here.
+                         * as a fallback (except for gdm-smartcard),
+                         * errors can be ignored here.
                          */
                     }
                 }
@@ -2580,13 +2593,12 @@ static int pam_sss(enum sss_cli_command task, pam_handle_t *pamh,
                     return PAM_AUTHINFO_UNAVAIL;
                 }
 
-                if (strcmp(pi.pam_service, "gdm-smartcard") == 0
+                if (SERVICE_IS_GDM_SMARTCARD(&pi)
                         || (flags & PAM_CLI_FLAGS_REQUIRE_CERT_AUTH)) {
                     ret = check_login_token_name(pamh, &pi, retries,
                                                  quiet_mode);
                     if (ret != PAM_SUCCESS) {
                         D(("check_login_token_name failed.\n"));
-                        return ret;
                     }
                 }
 

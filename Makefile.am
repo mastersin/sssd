@@ -291,6 +291,7 @@ if HAVE_CMOCKA
         test_iobuf \
         sss_certmap_test \
         test_sssd_krb5_locator_plugin \
+        test_confdb \
         $(NULL)
 
 
@@ -480,6 +481,7 @@ dist_noinst_DATA = \
     src/config/testconfigs/sssd-invalid-badbool.conf \
     src/config/testconfigs/sssd-nonexisting-services-domains.conf \
     src/config/testconfigs/sssd-test-parse.conf \
+    src/config/testconfigs/sssd-enabled-option.conf \
     src/config/etc/sssd.api.d/crash_test_dummy \
     contrib/ci/README.md \
     contrib/ci/configure.sh \
@@ -2162,7 +2164,7 @@ libsss_certmap_la_LIBADD = \
     $(NULL)
 libsss_certmap_la_LDFLAGS = \
     -Wl,--version-script,$(srcdir)/src/lib/certmap/sss_certmap.exports \
-    -version-info 1:0:1
+    -version-info 2:0:2
 
 if HAVE_NSS
 libsss_certmap_la_SOURCES += \
@@ -3861,6 +3863,21 @@ test_iobuf_LDADD = \
     $(SSSD_LIBS) \
     $(NULL)
 
+test_confdb_SOURCES = \
+    src/tests/cmocka/confdb/test_confdb.c \
+    $(NULL)
+test_confdb_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(NULL)
+test_confdb_LDADD = \
+    $(CMOCKA_LIBS) \
+    $(LDB_LIBS) \
+    $(POPT_LIBS) \
+    $(TALLOC_LIBS) \
+    $(SSSD_INTERNAL_LTLIBS) \
+    libsss_test_common.la \
+    $(NULL)
+
 EXTRA_simple_access_tests_DEPENDENCIES = \
     $(ldblib_LTLIBRARIES)
 simple_access_tests_SOURCES = \
@@ -4590,7 +4607,7 @@ libsss_ad_la_CFLAGS = \
     $(KRB5_CFLAGS) \
     $(NDR_NBT_CFLAGS) \
     $(NDR_KRB5PAC_CFLAGS) \
-    $(SMBCLIENT_CFLAGS)
+    $(NULL)
 libsss_ad_la_LIBADD = \
     $(LDB_LIBS) \
     $(OPENLDAP_LIBS) \
@@ -4601,10 +4618,10 @@ libsss_ad_la_LIBADD = \
     $(NDR_NBT_LIBS) \
     $(NDR_KRB5PAC_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(SMBCLIENT_LIBS) \
     libsss_ldap_common.la \
     libsss_krb5_common.la \
-    libsss_idmap.la
+    libsss_idmap.la \
+    $(NULL)
 libsss_ad_la_LDFLAGS = \
     -avoid-version \
     -module

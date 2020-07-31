@@ -127,7 +127,7 @@ nss_protocol_fill_members(struct sss_packet *packet,
     struct ldb_message_element *el;
     struct sized_string *name;
     const char *member_name;
-    uint32_t num_members;
+    uint32_t num_members = 0;
     size_t body_len;
     uint8_t *body;
     errno_t ret;
@@ -141,9 +141,26 @@ nss_protocol_fill_members(struct sss_packet *packet,
     members[0] = nss_get_group_members(domain, msg);
     members[1] = nss_get_group_ghosts(domain, msg, group_name);
 
+    if (is_files_provider(domain) && members[1] != NULL) {
+        /* If there is a ghost member in files provider it means that we
+         * did not store the user on purpose (e.g. it has uid or gid 0).
+         * Therefore nss_files does handle the user and therefore we
+         * must let nss_files to also handle this group in order to
+         * provide correct membership. */
+        DEBUG(SSSDBG_TRACE_FUNC,
+              "Unknown members found. nss_files will handle it.\n");
+
+        ret = sss_ncache_set_group(rctx->ncache, false, domain, group_name);
+        if (ret != EOK) {
+            DEBUG(SSSDBG_OP_FAILURE, "sss_ncache_set_group failed.\n");
+        }
+
+        ret = ENOENT;
+        goto done;
+    }
+
     sss_packet_get_body(packet, &body, &body_len);
 
-    num_members = 0;
     for (i = 0; i < sizeof(members) / sizeof(members[0]); i++) {
         el = members[i];
         if (el == NULL) {
@@ -275,16 +292,17 @@ nss_protocol_fill_grent(struct nss_ctx *nss_ctx,
         num_results++;
 
         /* Do not store entry in memory cache during enumeration or when
-         * requested. */
+         * requested or if cache explicitly disabled. */
         if (!cmd_ctx->enumeration
-                && (cmd_ctx->flags & SSS_NSS_EX_FLAG_INVALIDATE_CACHE) == 0) {
+                && ((cmd_ctx->flags & SSS_NSS_EX_FLAG_INVALIDATE_CACHE) == 0)
+                && (nss_ctx->grp_mc_ctx != NULL)) {
             members = (char *)&body[rp_members];
             members_size = body_len - rp_members;
             ret = sss_mmap_cache_gr_store(&nss_ctx->grp_mc_ctx, name, &pwfield,
                                           gid, num_members, members,
                                           members_size);
             if (ret != EOK) {
-                DEBUG(SSSDBG_MINOR_FAILURE,
+                DEBUG(SSSDBG_OP_FAILURE,
                       "Failed to store group %s (%s) in mem-cache [%d]: %s!\n",
                       name->str, result->domain->name, ret, sss_strerror(ret));
             }
@@ -350,7 +368,7 @@ nss_protocol_fill_initgr(struct nss_ctx *nss_ctx,
                                                     SYSDB_PRIMARY_GROUP_GIDNUM,
                                                     0);
 
-    /* Try to get the real gid in case the primary group's gid was overriden. */
+    /* Try to get the real gid in case the primary group's gid was overridden. */
     ret = sysdb_search_group_by_origgid(NULL, domain, orig_gid, NULL,
                                         &primary_group_msg);
     if (ret != EOK) {
@@ -406,7 +424,8 @@ nss_protocol_fill_initgr(struct nss_ctx *nss_ctx,
     }
 
     if (nss_ctx->initgr_mc_ctx
-                && (cmd_ctx->flags & SSS_NSS_EX_FLAG_INVALIDATE_CACHE) == 0) {
+                && ((cmd_ctx->flags & SSS_NSS_EX_FLAG_INVALIDATE_CACHE) == 0)
+                && (nss_ctx->initgr_mc_ctx != NULL)) {
         to_sized_string(&rawname, cmd_ctx->rawname);
         to_sized_string(&unique_name, result->lookup_name);
 
@@ -414,7 +433,7 @@ nss_protocol_fill_initgr(struct nss_ctx *nss_ctx,
                                           &unique_name, num_results,
                                           body + 2 * sizeof(uint32_t));
         if (ret != EOK) {
-            DEBUG(SSSDBG_MINOR_FAILURE,
+            DEBUG(SSSDBG_OP_FAILURE,
                   "Failed to store initgroups %s (%s) in mem-cache [%d]: %s!\n",
                   rawname.str, domain->name, ret, sss_strerror(ret));
             sss_packet_set_size(packet, 0);

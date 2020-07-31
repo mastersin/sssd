@@ -182,7 +182,7 @@
 #define SYSDB_LOCAL_VIEW_NAME "LOCAL" /* reserved for client-side overrides */
 #define SYSDB_VIEW_CLASS "view"
 #define SYSDB_VIEW_NAME "viewName"
-#define SYSDB_OVERRIDE_CLASS "overrride"
+#define SYSDB_OVERRIDE_CLASS "override"
 #define SYSDB_OVERRIDE_ANCHOR_UUID "overrideAnchorUUID"
 #define SYSDB_OVERRIDE_USER_CLASS "userOverride"
 #define SYSDB_OVERRIDE_GROUP_CLASS "groupOverride"
@@ -561,6 +561,24 @@ errno_t sysdb_subdomain_delete(struct sysdb_ctx *sysdb, const char *name);
 
 errno_t sysdb_subdomain_content_delete(struct sysdb_ctx *sysdb,
                                        const char *name);
+
+/* The utility function to create a subdomain sss_domain_info object is handy
+ * for unit tests, so it should be available in a headerr.
+ */
+struct sss_domain_info *new_subdomain(TALLOC_CTX *mem_ctx,
+                                      struct sss_domain_info *parent,
+                                      const char *name,
+                                      const char *realm,
+                                      const char *flat_name,
+                                      const char *id,
+                                      enum sss_domain_mpg_mode mpg_mode,
+                                      bool enumerate,
+                                      const char *forest,
+                                      const char **upn_suffixes,
+                                      uint32_t trust_direction,
+                                      struct confdb_ctx *confdb,
+                                      bool enabled);
+
 
 errno_t sysdb_get_ranges(TALLOC_CTX *mem_ctx, struct sysdb_ctx *sysdb,
                              size_t *range_count,

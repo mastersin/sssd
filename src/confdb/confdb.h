@@ -40,8 +40,10 @@
 
 #define CONFDB_DEFAULT_CFG_FILE_VER 2
 #define CONFDB_FILE "config.ldb"
-#define SSSD_CONFIG_FILE SSSD_CONF_DIR"/sssd.conf"
-#define CONFDB_DEFAULT_CONFIG_DIR SSSD_CONF_DIR"/conf.d"
+#define SSSD_CONFIG_FILE_NAME "sssd.conf"
+#define SSSD_CONFIG_FILE SSSD_CONF_DIR"/"SSSD_CONFIG_FILE_NAME
+#define CONFDB_DEFAULT_CONFIG_DIR_NAME "conf.d"
+#define CONFDB_DEFAULT_CONFIG_DIR SSSD_CONF_DIR"/"CONFDB_DEFAULT_CONFIG_DIR_NAME
 #define SSSD_MIN_ID 1
 #define SSSD_LOCAL_MINID 1000
 #define CONFDB_DEFAULT_SHELL_FALLBACK "/bin/sh"
@@ -113,6 +115,9 @@
 #define CONFDB_NSS_SHELL_FALLBACK "shell_fallback"
 #define CONFDB_NSS_DEFAULT_SHELL "default_shell"
 #define CONFDB_MEMCACHE_TIMEOUT "memcache_timeout"
+#define CONFDB_NSS_MEMCACHE_SIZE_PASSWD "memcache_size_passwd"
+#define CONFDB_NSS_MEMCACHE_SIZE_GROUP "memcache_size_group"
+#define CONFDB_NSS_MEMCACHE_SIZE_INITGROUPS "memcache_size_initgroups"
 #define CONFDB_NSS_HOMEDIR_SUBSTRING "homedir_substring"
 #define CONFDB_DEFAULT_HOMEDIR_SUBSTRING "/home"
 
@@ -187,6 +192,7 @@
 #define CONFDB_SESSION_RECORDING_GROUPS "groups"
 
 /* Domains */
+#define CONFDB_DOMAIN_ENABLED "enabled"
 #define CONFDB_DOMAIN_PATH_TMPL "config/domain/%s"
 #define CONFDB_DOMAIN_BASEDN "cn=domain,cn=config"
 #define CONFDB_APP_DOMAIN_BASEDN "cn=application,cn=config"

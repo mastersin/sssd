@@ -27,7 +27,7 @@ nss_get_gid(struct sss_domain_info *domain,
 {
     uint32_t gid;
 
-    /* First, try to return overriden gid. */
+    /* First, try to return overridden gid. */
     if (DOM_HAS_VIEWS(domain)) {
         gid = ldb_msg_find_attr_as_uint64(msg, OVERRIDE_PREFIX SYSDB_GIDNUM,
                                           0);
@@ -301,13 +301,14 @@ nss_protocol_fill_pwent(struct nss_ctx *nss_ctx,
         num_results++;
 
         /* Do not store entry in memory cache during enumeration or when
-         * requested. */
+         * requested or if cache explicitly disabled. */
         if (!cmd_ctx->enumeration
-                && (cmd_ctx->flags & SSS_NSS_EX_FLAG_INVALIDATE_CACHE) == 0) {
+                && ((cmd_ctx->flags & SSS_NSS_EX_FLAG_INVALIDATE_CACHE) == 0)
+                && (nss_ctx->pwd_mc_ctx != NULL)) {
             ret = sss_mmap_cache_pw_store(&nss_ctx->pwd_mc_ctx, name, &pwfield,
                                           uid, gid, &gecos, &homedir, &shell);
             if (ret != EOK) {
-                DEBUG(SSSDBG_MINOR_FAILURE,
+                DEBUG(SSSDBG_OP_FAILURE,
                       "Failed to store user %s (%s) in mmap cache [%d]: %s!\n",
                       name->str, result->domain->name, ret, sss_strerror(ret));
             }

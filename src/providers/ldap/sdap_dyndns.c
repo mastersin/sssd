@@ -118,7 +118,7 @@ sdap_dyndns_update_send(TALLOC_CTX *mem_ctx,
     state->opts = opts;
     state->auth_type = auth_type;
 
-    /* fallback servername is overriden by user option */
+    /* fallback servername is overridden by user option */
     conf_servername = dp_opt_get_string(opts, DP_OPT_DYNDNS_SERVER);
     if (conf_servername != NULL) {
         state->servername = conf_servername;
@@ -655,7 +655,7 @@ sdap_dyndns_add_ldap_conn(struct sdap_dyndns_get_addrs_state *state,
 {
     int ret;
     int fd;
-    struct sockaddr_storage ss;
+    struct sockaddr_storage ss = {0};
     socklen_t ss_len = sizeof(ss);
 
     if (sh == NULL) {

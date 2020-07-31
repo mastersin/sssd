@@ -34,6 +34,7 @@
 
 #include "util/util.h"
 #include "util/sss_ptr_hash.h"
+#include "util/mmap_cache.h"
 #include "responder/nss/nss_private.h"
 #include "responder/nss/nss_iface.h"
 #include "responder/nss/nsssrv_mmap_cache.h"
@@ -83,10 +84,9 @@ nss_clear_memcache(TALLOC_CTX *mem_ctx,
         return ret;
     }
 
-    /* TODO: read cache sizes from configuration */
     DEBUG(SSSDBG_TRACE_FUNC, "Clearing memory caches.\n");
     ret = sss_mmap_cache_reinit(nctx, nctx->mc_uid, nctx->mc_gid,
-                                SSS_MC_CACHE_ELEMENTS,
+                                -1, /* keep current size */
                                 (time_t) memcache_timeout,
                                 &nctx->pwd_mc_ctx);
     if (ret != EOK) {
@@ -96,7 +96,7 @@ nss_clear_memcache(TALLOC_CTX *mem_ctx,
     }
 
     ret = sss_mmap_cache_reinit(nctx, nctx->mc_uid, nctx->mc_gid,
-                                SSS_MC_CACHE_ELEMENTS,
+                                -1, /* keep current size */
                                 (time_t) memcache_timeout,
                                 &nctx->grp_mc_ctx);
     if (ret != EOK) {
@@ -106,7 +106,7 @@ nss_clear_memcache(TALLOC_CTX *mem_ctx,
     }
 
     ret = sss_mmap_cache_reinit(nctx, nctx->mc_uid, nctx->mc_gid,
-                                SSS_MC_CACHE_ELEMENTS,
+                                -1, /* keep current size */
                                 (time_t)memcache_timeout,
                                 &nctx->initgr_mc_ctx);
     if (ret != EOK) {
@@ -210,8 +210,17 @@ done:
 
 static int setup_memcaches(struct nss_ctx *nctx)
 {
+    /* Default memcache sizes */
+    static const size_t SSS_MC_CACHE_SLOTS_PER_MB   = 1024*1024/MC_SLOT_SIZE;
+    static const size_t SSS_MC_CACHE_PASSWD_SIZE    =  8;
+    static const size_t SSS_MC_CACHE_GROUP_SIZE     =  6;
+    static const size_t SSS_MC_CACHE_INITGROUP_SIZE = 10;
+
     int ret;
     int memcache_timeout;
+    int mc_size_passwd;
+    int mc_size_group;
+    int mc_size_initgroups;
 
     /* Remove the CLEAR_MC_FLAG file if exists. */
     ret = unlink(SSS_NSS_MCACHE_DIR"/"CLEAR_MC_FLAG);
@@ -233,38 +242,80 @@ static int setup_memcaches(struct nss_ctx *nctx)
         return ret;
     }
 
-    if (memcache_timeout == 0) {
-        DEBUG(SSSDBG_CONF_SETTINGS,
-              "Fast in-memory cache will not be initialized.");
-        return EOK;
+    /* Get all memcache sizes from confdb (pwd, grp, initgr) */
+
+    ret = confdb_get_int(nctx->rctx->cdb,
+                         CONFDB_NSS_CONF_ENTRY,
+                         CONFDB_NSS_MEMCACHE_SIZE_PASSWD,
+                         SSS_MC_CACHE_PASSWD_SIZE,
+                         &mc_size_passwd);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "Failed to get '"CONFDB_NSS_MEMCACHE_SIZE_PASSWD
+              "' option from confdb.\n");
+        return ret;
     }
 
-    /* TODO: read cache sizes from configuration */
+    ret = confdb_get_int(nctx->rctx->cdb,
+                         CONFDB_NSS_CONF_ENTRY,
+                         CONFDB_NSS_MEMCACHE_SIZE_GROUP,
+                         SSS_MC_CACHE_GROUP_SIZE,
+                         &mc_size_group);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "Failed to get '"CONFDB_NSS_MEMCACHE_SIZE_GROUP
+              "' option from confdb.\n");
+        return ret;
+    }
+
+    ret = confdb_get_int(nctx->rctx->cdb,
+                         CONFDB_NSS_CONF_ENTRY,
+                         CONFDB_NSS_MEMCACHE_SIZE_INITGROUPS,
+                         SSS_MC_CACHE_INITGROUP_SIZE,
+                         &mc_size_initgroups);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_FATAL_FAILURE,
+              "Failed to get '"CONFDB_NSS_MEMCACHE_SIZE_INITGROUPS
+              "' option from confdb.\n");
+        return ret;
+    }
+
+    /* Initialize the fast in-memory caches if they were not disabled */
+
     ret = sss_mmap_cache_init(nctx, "passwd",
                               nctx->mc_uid, nctx->mc_gid,
                               SSS_MC_PASSWD,
-                              SSS_MC_CACHE_ELEMENTS, (time_t)memcache_timeout,
+                              mc_size_passwd * SSS_MC_CACHE_SLOTS_PER_MB,
+                              (time_t)memcache_timeout,
                               &nctx->pwd_mc_ctx);
     if (ret) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "passwd mmap cache is DISABLED\n");
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to initialize passwd mmap cache: '%s'\n",
+              sss_strerror(ret));
     }
 
     ret = sss_mmap_cache_init(nctx, "group",
                               nctx->mc_uid, nctx->mc_gid,
                               SSS_MC_GROUP,
-                              SSS_MC_CACHE_ELEMENTS, (time_t)memcache_timeout,
+                              mc_size_group * SSS_MC_CACHE_SLOTS_PER_MB,
+                              (time_t)memcache_timeout,
                               &nctx->grp_mc_ctx);
     if (ret) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "group mmap cache is DISABLED\n");
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to initialize group mmap cache: '%s'\n",
+              sss_strerror(ret));
     }
 
     ret = sss_mmap_cache_init(nctx, "initgroups",
                               nctx->mc_uid, nctx->mc_gid,
                               SSS_MC_INITGROUPS,
-                              SSS_MC_CACHE_ELEMENTS, (time_t)memcache_timeout,
+                              mc_size_initgroups * SSS_MC_CACHE_SLOTS_PER_MB,
+                              (time_t)memcache_timeout,
                               &nctx->initgr_mc_ctx);
     if (ret) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "initgroups mmap cache is DISABLED\n");
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Failed to initialize initgroups mmap cache: '%s'\n",
+              sss_strerror(ret));
     }
 
     return EOK;
@@ -337,22 +388,22 @@ static int sssd_supplementary_group(struct nss_ctx *nss_ctx)
             ret = ENOMEM;
             goto done;
         }
-    }
 
-    size = getgroups(size, supp_gids);
-    if (size == -1) {
-        ret = errno;
-        DEBUG(SSSDBG_CRIT_FAILURE, "Getgroups failed! (%d, %s)\n",
-                                    ret, sss_strerror(ret));
-        goto done;
-    }
-
-    for (int i = 0; i < size; i++) {
-        if (supp_gids[i] == nss_ctx->mc_gid) {
-            DEBUG(SSSDBG_TRACE_FUNC,
-                  "Already assigned to the SSSD supplementary group\n");
-            ret = EOK;
+        size = getgroups(size, supp_gids);
+        if (size == -1) {
+            ret = errno;
+            DEBUG(SSSDBG_CRIT_FAILURE, "Getgroups failed! (%d, %s)\n",
+                                        ret, sss_strerror(ret));
             goto done;
+        }
+
+        for (int i = 0; i < size; i++) {
+            if (supp_gids[i] == nss_ctx->mc_gid) {
+                DEBUG(SSSDBG_TRACE_FUNC,
+                      "Already assigned to the SSSD supplementary group\n");
+                ret = EOK;
+                goto done;
+            }
         }
     }
 

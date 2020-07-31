@@ -99,14 +99,13 @@
 #define GPO_CHILD SSSD_LIBEXEC_PATH"/gpo_child"
 #endif
 
+#define GPO_CHILD_LOG_FILE "gpo_child"
+
 /* If INI_PARSE_IGNORE_NON_KVP is not defined, use 0 (no effect) */
 #ifndef INI_PARSE_IGNORE_NON_KVP
 #define INI_PARSE_IGNORE_NON_KVP 0
 #warning INI_PARSE_IGNORE_NON_KVP not defined.
 #endif
-
-/* fd used by the gpo_child process for logging */
-int gpo_child_debug_fd = -1;
 
 /* == common data structures and declarations ============================= */
 
@@ -1618,13 +1617,6 @@ ad_gpo_access_check(TALLOC_CTX *mem_ctx,
     return ret;
 }
 
-#define GPO_CHILD_LOG_FILE "gpo_child"
-
-static errno_t gpo_child_init(void)
-{
-    return child_debug_init(GPO_CHILD_LOG_FILE, &gpo_child_debug_fd);
-}
-
 /*
  * This function retrieves the raw policy_setting_value for the input key from
  * the GPO_Result object in the sysdb cache. It then parses the raw value and
@@ -1807,9 +1799,6 @@ ad_gpo_access_send(TALLOC_CTX *mem_ctx,
     hash_key_t key;
     hash_value_t val;
     enum gpo_map_type gpo_map_type;
-
-    /* setup logging for gpo child */
-    gpo_child_init();
 
     req = tevent_req_create(mem_ctx, &state, struct ad_gpo_access_state);
     if (req == NULL) {
@@ -2552,7 +2541,16 @@ ad_gpo_process_gpo_done(struct tevent_req *subreq)
         /* no gpos contain "SecuritySettings" cse_guid, nothing to enforce */
         DEBUG(SSSDBG_TRACE_FUNC,
               "no applicable gpos found after cse_guid filtering\n");
-        ret = EOK;
+
+        if (state->gpo_implicit_deny == true) {
+            DEBUG(SSSDBG_TRACE_FUNC,
+                  "No applicable GPOs have been found and ad_gpo_implicit_deny"
+                  " is set to 'true'. The user will be denied access.\n");
+            ret = ERR_ACCESS_DENIED;
+        } else {
+            ret = EOK;
+        }
+
         goto done;
     }
 
@@ -3162,11 +3160,11 @@ ad_gpo_process_som_send(TALLOC_CTX *mem_ctx,
         goto immediately;
     }
 
-    subreq = ad_master_domain_send(state, state->ev, conn,
-                                   state->sdap_op, domain_name);
+    subreq = ad_domain_info_send(state, state->ev, conn,
+                                 state->sdap_op, domain_name);
 
     if (subreq == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "ad_master_domain_send failed.\n");
+        DEBUG(SSSDBG_OP_FAILURE, "ad_domain_info_send failed.\n");
         ret = ENOMEM;
         goto immediately;
     }
@@ -3199,7 +3197,7 @@ ad_gpo_site_name_retrieval_done(struct tevent_req *subreq)
     state = tevent_req_data(req, struct ad_gpo_process_som_state);
 
     /* gpo code only cares about the site name */
-    ret = ad_master_domain_recv(subreq, state, NULL, NULL, &site, NULL);
+    ret = ad_domain_info_recv(subreq, state, NULL, NULL, &site, NULL);
     talloc_zfree(subreq);
 
     if (ret != EOK || site == NULL) {
@@ -3522,14 +3520,19 @@ ad_gpo_process_som_recv(struct tevent_req *req,
  * - GPOs linked to an OU will be applied after GPOs linked to a Domain,
  *   which will be applied after GPOs linked to a Site.
  * - multiple GPOs linked to a single SOM are applied in their link order
- *   (i.e. 1st GPO linked to SOM is applied after 2nd GPO linked to SOM, etc).
+ *   (i.e. 1st GPO linked to SOM is applied before 2nd GPO linked to SOM, etc).
  * - enforced GPOs are applied after unenforced GPOs.
  *
  * As such, the _candidate_gpos output's dn fields looks like (in link order):
- * [unenforced {Site, Domain, OU}; enforced {Site, Domain, OU}]
+ * [unenforced {Site, Domain, OU}; enforced {OU, Domain, Site}]
  *
  * Note that in the case of conflicting policy settings, GPOs appearing later
- * in the list will trump GPOs appearing earlier in the list.
+ * in the list will trump GPOs appearing earlier in the list. Therefore the
+ * enforced GPOs are applied in revers order after the unenforced GPOs to
+ * make sure the enforced setting form the highest level will be applied.
+ *
+ * GPO processing details can be found e.g. at
+ * https://docs.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2012-r2-and-2012/dn581922(v%3Dws.11)
  */
 static errno_t
 ad_gpo_populate_candidate_gpos(TALLOC_CTX *mem_ctx,
@@ -3553,6 +3556,7 @@ ad_gpo_populate_candidate_gpos(TALLOC_CTX *mem_ctx,
     int i = 0;
     int j = 0;
     int ret;
+    size_t som_count = 0;
 
     tmp_ctx = talloc_new(NULL);
     if (tmp_ctx == NULL) {
@@ -3579,6 +3583,7 @@ ad_gpo_populate_candidate_gpos(TALLOC_CTX *mem_ctx,
         }
         i++;
     }
+    som_count = i;
 
     num_candidate_gpos = num_enforced + num_unenforced;
 
@@ -3601,9 +3606,43 @@ ad_gpo_populate_candidate_gpos(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
+    i = som_count -1 ;
+    while (i >= 0) {
+        gp_som = som_list[i];
+
+        /* For unenforced_gpo_dns the most specific GPOs with the highest
+         * priority should be the last. We start with the top-level SOM and go
+         * down to the most specific one and add the unenforced following the
+         * gplink_list where the GPO with the highest priority comes last. */
+        j = 0;
+        while (gp_som && gp_som->gplink_list && gp_som->gplink_list[j]) {
+                gp_gplink = gp_som->gplink_list[j];
+
+                if (!gp_gplink->enforced) {
+                    unenforced_gpo_dns[unenforced_idx] =
+                        talloc_steal(unenforced_gpo_dns, gp_gplink->gpo_dn);
+
+                    if (unenforced_gpo_dns[unenforced_idx] == NULL) {
+                        ret = ENOMEM;
+                        goto done;
+                    }
+                    unenforced_idx++;
+                }
+                j++;
+        }
+        i--;
+    }
+
     i = 0;
     while (som_list[i]) {
         gp_som = som_list[i];
+
+        /* For enforced GPOs we start processing with the most specific SOM to
+         * make sur enforced GPOs from higher levels override to lower level
+         * ones. According to the 'Group Policy Inheritance' tab in the
+         * Windows 'Goup Policy Management' utility in the same SOM the link
+         * order is still observed and an enforced GPO with a lower link order
+         * value still overrides an enforced GPO with a higher link order. */
         j = 0;
         while (gp_som && gp_som->gplink_list && gp_som->gplink_list[j]) {
             gp_gplink = gp_som->gplink_list[j];
@@ -3621,16 +3660,6 @@ ad_gpo_populate_candidate_gpos(TALLOC_CTX *mem_ctx,
                     goto done;
                 }
                 enforced_idx++;
-            } else {
-
-                unenforced_gpo_dns[unenforced_idx] =
-                    talloc_steal(unenforced_gpo_dns, gp_gplink->gpo_dn);
-
-                if (unenforced_gpo_dns[unenforced_idx] == NULL) {
-                    ret = ENOMEM;
-                    goto done;
-                }
-                unenforced_idx++;
             }
             j++;
         }
@@ -3649,7 +3678,7 @@ ad_gpo_populate_candidate_gpos(TALLOC_CTX *mem_ctx,
     }
 
     gpo_dn_idx = 0;
-    for (i = num_unenforced - 1; i >= 0; i--) {
+    for (i = 0; i < num_unenforced; i++) {
         candidate_gpos[gpo_dn_idx] = talloc_zero(candidate_gpos, struct gp_gpo);
         if (candidate_gpos[gpo_dn_idx] == NULL) {
             ret = ENOMEM;
@@ -4763,7 +4792,7 @@ gpo_fork_child(struct tevent_req *req)
     if (pid == 0) { /* child */
         exec_child_ex(state,
                       pipefd_to_child, pipefd_from_child,
-                      GPO_CHILD, gpo_child_debug_fd, NULL, false,
+                      GPO_CHILD, GPO_CHILD_LOG_FILE, NULL, false,
                       STDIN_FILENO, AD_GPO_CHILD_OUT_FILENO);
 
         /* We should never get here */

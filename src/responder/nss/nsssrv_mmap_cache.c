@@ -28,13 +28,6 @@
 #include "responder/nss/nss_private.h"
 #include "responder/nss/nsssrv_mmap_cache.h"
 
-/* arbitrary (avg of my /etc/passwd) */
-#define SSS_AVG_PASSWD_PAYLOAD (MC_SLOT_SIZE * 4)
-/* short group name and no gids (private user group */
-#define SSS_AVG_GROUP_PAYLOAD (MC_SLOT_SIZE * 3)
-/* average place for 40 supplementary groups + 2 names */
-#define SSS_AVG_INITGROUP_PAYLOAD (MC_SLOT_SIZE * 5)
-
 #define MC_NEXT_BARRIER(val) ((((val) + 1) & 0x00ffffff) | 0xf0000000)
 
 #define MC_RAISE_BARRIER(m) do { \
@@ -72,7 +65,7 @@ struct sss_mc_ctx {
 
     uint8_t *free_table;    /* free list bitmaps */
     uint32_t ft_size;       /* size of free table */
-    uint32_t next_slot;     /* the next slot after last allocation */
+    uint32_t next_slot;     /* the next slot after last allocation done via erasure */
 
     uint8_t *data_table;    /* data table address (in mmap) */
     uint32_t dt_size;       /* size of data table */
@@ -378,6 +371,20 @@ static bool sss_mc_is_valid_rec(struct sss_mc_ctx *mcc, struct sss_mc_rec *rec)
     return true;
 }
 
+static const char *mc_type_to_str(enum sss_mc_type type)
+{
+    switch (type) {
+    case SSS_MC_PASSWD:
+        return "PASSWD";
+    case SSS_MC_GROUP:
+        return "GROUP";
+    case SSS_MC_INITGROUPS:
+        return "INITGROUPS";
+    default:
+        return "-UNKNOWN-";
+    }
+}
+
 /* FIXME: This is a very simplistic, inefficient, memory allocator,
  * it will just free the oldest entries regardless of expiration if it
  * cycled the whole free bits map and found no empty slot */
@@ -435,6 +442,9 @@ static errno_t sss_mc_find_free_slots(struct sss_mc_ctx *mcc,
         if (cur == t) {
             /* ok found num_slots consecutive free bits */
             *free_slot = cur - num_slots;
+            /* `mcc->next_slot` is not updated here intentionally.
+             * For details see discussion in https://github.com/SSSD/sssd/pull/999
+             */
             return EOK;
         }
     }
@@ -444,6 +454,14 @@ static errno_t sss_mc_find_free_slots(struct sss_mc_ctx *mcc,
         cur = 0;
     } else {
         cur = mcc->next_slot;
+    }
+    if (cur == 0) {
+        /* inform only once per full loop to avoid excessive spam */
+        DEBUG(SSSDBG_IMPORTANT_INFO, "mmap cache of type '%s' is full\n",
+              mc_type_to_str(mcc->type));
+        sss_log(SSS_LOG_NOTICE, "mmap cache of type '%s' is full, if you see "
+                "this message often then please consider increase of cache size",
+                mc_type_to_str(mcc->type));
     }
     for (i = 0; i < num_slots; i++) {
         MC_PROBE_BIT(mcc->free_table, cur + i, used);
@@ -768,7 +786,6 @@ errno_t sss_mmap_cache_pw_store(struct sss_mc_ctx **_mcc,
     memcpy(&data->strs[pos], homedir->str, homedir->len);
     pos += homedir->len;
     memcpy(&data->strs[pos], shell->str, shell->len);
-    pos += shell->len;
 
     MC_LOWER_BARRIER(rec);
 
@@ -907,7 +924,6 @@ int sss_mmap_cache_gr_store(struct sss_mc_ctx **_mcc,
     memcpy(&data->strs[pos], pw->str, pw->len);
     pos += pw->len;
     memcpy(&data->strs[pos], membuf, memsize);
-    pos += memsize;
 
     MC_LOWER_BARRIER(rec);
 
@@ -1066,12 +1082,11 @@ errno_t sss_mmap_cache_initgr_invalidate(struct sss_mc_ctx *mcc,
 static errno_t sss_mc_set_recycled(int fd)
 {
     uint32_t w = SSS_MC_HEADER_RECYCLED;
-    struct sss_mc_header h;
     off_t offset;
     off_t pos;
     ssize_t written;
 
-    offset = MC_PTR_DIFF(&h.status, &h);
+    offset = offsetof(struct sss_mc_header, status);
 
     pos = lseek(fd, offset, SEEK_SET);
     if (pos == -1) {
@@ -1080,12 +1095,12 @@ static errno_t sss_mc_set_recycled(int fd)
     }
 
     errno = 0;
-    written = sss_atomic_write_s(fd, (uint8_t *)&w, sizeof(h.status));
+    written = sss_atomic_write_s(fd, (uint8_t *)&w, sizeof(w));
     if (written == -1) {
         return errno;
     }
 
-    if (written != sizeof(h.status)) {
+    if (written != sizeof(w)) {
         /* Write error */
         return EIO;
     }
@@ -1093,48 +1108,48 @@ static errno_t sss_mc_set_recycled(int fd)
     return EOK;
 }
 
-/*
- * When we (re)create a new file we must mark the current file as recycled
- * so active clients will abandon its use ASAP.
- * We unlink the current file and make a new one.
- */
-static errno_t sss_mc_create_file(struct sss_mc_ctx *mc_ctx)
+static void sss_mc_destroy_file(const char *filename)
 {
-    mode_t old_mask;
+    const useconds_t t = 50000;
+    const int retries = 3;
     int ofd;
-    int ret, uret;
-    useconds_t t = 50000;
-    int retries = 3;
+    int ret;
 
-    ofd = open(mc_ctx->file, O_RDWR);
+    ofd = open(filename, O_RDWR);
     if (ofd != -1) {
         ret = sss_br_lock_file(ofd, 0, 1, retries, t);
         if (ret != EOK) {
-            DEBUG(SSSDBG_FATAL_FAILURE,
-                  "Failed to lock file %s.\n", mc_ctx->file);
+            DEBUG(SSSDBG_FATAL_FAILURE, "Failed to lock file %s.\n", filename);
         }
         ret = sss_mc_set_recycled(ofd);
         if (ret) {
             DEBUG(SSSDBG_FATAL_FAILURE, "Failed to mark mmap file %s as"
-                                         " recycled: %d(%s)\n",
-                                         mc_ctx->file, ret, strerror(ret));
+                                         " recycled: %d (%s)\n",
+                                         filename, ret, strerror(ret));
         }
-
         close(ofd);
     } else if (errno != ENOENT) {
         ret = errno;
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "Failed to open old memory cache file %s: %d(%s).\n",
-               mc_ctx->file, ret, strerror(ret));
+              "Failed to open old memory cache file %s: %d (%s)\n",
+               filename, ret, strerror(ret));
     }
 
     errno = 0;
-    ret = unlink(mc_ctx->file);
+    ret = unlink(filename);
     if (ret == -1 && errno != ENOENT) {
         ret = errno;
-        DEBUG(SSSDBG_TRACE_FUNC, "Failed to rm mmap file %s: %d(%s)\n",
-                                  mc_ctx->file, ret, strerror(ret));
+        DEBUG(SSSDBG_TRACE_FUNC, "Failed to delete mmap file %s: %d (%s)\n",
+                                  filename, ret, strerror(ret));
     }
+}
+
+static errno_t sss_mc_create_file(struct sss_mc_ctx *mc_ctx)
+{
+    const useconds_t t = 50000;
+    const int retries = 3;
+    mode_t old_mask;
+    int ret, uret;
 
     /* temporarily relax umask as we need the file to be readable
      * by everyone for now */
@@ -1254,26 +1269,39 @@ errno_t sss_mmap_cache_init(TALLOC_CTX *mem_ctx, const char *name,
                             enum sss_mc_type type, size_t n_elem,
                             time_t timeout, struct sss_mc_ctx **mcc)
 {
-    struct sss_mc_ctx *mc_ctx = NULL;
-    int payload;
-    int ret, dret;
+    /* sss_mc_header alone occupies whole slot,
+     * so each entry takes 2 slots at the very least
+     */
+    static const int PAYLOAD_FACTOR = 2;
 
-    switch (type) {
-    case SSS_MC_PASSWD:
-        payload = SSS_AVG_PASSWD_PAYLOAD;
-        break;
-    case SSS_MC_GROUP:
-        payload = SSS_AVG_GROUP_PAYLOAD;
-        break;
-    case SSS_MC_INITGROUPS:
-        payload = SSS_AVG_INITGROUP_PAYLOAD;
-        break;
-    default:
-        return EINVAL;
+    struct sss_mc_ctx *mc_ctx = NULL;
+    int ret, dret;
+    char *filename;
+
+    filename = talloc_asprintf(mem_ctx, "%s/%s", SSS_NSS_MCACHE_DIR, name);
+    if (!filename) {
+        return ENOMEM;
     }
+    /*
+     * First of all mark the current file as recycled
+     * and unlink so active clients will abandon its use ASAP
+     */
+    sss_mc_destroy_file(filename);
+
+    if ((timeout == 0) || (n_elem == 0)) {
+        DEBUG(SSSDBG_IMPORTANT_INFO,
+              "Fast '%s' mmap cache is explicitly DISABLED\n",
+              mc_type_to_str(type));
+        *mcc = NULL;
+        return EOK;
+    }
+    DEBUG(SSSDBG_CONF_SETTINGS,
+          "Fast '%s' mmap cache: timeout = %d, slots = %zu\n",
+          mc_type_to_str(type), (int)timeout, n_elem);
 
     mc_ctx = talloc_zero(mem_ctx, struct sss_mc_ctx);
     if (!mc_ctx) {
+        talloc_free(filename);
         return ENOMEM;
     }
     mc_ctx->fd = -1;
@@ -1292,12 +1320,7 @@ errno_t sss_mmap_cache_init(TALLOC_CTX *mem_ctx, const char *name,
 
     mc_ctx->valid_time_slot = timeout;
 
-    mc_ctx->file = talloc_asprintf(mc_ctx, "%s/%s",
-                                   SSS_NSS_MCACHE_DIR, name);
-    if (!mc_ctx->file) {
-        ret = ENOMEM;
-        goto done;
-    }
+    mc_ctx->file = talloc_steal(mc_ctx, filename);
 
     /* elements must always be multiple of 8 to make things easier to handle,
      * so we increase by the necessary amount if they are not a multiple */
@@ -1306,16 +1329,14 @@ errno_t sss_mmap_cache_init(TALLOC_CTX *mem_ctx, const char *name,
 
     /* hash table is double the size because it will store both forward and
      * reverse keys (name/uid, name/gid, ..) */
-    mc_ctx->ht_size = MC_HT_SIZE(n_elem * 2);
-    mc_ctx->dt_size = MC_DT_SIZE(n_elem, payload);
-    mc_ctx->ft_size = MC_FT_SIZE(n_elem);
+    mc_ctx->ht_size = MC_HT_SIZE(2 * n_elem / PAYLOAD_FACTOR);
+    mc_ctx->dt_size = n_elem * MC_SLOT_SIZE;
+    mc_ctx->ft_size = n_elem / 8; /* 1 bit per slot */
     mc_ctx->mmap_size = MC_HEADER_SIZE +
                         MC_ALIGN64(mc_ctx->dt_size) +
                         MC_ALIGN64(mc_ctx->ft_size) +
                         MC_ALIGN64(mc_ctx->ht_size);
 
-
-    /* for now ALWAYS create a new file on restart */
 
     ret = sss_mc_create_file(mc_ctx);
     if (ret) {

@@ -436,100 +436,6 @@ errno_t sss_hash_create(TALLOC_CTX *mem_ctx, unsigned long count,
     return sss_hash_create_ex(mem_ctx, count, tbl, 0, 0, 0, 0, NULL, NULL);
 }
 
-errno_t sss_filter_sanitize_ex(TALLOC_CTX *mem_ctx,
-                               const char *input,
-                               char **sanitized,
-                               const char *ignore)
-{
-    char *output;
-    size_t i = 0;
-    size_t j = 0;
-    char *allowed;
-
-    /* Assume the worst-case. We'll resize it later, once */
-    output = talloc_array(mem_ctx, char, strlen(input) * 3 + 1);
-    if (!output) {
-        return ENOMEM;
-    }
-
-    while (input[i]) {
-        /* Even though this character might have a special meaning, if it's
-         * explicitly allowed, just copy it and move on
-         */
-        if (ignore == NULL) {
-            allowed = NULL;
-        } else {
-            allowed = strchr(ignore, input[i]);
-        }
-        if (allowed) {
-            output[j++] = input[i++];
-            continue;
-        }
-
-        switch(input[i]) {
-        case '\t':
-            output[j++] = '\\';
-            output[j++] = '0';
-            output[j++] = '9';
-            break;
-        case ' ':
-            output[j++] = '\\';
-            output[j++] = '2';
-            output[j++] = '0';
-            break;
-        case '*':
-            output[j++] = '\\';
-            output[j++] = '2';
-            output[j++] = 'a';
-            break;
-        case '(':
-            output[j++] = '\\';
-            output[j++] = '2';
-            output[j++] = '8';
-            break;
-        case ')':
-            output[j++] = '\\';
-            output[j++] = '2';
-            output[j++] = '9';
-            break;
-        case '\\':
-            output[j++] = '\\';
-            output[j++] = '5';
-            output[j++] = 'c';
-            break;
-        case '\r':
-            output[j++] = '\\';
-            output[j++] = '0';
-            output[j++] = 'd';
-            break;
-        case '\n':
-            output[j++] = '\\';
-            output[j++] = '0';
-            output[j++] = 'a';
-            break;
-        default:
-            output[j++] = input[i];
-        }
-
-        i++;
-    }
-    output[j] = '\0';
-    *sanitized = talloc_realloc(mem_ctx, output, char, j+1);
-    if (!*sanitized) {
-        talloc_free(output);
-        return ENOMEM;
-    }
-
-    return EOK;
-}
-
-errno_t sss_filter_sanitize(TALLOC_CTX *mem_ctx,
-                            const char *input,
-                            char **sanitized)
-{
-    return sss_filter_sanitize_ex(mem_ctx, input, sanitized, NULL);
-}
-
 char *
 sss_escape_ip_address(TALLOC_CTX *mem_ctx, int family, const char *addr)
 {
@@ -614,6 +520,39 @@ errno_t add_string_to_list(TALLOC_CTX *mem_ctx, const char *string,
     new_list[c + 1] = NULL;
 
     *list_p = new_list;
+
+    return EOK;
+}
+
+errno_t del_string_from_list(const char *string,
+                             char ***list_p, bool case_sensitive)
+{
+    char **list;
+    int(*compare)(const char *s1, const char *s2);
+
+    if (string == NULL || list_p == NULL) {
+        DEBUG(SSSDBG_OP_FAILURE, "Missing string or list.\n");
+        return EINVAL;
+    }
+
+    if (!string_in_list(string, *list_p, case_sensitive)) {
+        return ENOENT;
+    }
+
+    compare = case_sensitive ? strcmp : strcasecmp;
+    list = *list_p;
+    int matches = 0;
+    int index = 0;
+    while (list[index]) {
+        if (compare(string, list[index]) == 0) {
+            matches++;
+            TALLOC_FREE(list[index]);
+        } else if (matches) {
+            list[index - matches] = list[index];
+            list[index] = NULL;
+        }
+        index++;
+    }
 
     return EOK;
 }
