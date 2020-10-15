@@ -138,13 +138,17 @@ extern int dbus_activated;
     \
     if (tevent_req_is_error(req, &TRROEstate, &TRROEuint64)) { \
         TRROEerr = (errno_t)TRROEuint64; \
-        if (TRROEstate == TEVENT_REQ_USER_ERROR) { \
-            if (TRROEerr == 0) { \
+        switch (TRROEstate) { \
+            case TEVENT_REQ_USER_ERROR:  \
+                if (TRROEerr == 0) { \
+                    return ERR_INTERNAL; \
+                } \
+                return TRROEerr; \
+            case TEVENT_REQ_TIMED_OUT: \
+                return ETIMEDOUT; \
+            default: \
                 return ERR_INTERNAL; \
-            } \
-            return TRROEerr; \
         } \
-        return ERR_INTERNAL; \
     } \
 } while (0)
 
@@ -478,6 +482,26 @@ errno_t sss_filter_sanitize_for_dom(TALLOC_CTX *mem_ctx,
                                     char **sanitized,
                                     char **lc_sanitized);
 
+/* Sanitize an input string (e.g. a DN) for use in
+ * an LDAP/LDB filter
+ *
+ * It is basically the same as sss_filter_sanitize(_ex),
+ * just extra spaces inside DN around '=' and ',' are removed
+ * before sanitizing other characters . According the documentation
+ * spaces in DN are allowed and some ldap servers can return them
+ * in isMemberOf or member attributes.
+ *
+ * (dc = my example, dc = com => dc=my\20example,dc=com)
+ *
+ * Returns a newly-constructed string attached to mem_ctx
+ * It will fail only on an out of memory condition, where it
+ * will return ENOMEM.
+ *
+ */
+errno_t sss_filter_sanitize_dn(TALLOC_CTX *mem_ctx,
+                               const char *input,
+                               char **sanitized);
+
 char *
 sss_escape_ip_address(TALLOC_CTX *mem_ctx, int family, const char *addr);
 
@@ -525,6 +549,7 @@ char *
 sss_tc_utf8_str_tolower(TALLOC_CTX *mem_ctx, const char *s);
 uint8_t *
 sss_tc_utf8_tolower(TALLOC_CTX *mem_ctx, const uint8_t *s, size_t len, size_t *_nlen);
+/* from sss_utf8.c */
 bool sss_string_equal(bool cs, const char *s1, const char *s2);
 
 /* len includes terminating '\0' */
@@ -739,6 +764,15 @@ int sss_create_dir(const char *parent_dir_path,
 /* from selinux.c */
 int selinux_file_context(const char *dst_name);
 int reset_selinux_file_context(void);
+
+/* from cert_derb64_to_ldap_filter.c */
+struct sss_certmap_ctx;
+errno_t sss_cert_derb64_to_ldap_filter(TALLOC_CTX *mem_ctx, const char *derb64,
+                                       const char *attr_name,
+                                       struct sss_certmap_ctx *certmap_ctx,
+                                       struct sss_domain_info *dom,
+                                       char **ldap_filter);
+
 
 /* from util_preauth.c */
 errno_t create_preauth_indicator(void);

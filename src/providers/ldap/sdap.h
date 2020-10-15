@@ -240,6 +240,7 @@ enum sdap_basic_opt {
     SDAP_MAX_ID,
     SDAP_PWDLOCKOUT_DN,
     SDAP_WILDCARD_LIMIT,
+    SDAP_LIBRARY_DEBUG_LEVEL,
 
     SDAP_OPTS_BASIC /* opts counter */
 };
@@ -525,6 +526,7 @@ struct sdap_options {
     bool support_matching_rule;
     enum dc_functional_level dc_functional_level;
     const char *schema_basedn;
+    bool allow_remote_domain_local_groups;
 
     /* Certificate mapping support */
     struct sdap_certmap_ctx *sdap_certmap_ctx;
@@ -621,6 +623,8 @@ errno_t sdap_parse_deref(TALLOC_CTX *mem_ctx,
                          size_t num_maps,
                          LDAPDerefRes *dref,
                          struct sdap_deref_attrs ***_deref_res);
+
+void setup_ldap_debug(struct dp_option *basic_opts);
 
 errno_t setup_tls_config(struct dp_option *basic_opts);
 

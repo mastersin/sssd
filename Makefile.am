@@ -124,6 +124,8 @@ if HAVE_GCC
                  -std=gnu99
 endif
 
+CMOCKA_CFLAGS = -fno-lto
+
 pkgconfig_DATA =
 
 ACLOCAL_AMFLAGS = -I m4 -I .
@@ -905,11 +907,6 @@ dist_noinst_HEADERS = \
     $(NULL)
 
 
-if HAVE_NSS
-    dist_noinst_HEADERS += src/util/crypto/nss/nss_util.h \
-                           src/util/crypto/nss/nss_crypto.h
-endif
-
 SSSD_DOCS = \
     doc \
     hbac_doc \
@@ -952,61 +949,28 @@ libsss_child_la_LDFLAGS = -avoid-version
 
 pkglib_LTLIBRARIES += libsss_crypt.la
 
-# NOTE:
-# Please try to avoid using SSS_CRYPT_{CFLAGS,LIBS} directly for compiling and
-# linking programs or libraries. This is purpose of wrapper library
-# libsss_crypt.so to hide internals. SSS_CRYPT_{CFLAGS,LIBS} might be used
-# in unit tests if you directly uses functions from underlining crypto libraries
-if HAVE_NSS
-    SSS_CRYPT_SOURCES = src/util/crypto/nss/nss_base64.c \
-                        src/util/crypto/nss/nss_hmac_sha1.c \
-                        src/util/crypto/nss/nss_sha512crypt.c \
-                        src/util/crypto/nss/nss_obfuscate.c \
-                        src/util/crypto/nss/nss_nite.c \
-                        src/util/crypto/nss/nss_util.c \
-                        src/util/crypto/nss/nss_prng.c \
-                        src/util/atomic_io.c \
-                        src/util/memory.c \
-                        $(NULL)
-    SSS_CRYPT_CFLAGS = $(NSS_CFLAGS)
-    SSS_CRYPT_LIBS = $(NSS_LIBS)
+SSS_CRYPT_SOURCES = src/util/crypto/libcrypto/crypto_base64.c \
+                    src/util/crypto/libcrypto/crypto_hmac_sha1.c \
+                    src/util/crypto/libcrypto/crypto_sha512crypt.c \
+                    src/util/crypto/libcrypto/crypto_obfuscate.c \
+                    src/util/crypto/libcrypto/crypto_nite.c \
+                    src/util/crypto/libcrypto/crypto_prng.c \
+                    src/util/atomic_io.c \
+                    src/util/memory.c \
+                    $(NULL)
+SSS_CRYPT_CFLAGS = $(CRYPTO_CFLAGS)
+SSS_CRYPT_LIBS = $(CRYPTO_LIBS)
 
-    SSS_CERT_SOURCES = \
-        src/util/cert/cert_common.c \
-        src/util/cert/cert_common_p11_child.c \
-        src/util/cert/nss/cert.c \
-        $(NULL)
-    SSS_CERT_CFLAGS = \
-        $(NSS_CFLAGS) \
-        $(NULL)
-    SSS_CERT_LIBS = \
-        $(NSS_LIBS) \
-        $(NULL)
-else
-    SSS_CRYPT_SOURCES = src/util/crypto/libcrypto/crypto_base64.c \
-                        src/util/crypto/libcrypto/crypto_hmac_sha1.c \
-                        src/util/crypto/libcrypto/crypto_sha512crypt.c \
-                        src/util/crypto/libcrypto/crypto_obfuscate.c \
-                        src/util/crypto/libcrypto/crypto_nite.c \
-                        src/util/crypto/libcrypto/crypto_prng.c \
-                        src/util/atomic_io.c \
-                        src/util/memory.c \
-                        $(NULL)
-    SSS_CRYPT_CFLAGS = $(CRYPTO_CFLAGS)
-    SSS_CRYPT_LIBS = $(CRYPTO_LIBS)
-
-    SSS_CERT_SOURCES = \
-        src/util/cert/cert_common.c \
-        src/util/cert/cert_common_p11_child.c \
-        src/util/cert/libcrypto/cert.c \
-        $(NULL)
-    SSS_CERT_CFLAGS = \
-        $(CRYPTO_CFLAGS) \
-        $(NULL)
-    SSS_CERT_LIBS = \
-        $(CRYPTO_LIBS) \
-        $(NULL)
-endif
+SSS_CERT_SOURCES = \
+    src/util/cert/cert_common.c \
+    src/util/cert/libcrypto/cert.c \
+    $(NULL)
+SSS_CERT_CFLAGS = \
+    $(CRYPTO_CFLAGS) \
+    $(NULL)
+SSS_CERT_LIBS = \
+    $(CRYPTO_LIBS) \
+    $(NULL)
 
 libsss_crypt_la_SOURCES = \
     $(SSS_CRYPT_SOURCES)
@@ -1044,7 +1008,6 @@ libsss_cert_la_LIBADD = \
     libsss_crypt.la \
     libsss_child.la \
     libsss_debug.la \
-    libsss_certmap.la \
     libsss_child.la \
     $(NULL)
 libsss_cert_la_LDFLAGS = \
@@ -1683,6 +1646,7 @@ sssd_ssh_SOURCES = \
     src/responder/ssh/ssh_known_hosts.c \
     src/responder/ssh/ssh_protocol.c \
     src/responder/ssh/ssh_reply.c \
+    src/responder/ssh/ssh_cert_to_ssh_key.c \
     $(SSSD_RESPONDER_OBJ) \
     $(NULL)
 sssd_ssh_LDADD = \
@@ -2166,25 +2130,13 @@ libsss_certmap_la_LDFLAGS = \
     -Wl,--version-script,$(srcdir)/src/lib/certmap/sss_certmap.exports \
     -version-info 2:0:2
 
-if HAVE_NSS
-libsss_certmap_la_SOURCES += \
-    src/lib/certmap/sss_cert_content_nss.c \
-    src/util/crypto/nss/nss_base64.c \
-    src/util/cert/nss/cert.c \
-    src/util/crypto/nss/nss_util.c \
-    $(NULL)
-libsss_certmap_la_CFLAGS += $(NSS_CFLAGS)
-libsss_certmap_la_LIBADD += $(NSS_LIBS)
-else
 libsss_certmap_la_SOURCES += \
     src/lib/certmap/sss_cert_content_crypto.c \
     src/util/crypto/libcrypto/crypto_base64.c \
     src/util/cert/libcrypto/cert.c \
     $(NULL)
-
 libsss_certmap_la_CFLAGS += $(CRYPTO_CFLAGS)
 libsss_certmap_la_LIBADD += $(CRYPTO_LIBS)
-endif
 
 dist_noinst_DATA += src/lib/certmap/sss_certmap.exports
 dist_noinst_HEADERS += src/lib/certmap/sss_certmap_int.h
@@ -2230,7 +2182,6 @@ libsss_test_common_la_SOURCES += \
 
 check_LTLIBRARIES += \
     libdlopen_test_providers.la \
-    libsss_nss_idmap_tests.la \
     $(NULL)
 
 if BUILD_SAMBA
@@ -2241,12 +2192,9 @@ check_LTLIBRARIES += \
 endif
 
 # libdlopen_test_providers is a helper library to provide missing symbols for
-# dlopen_tests. It is mainly used for the backend modules but is used as well
-# to provide __wrap_sss_nss_make_request_timeout needed make make dlopen_tests
-# pass for libsss_nss_idmap_tests.
+# dlopen_tests.
 libdlopen_test_providers_la_SOURCES = \
     $(sssd_be_SOURCES) \
-    src/tests/cmocka/wrap_sss_nss_make_request_timeout.c \
     $(NULL)
 libdlopen_test_providers_la_CFLAGS = \
     $(AM_CFLAGS) \
@@ -2270,17 +2218,6 @@ libdlopen_test_providers_la_LDFLAGS = \
     -Wl,--version-script,$(srcdir)/src/providers/sssd_be.exports \
     -rpath $(abs_top_builddir) \
     -export-dynamic
-
-libsss_nss_idmap_tests_la_SOURCES = $(libsss_nss_idmap_la_SOURCES)
-libsss_nss_idmap_tests_la_LIBADD = $(libsss_nss_idmap_la_LIBADD)
-libsss_nss_idmap_tests_la_LDFLAGS = \
-    $(libsss_nss_idmap_la_LDFLAGS) \
-    -shared \
-    -rpath $(libdir) \
-    -Wl,-wrap,sss_nss_make_request_timeout \
-    -Wl,--version-script,$(srcdir)/src/sss_client/idmap/sss_nss_idmap.unit_tests
-
-dist_noinst_DATA += src/sss_client/idmap/sss_nss_idmap.unit_tests
 
 libsss_ad_tests_la_SOURCES = $(libsss_ad_la_SOURCES)
 libsss_ad_tests_la_CFLAGS = $(libsss_ad_la_CFLAGS)
@@ -2737,7 +2674,8 @@ nss_srv_tests_SOURCES = \
      src/responder/nss/nss_utils.c \
      src/responder/nss/nsssrv_mmap_cache.c
 nss_srv_tests_CFLAGS = \
-    $(AM_CFLAGS)
+    $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS)
 nss_srv_tests_LDFLAGS = \
     -Wl,-wrap,sss_ncache_check_user \
     -Wl,-wrap,sss_ncache_check_upn \
@@ -2781,6 +2719,7 @@ pam_srv_tests_CFLAGS = \
     -U SSSD_LIBEXEC_PATH -DSSSD_LIBEXEC_PATH=\"$(abs_builddir)\" \
     -I$(abs_builddir)/src \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     $(NULL)
 pam_srv_tests_LDFLAGS = \
     -Wl,-wrap,sss_packet_get_body \
@@ -2814,12 +2753,13 @@ ssh_srv_tests_SOURCES = \
     src/responder/ssh/ssh_known_hosts.c \
     src/responder/ssh/ssh_protocol.c \
     src/responder/ssh/ssh_reply.c \
-    src/util/cert/cert_common_p11_child.c \
+    src/responder/ssh/ssh_cert_to_ssh_key.c \
     $(NULL)
 ssh_srv_tests_CFLAGS = \
     -U SSSD_LIBEXEC_PATH -DSSSD_LIBEXEC_PATH=\"$(abs_builddir)\" \
     -I$(abs_builddir)/src \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     $(NULL)
 ssh_srv_tests_LDFLAGS = \
     -Wl,-wrap,sss_packet_get_body \
@@ -2837,6 +2777,7 @@ ssh_srv_tests_LDADD = \
     libsss_test_common.la \
     libsss_iface.la \
     libsss_sbus.la \
+    libsss_certmap.la \
     $(NULL)
 
 EXTRA_responder_get_domains_tests_DEPENDENCIES = \
@@ -2846,7 +2787,8 @@ responder_get_domains_tests_SOURCES = \
      src/tests/cmocka/test_responder_common.c \
      src/tests/cmocka/common_mock_resp.c
 responder_get_domains_tests_CFLAGS = \
-    $(AM_CFLAGS)
+    $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS)
 responder_get_domains_tests_LDFLAGS = \
     -Wl,-wrap,sss_parse_name_for_domains \
     -Wl,-wrap,sss_ncache_reset_repopulate_permanent
@@ -2963,12 +2905,16 @@ test_prompt_config_LDADD = \
     $(NULL)
 
 sss_nss_idmap_tests_SOURCES = \
+    $(libsss_nss_idmap_la_SOURCES) \
     src/tests/cmocka/sss_nss_idmap-tests.c
 sss_nss_idmap_tests_CFLAGS = \
-    $(AM_CFLAGS)
+    $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS)
+sss_nss_idmap_tests_LDFLAGS = \
+    -Wl,-wrap,sss_nss_make_request_timeout
 sss_nss_idmap_tests_LDADD = \
     $(CMOCKA_LIBS) \
-    libsss_nss_idmap_tests.la \
+    $(libsss_nss_idmap_la_LIBADD) \
     $(NULL)
 
 deskprofile_utils_tests_SOURCES = \
@@ -2991,6 +2937,7 @@ dyndns_tests_SOURCES = \
      src/providers/data_provider_opts.c
 dyndns_tests_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     -DDYNDNS_TIMEOUT=2
 dyndns_tests_LDFLAGS = \
     -Wl,-wrap,execv \
@@ -3063,7 +3010,8 @@ test_ipa_idmap_SOURCES = \
     src/tests/cmocka/test_ipa_idmap.c \
     src/providers/ipa/ipa_idmap.c
 test_ipa_idmap_CFLAGS = \
-    $(AM_CFLAGS)
+    $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS)
 test_ipa_idmap_LDFLAGS = \
     -Wl,-wrap,sysdb_get_ranges
 test_ipa_idmap_LDADD = \
@@ -3084,15 +3032,9 @@ test_utils_SOURCES += src/tests/cmocka/test_sss_ssh.c
 endif
 test_utils_CFLAGS = \
     $(AM_CFLAGS)
-if HAVE_NSS
-test_utils_CFLAGS += \
-    $(NSS_CFLAGS) \
-    $(NULL)
-else
 test_utils_CFLAGS += \
     $(P11_KIT_CFLAGS) \
     $(NULL)
-endif
 test_utils_LDADD = \
     $(CMOCKA_LIBS) \
     $(POPT_LIBS) \
@@ -3225,6 +3167,7 @@ ad_common_tests_CFLAGS = \
     $(AM_CFLAGS) \
     $(NDR_NBT_CFLAGS) \
     $(NDR_KRB5PAC_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     $(NULL)
 ad_common_tests_LDFLAGS = \
     -Wl,-wrap,sdap_set_sasl_options \
@@ -3271,6 +3214,7 @@ sdap_tests_SOURCES = \
     $(NULL)
 sdap_tests_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     $(NULL)
 sdap_tests_LDFLAGS = \
     -Wl,-wrap,ldap_set_option \
@@ -3321,6 +3265,7 @@ sss_sifp_tests_SOURCES = \
     src/lib/sifp/sss_sifp.c
 sss_sifp_tests_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     -I$(top_srcdir)/src/lib/sifp
 sss_sifp_tests_LDFLAGS = \
     -Wl,-wrap,dbus_bus_get \
@@ -3450,6 +3395,7 @@ test_wbc_calls_SOURCES = \
     $(NULL)
 test_wbc_calls_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     $(NULL)
 test_wbc_calls_LDFLAGS = \
     -Wl,-wrap,sss_nss_getnamebysid \
@@ -3536,6 +3482,7 @@ test_child_common_SOURCES = \
     $(NULL)
 test_child_common_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     -DCHILD_DIR=\"$(builddir)\" \
     $(NULL)
 test_child_common_LDFLAGS = \
@@ -3556,6 +3503,7 @@ responder_cache_req_tests_SOURCES = \
     $(NULL)
 responder_cache_req_tests_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     $(NULL)
 responder_cache_req_tests_LDFLAGS = \
     -Wl,-wrap,sss_dp_get_account_send \
@@ -3578,6 +3526,7 @@ test_resolv_fake_SOURCES = \
     $(NULL)
 test_resolv_fake_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     $(NULL)
 test_resolv_fake_LDFLAGS = \
     -Wl,-wrap,ares_query \
@@ -3686,6 +3635,7 @@ test_ipa_subdom_server_SOURCES = \
     $(NULL)
 test_ipa_subdom_server_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     -DIPA_TRUST_KEYTAB_DIR=TEST_DIR\"/tp_test_ipa_subdom_server-test_ipa_subdomains_server\" \
     $(NULL)
 test_ipa_subdom_server_LDFLAGS = \
@@ -3743,7 +3693,8 @@ test_krb5_wait_queue_LDADD = \
 
 test_cert_utils_SOURCES = \
     src/tests/cmocka/test_cert_utils.c \
-    src/util/cert/cert_common_p11_child.c \
+    src/responder/ssh/ssh_cert_to_ssh_key.c \
+    src/util/cert_derb64_to_ldap_filter.c \
     $(NULL)
 test_cert_utils_CFLAGS = \
     $(AM_CFLAGS) \
@@ -3760,6 +3711,7 @@ test_cert_utils_LDADD = \
     libsss_test_common.la \
     libsss_cert.la \
     libsss_crypt.la \
+    libsss_certmap.la \
     $(NULL)
 
 test_data_provider_be_SOURCES = \
@@ -3769,6 +3721,7 @@ test_data_provider_be_SOURCES = \
     $(NULL)
 test_data_provider_be_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     -DUNIT_TESTING \
     $(NULL)
 test_data_provider_be_LDFLAGS = \
@@ -3798,6 +3751,7 @@ test_dp_request_SOURCES = \
     $(NULL)
 test_dp_request_CFLAGS = \
     $(AM_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     -DUNIT_TESTING \
     $(NULL)
 test_dp_request_LDFLAGS = \
@@ -3941,14 +3895,14 @@ sss_certmap_test_SOURCES = \
     $(NULL)
 sss_certmap_test_CFLAGS = \
     $(AM_CFLAGS) \
-    $(NSS_CFLAGS) \
+    $(SSS_CERT_CFLAGS) \
     -I$(abs_builddir)/src \
     $(NULL)
 sss_certmap_test_LDADD = \
     $(CMOCKA_LIBS) \
     $(POPT_LIBS) \
     $(TALLOC_LIBS) \
-    $(NSS_LIBS) \
+    $(SSS_CERT_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_test_common.la \
     libsss_certmap.la \
@@ -3996,6 +3950,7 @@ test_kcm_json_LDADD = \
     $(NULL)
 
 test_kcm_queue_SOURCES = \
+    $(TEST_MOCK_RESP_OBJ) \
     src/tests/cmocka/test_kcm_queue.c \
     src/responder/kcm/kcmsrv_op_queue.c \
     $(NULL)
@@ -4003,10 +3958,13 @@ test_kcm_queue_CFLAGS = \
     $(AM_CFLAGS) \
     $(NULL)
 test_kcm_queue_LDADD = \
+    $(LIBADD_DL) \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_test_common.la \
+    libsss_iface.la \
+    libsss_sbus.la \
     $(NULL)
 
 endif # BUILD_KCM
@@ -4295,6 +4253,7 @@ libsss_ldap_common_la_SOURCES = \
     src/util/user_info_msg.c \
     src/util/sss_sockets.c \
     src/util/sss_ldap.c \
+    src/util/cert_derb64_to_ldap_filter.c \
     $(NULL)
 libsss_ldap_common_la_CFLAGS = \
     $(AM_CFLAGS) \
@@ -4423,6 +4382,7 @@ libsss_files_la_SOURCES = \
     src/providers/files/files_certmap.c \
     src/providers/files/files_ops.c \
     src/util/inotify.c \
+    src/util/cert_derb64_to_ldap_filter.c \
     $(NULL)
 libsss_files_la_CFLAGS = \
     $(AM_CFLAGS) \
@@ -4433,6 +4393,7 @@ libsss_files_la_LIBADD = \
     $(LDB_LIBS) \
     $(PAM_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
+    libsss_certmap.la \
     $(NULL)
 libsss_files_la_LDFLAGS = \
     -avoid-version \
@@ -4518,7 +4479,9 @@ libsss_ipa_la_SOURCES = \
     src/providers/ad/ad_pac.c \
     src/providers/ad/ad_pac_common.c \
     src/providers/ad/ad_srv.c \
-    src/providers/ad/ad_domain_info.c
+    src/providers/ad/ad_domain_info.c \
+    src/providers/ad/ad_cldap_ping.c \
+    $(NULL)
 libsss_ipa_la_CFLAGS = \
     $(AM_CFLAGS) \
     $(OPENLDAP_CFLAGS) \
@@ -4586,6 +4549,7 @@ libsss_ad_la_SOURCES = \
     src/providers/ad/ad_domain_info.c \
     src/providers/ad/ad_refresh.c \
     src/providers/ad/ad_resolver.c \
+    src/providers/ad/ad_cldap_ping.c \
     $(NULL)
 
 
@@ -4753,27 +4717,17 @@ p11_child_SOURCES = \
     src/util/util.c \
     src/util/util_ext.c \
     $(NULL)
-if HAVE_NSS
-p11_child_SOURCES += src/p11_child/p11_child_nss.c
-else
 p11_child_SOURCES += src/p11_child/p11_child_openssl.c
-endif
 
 p11_child_CFLAGS = \
     $(AM_CFLAGS) \
     $(POPT_CFLAGS) \
     $(NULL)
-if HAVE_NSS
-p11_child_CFLAGS += \
-    $(NSS_CFLAGS) \
-    $(NULL)
-else
 p11_child_CFLAGS += \
     $(P11_KIT_CFLAGS) \
     $(CRYPTO_CFLAGS) \
     $(SSL_CFLAGS) \
     $(NULL)
-endif
 
 p11_child_LDADD = \
     libsss_debug.la \
@@ -4782,17 +4736,11 @@ p11_child_LDADD = \
     $(POPT_LIBS) \
     libsss_crypt.la \
     $(NULL)
-if HAVE_NSS
-p11_child_LDADD += \
-    $(NSS_LIBS) \
-    $(NULL)
-else
 p11_child_LDADD += \
     $(P11_KIT_LIBS) \
     $(CRYPTO_LIBS) \
     $(SSL_LIBS) \
     $(NULL)
-endif
 
 memberof_la_SOURCES = \
     src/ldb_modules/memberof.c \
@@ -5548,9 +5496,9 @@ dist_noinst_DATA += \
     contrib/sssd.spec.in \
     BUILD.txt \
     COPYING \
-    src/tests/multihost/basic/conftest.py \
+    src/tests/multihost/README.md \
+    src/tests/multihost/conftest.py \
     src/tests/multihost/basic/mhc.yaml \
-    src/tests/multihost/basic/README.md \
     src/tests/multihost/basic/test_basic.py \
     src/tests/multihost/basic/test_config.py \
     src/tests/multihost/basic/test_files.py \

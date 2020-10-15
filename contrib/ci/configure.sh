@@ -29,6 +29,7 @@ declare -a CONFIGURE_ARG_LIST=(
     "--enable-ldb-version-check"
     "--with-syslog=journald"
     "--enable-systemtap"
+    "--with-python2-bindings"
 )
 
 
@@ -62,16 +63,6 @@ fi
 if [[ "$DISTRO_BRANCH" == -debian-* ]]; then
     CONFIGURE_ARG_LIST+=(
         "--with-smb-idmap-interface-version=5"
-    )
-fi
-
-if [[ "$DISTRO_BRANCH" == -redhat-fedora-29* ||
-      "$DISTRO_BRANCH" == -redhat-fedora-3* ||
-      "$DISTRO_BRANCH" == -debian-* ||
-      "$DISTRO_BRANCH" == -redhat-redhatenterprise*-8.*- ||
-      "$DISTRO_BRANCH" == -redhat-centos-8.*- ]]; then
-    CONFIGURE_ARG_LIST+=(
-        "--with-crypto=libcrypto"
     )
 fi
 

@@ -1531,6 +1531,7 @@ ad_gpo_access_check(TALLOC_CTX *mem_ctx,
                     enum gpo_access_control_mode gpo_mode,
                     enum gpo_map_type gpo_map_type,
                     const char *user,
+                    bool gpo_implicit_deny,
                     struct sss_domain_info *domain,
                     char **allowed_sids,
                     int allowed_size,
@@ -1575,7 +1576,7 @@ ad_gpo_access_check(TALLOC_CTX *mem_ctx,
               group_sids[j]);
     }
 
-    if (allowed_size == 0) {
+    if (allowed_size == 0 && !gpo_implicit_deny) {
         access_granted = true;
     }  else {
         access_granted = check_rights(allowed_sids, allowed_size, user_sid,
@@ -1694,6 +1695,7 @@ ad_gpo_perform_hbac_processing(TALLOC_CTX *mem_ctx,
                                enum gpo_access_control_mode gpo_mode,
                                enum gpo_map_type gpo_map_type,
                                const char *user,
+                               bool gpo_implicit_deny,
                                struct sss_domain_info *user_domain,
                                struct sss_domain_info *host_domain)
 {
@@ -1732,8 +1734,8 @@ ad_gpo_perform_hbac_processing(TALLOC_CTX *mem_ctx,
 
     /* perform access check with the final resultant allow_sids and deny_sids */
     ret = ad_gpo_access_check(mem_ctx, gpo_mode, gpo_map_type, user,
-                              user_domain, allow_sids, allow_size, deny_sids,
-                              deny_size);
+                              gpo_implicit_deny, user_domain,
+                              allow_sids, allow_size, deny_sids, deny_size);
 
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE,
@@ -1772,6 +1774,7 @@ struct ad_gpo_access_state {
     struct gp_gpo **cse_filtered_gpos;
     int num_cse_filtered_gpos;
     int cse_gpo_index;
+    const char *ad_domain;
 };
 
 static void ad_gpo_connect_done(struct tevent_req *subreq);
@@ -1866,6 +1869,8 @@ ad_gpo_access_send(TALLOC_CTX *mem_ctx,
      */
     state->user_domain = domain;
     state->host_domain = get_domains_head(domain);
+    state->ad_domain = dp_opt_get_string(ctx->ad_id_ctx->ad_options->basic,
+                                         AD_DOMAIN);
 
     state->gpo_map_type = gpo_map_type;
     state->dacl_filtered_gpos = NULL;
@@ -1891,6 +1896,7 @@ ad_gpo_access_send(TALLOC_CTX *mem_ctx,
         ret = ENOMEM;
         goto immediately;
     }
+
 
     subreq = sdap_id_op_connect_send(state->sdap_op, state, &ret);
     if (subreq == NULL) {
@@ -1918,6 +1924,7 @@ immediately:
 static errno_t
 process_offline_gpos(TALLOC_CTX *mem_ctx,
                      const char *user,
+                     bool gpo_implicit_deny,
                      enum gpo_access_control_mode gpo_mode,
                      struct sss_domain_info *user_domain,
                      struct sss_domain_info *host_domain,
@@ -1930,6 +1937,7 @@ process_offline_gpos(TALLOC_CTX *mem_ctx,
                                          gpo_mode,
                                          gpo_map_type,
                                          user,
+                                         gpo_implicit_deny,
                                          user_domain,
                                          host_domain);
     if (ret != EOK) {
@@ -1976,6 +1984,7 @@ ad_gpo_connect_done(struct tevent_req *subreq)
             DEBUG(SSSDBG_TRACE_FUNC, "Preparing for offline operation.\n");
             ret = process_offline_gpos(state,
                                        state->user,
+                                       state->gpo_implicit_deny,
                                        state->gpo_mode,
                                        state->user_domain,
                                        state->host_domain,
@@ -2032,11 +2041,11 @@ ad_gpo_connect_done(struct tevent_req *subreq)
     DEBUG(SSSDBG_TRACE_FUNC, "sam_account_name is %s\n", sam_account_name);
 
     /* Convert the domain name into domain DN */
-    ret = domain_to_basedn(state, state->host_domain->name, &domain_dn);
+    ret = domain_to_basedn(state, state->ad_domain, &domain_dn);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE,
               "Cannot convert domain name [%s] to base DN [%d]: %s\n",
-               state->host_domain->name, ret, sss_strerror(ret));
+              state->ad_domain, ret, sss_strerror(ret));
         goto done;
     }
 
@@ -2086,7 +2095,6 @@ ad_gpo_target_dn_retrieval_done(struct tevent_req *subreq)
     struct sysdb_attrs **reply;
     const char *target_dn = NULL;
     uint32_t uac;
-    char *domain_dn;
     const char *attrs[] = {AD_AT_SID, NULL};
     struct ldb_message *msg;
     static const char *host_attrs[] = { SYSDB_SID_STR, NULL };
@@ -2102,6 +2110,7 @@ ad_gpo_target_dn_retrieval_done(struct tevent_req *subreq)
             DEBUG(SSSDBG_TRACE_FUNC, "Preparing for offline operation.\n");
             ret = process_offline_gpos(state,
                                        state->user,
+                                       state->gpo_implicit_deny,
                                        state->gpo_mode,
                                        state->user_domain,
                                        state->host_domain,
@@ -2179,15 +2188,6 @@ ad_gpo_target_dn_retrieval_done(struct tevent_req *subreq)
                              host_attrs, &msg);
     if (ret == ENOENT) {
         /* The computer is not in cache so query LDAP server */
-        /* Convert the domain name into domain DN */
-        ret = domain_to_basedn(state, state->host_domain->name, &domain_dn);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_OP_FAILURE,
-                  "Cannot convert domain name [%s] to base DN [%d]: %s\n",
-                   state->host_domain->name, ret, sss_strerror(ret));
-            goto done;
-        }
-
         subreq = sdap_get_generic_send(state, state->ev, state->opts,
                                        sdap_id_op_handle(state->sdap_op),
                                        state->target_dn, LDAP_SCOPE_BASE,
@@ -2224,7 +2224,7 @@ ad_gpo_target_dn_retrieval_done(struct tevent_req *subreq)
                                      state->access_ctx->ad_options,
                                      state->timeout,
                                      state->target_dn,
-                                     state->host_domain->name);
+                                     state->ad_domain);
     if (subreq == NULL) {
         ret = ENOMEM;
         goto done;
@@ -2344,7 +2344,7 @@ static void ad_gpo_get_host_sid_retrieval_done(struct tevent_req *subreq)
                                      state->access_ctx->ad_options,
                                      state->timeout,
                                      state->target_dn,
-                                     state->host_domain->name);
+                                     state->ad_domain);
     if (subreq == NULL) {
         ret = ENOMEM;
         goto done;
@@ -2766,6 +2766,7 @@ ad_gpo_cse_done(struct tevent_req *subreq)
                                              state->gpo_mode,
                                              state->gpo_map_type,
                                              state->user,
+                                             state->gpo_implicit_deny,
                                              state->user_domain,
                                              state->host_domain);
         if (ret != EOK) {

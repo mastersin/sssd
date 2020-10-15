@@ -18,41 +18,61 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#include "config.h"
+
+#ifdef HAVE_LIBUNISTRING
+#include <stdlib.h>
+#include <unistr.h>
+#elif defined(HAVE_GLIB2)
+#include <glib.h>
+#endif
+
 #include <talloc.h>
 #include "util/util.h"
-#include "util/sss_utf8.h"
 
-char *
-sss_tc_utf8_str_tolower(TALLOC_CTX *mem_ctx, const char *s)
+#ifdef HAVE_LIBUNISTRING
+static void sss_utf8_free(char *ptr)
 {
-    size_t nlen;
-    uint8_t *ret;
-
-    ret = sss_tc_utf8_tolower(mem_ctx, (const uint8_t *) s, strlen(s), &nlen);
-    if (!ret) return NULL;
-
-    ret = talloc_realloc(mem_ctx, ret, uint8_t, nlen+1);
-    if (!ret) return NULL;
-
-    ret[nlen] = '\0';
-    return (char *) ret;
+    free(ptr);
 }
-
-uint8_t *
-sss_tc_utf8_tolower(TALLOC_CTX *mem_ctx, const uint8_t *s, size_t len, size_t *_nlen)
+#elif defined(HAVE_GLIB2)
+static void sss_utf8_free(char *ptr)
 {
-    uint8_t *lower;
-    uint8_t *ret;
-    size_t nlen;
+    g_free(ptr);
+}
+#else
+#error No unicode library
+#endif
 
-    lower = sss_utf8_tolower(s, len, &nlen);
-    if (!lower) return NULL;
+/* Expects and returns NULL-terminated string;
+ * result must be freed with sss_utf8_free()
+ */
+#ifdef HAVE_LIBUNISTRING
+static char *sss_utf8_tolower(const char *s)
+{
+    size_t llen;
+    return u8_tolower((const uint8_t *)s, strlen(s) + 1, NULL, NULL, NULL, &llen);
+}
+#elif defined(HAVE_GLIB2)
+static char *sss_utf8_tolower(const char *s)
+{
+    return g_utf8_strdown((const gchar *)s, -1);
+}
+#else
+#error No unicode library
+#endif
 
-    ret = talloc_memdup(mem_ctx, lower, nlen);
-    sss_utf8_free(lower);
-    if (!ret) return NULL;
+char *sss_tc_utf8_str_tolower(TALLOC_CTX *mem_ctx, const char *s)
+{
+    char *lower;
+    char *ret = NULL;
 
-    *_nlen = nlen;
+    lower = sss_utf8_tolower(s);
+    if (lower) {
+        ret = talloc_strdup(mem_ctx, lower);
+        sss_utf8_free(lower);
+    }
+
     return ret;
 }
 

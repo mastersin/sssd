@@ -49,11 +49,7 @@
 #define NO_DOMAINS_ARE_PUBLIC "none"
 #define DEFAULT_ALLOWED_UIDS ALL_UIDS_ALLOWED
 #define DEFAULT_PAM_CERT_AUTH false
-#ifdef HAVE_NSS
-#define DEFAULT_PAM_CERT_DB_PATH SYSCONFDIR"/pki/nssdb"
-#else
 #define DEFAULT_PAM_CERT_DB_PATH SYSCONFDIR"/sssd/pki/sssd_auth_ca_db.pem"
-#endif
 #define DEFAULT_PAM_INITGROUPS_SCHEME "no_session"
 
 static errno_t get_trusted_uids(struct pam_ctx *pctx)
@@ -288,7 +284,7 @@ static int pam_process_init(TALLOC_CTX *mem_ctx,
                                 CONFDB_PAM_CONF_ENTRY,
                                 CONFDB_PAM_CERT_DB_PATH,
                                 DEFAULT_PAM_CERT_DB_PATH,
-                                &pctx->nss_db);
+                                &pctx->ca_db);
         if (ret != EOK) {
             DEBUG(SSSDBG_FATAL_FAILURE,
                   "Failed to determine if certificate based authentication is " \

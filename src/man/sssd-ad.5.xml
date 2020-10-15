@@ -477,9 +477,68 @@ DOM:dom1:(memberOf:1.2.840.113556.1.4.1941:=cn=nestedgroup,ou=groups,dc=example,
                             built-in Administrators group if no GPO rules
                             apply to them.
                         </para>
+
                         <para>
                             Default: False
                         </para>
+
+                        <para>
+                            The following 2 tables should illustrate when a user
+                            is allowed or rejected based on the allow and deny
+                            login rights defined on the server-side and the
+                            setting of ad_gpo_implicit_deny.
+                        </para>
+                        <informaltable frame='all'>
+                        <tgroup cols='3'>
+                        <colspec colname='c1' align='center'/>
+                        <colspec colname='c2' align='center'/>
+                        <colspec colname='c3' align='center'/>
+                        <thead>
+                        <row><entry namest='c1' nameend='c3' align='center'>
+                            ad_gpo_implicit_deny = False (default)</entry></row>
+                        <row><entry>allow-rules</entry><entry>deny-rules</entry>
+                            <entry>results</entry></row>
+                        </thead>
+                        <tbody>
+                        <row><entry>missing</entry><entry>missing</entry>
+                            <entry><para>all users are allowed</para>
+                            </entry></row>
+                        <row><entry>missing</entry><entry>present</entry>
+                            <entry><para>only users not in deny-rules are
+                            allowed</para></entry></row>
+                        <row><entry>present</entry><entry>missing</entry>
+                            <entry><para>only users in allow-rules are
+                            allowed</para></entry></row>
+                        <row><entry>present</entry><entry>present</entry>
+                            <entry><para>only users in allow-rules and not in
+                            deny-rules are allowed</para></entry></row>
+                        </tbody></tgroup></informaltable>
+
+                        <informaltable frame='all'>
+                        <tgroup cols='3'>
+                        <colspec colname='c1' align='center'/>
+                        <colspec colname='c2' align='center'/>
+                        <colspec colname='c3' align='center'/>
+                        <thead>
+                        <row><entry namest='c1' nameend='c3' align='center'>
+                            ad_gpo_implicit_deny = True</entry></row>
+                        <row><entry>allow-rules</entry><entry>deny-rules</entry>
+                            <entry>results</entry></row>
+                        </thead>
+                        <tbody>
+                        <row><entry>missing</entry><entry>missing</entry>
+                            <entry><para>no users are allowed</para>
+                            </entry></row>
+                        <row><entry>missing</entry><entry>present</entry>
+                            <entry><para>no users are allowed</para>
+                            </entry></row>
+                        <row><entry>present</entry><entry>missing</entry>
+                            <entry><para>only users in allow-rules are
+                            allowed</para></entry></row>
+                        <row><entry>present</entry><entry>present</entry>
+                            <entry><para>only users in allow-rules and not in
+                            deny-rules are allowed</para></entry></row>
+                        </tbody></tgroup></informaltable>
                     </listitem>
                 </varlistentry>
 
@@ -1047,6 +1106,55 @@ ad_gpo_map_deny = +my_pam_service
                 </varlistentry>
 
                 <varlistentry>
+                    <term>ad_allow_remote_domain_local_groups (boolean)</term>
+                    <listitem>
+                        <para>
+                            If this option is set to <quote>true</quote> SSSD
+                            will not filter out Domain Local groups from remote
+                            domains in the AD forest. By default they are
+                            filtered out e.g. when following a nested group
+                            hierarchy in remote domains because they are not
+                            valid in the local domain. To be compatible with
+                            other solutions which make AD users and groups
+                            available on Linux client this option was added.
+                        </para>
+                        <para>
+                            Please note that setting this option to
+                            <quote>true</quote> will be against the intention of
+                            Domain Local group in Active Directory and
+                            <emphasis>SHOULD ONLY BE USED TO FACILITATE
+                            MIGRATION FROM OTHER SOLUTIONS</emphasis>. Although
+                            the group exists and user can be member of the group
+                            the intention is that the group should be only used
+                            in the domain it is defined and in no others. Since
+                            there is only one type of POSIX groups the only way
+                            to achieve this on the Linux side is to ignore those
+                            groups. This is also done by Active Directory as can
+                            be seen in the PAC of the Kerberos ticket for a
+                            local service or in tokenGroups requests where
+                            remote Domain Local groups are missing as well.
+                        </para>
+                        <para>
+                            Given the comments above, if this option is set to
+                            <quote>true</quote> the tokenGroups request must be
+                            disabled by setting
+                            <quote>ldap_use_tokengroups</quote> to
+                            <quote>false</quote> to get consistent
+                            group-memberships of a users. Additionally the
+                            Global Catalog lookup should be skipped as well by
+                            setting <quote>ad_enable_gc</quote> to
+                            <quote>false</quote>. Finally it might be necessary
+                            to modify <quote>ldap_group_nesting_level</quote> if
+                            the remote Domain Local groups can only be found
+                            with a deeper nesting level.
+                        </para>
+                        <para>
+                            Default: False
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>dyndns_update (boolean)</term>
                     <listitem>
                         <para>
@@ -1161,6 +1269,21 @@ ad_gpo_map_deny = +my_pam_service
                         </para>
                         <para>
                             Default: GSS-TSIG
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>dyndns_auth_ptr (string)</term>
+                    <listitem>
+                        <para>
+                            Whether the nsupdate utility should use GSS-TSIG
+                            authentication for secure PTR updates with the DNS
+                            server, insecure updates can be sent by setting
+                            this option to 'none'.
+                        </para>
+                        <para>
+                            Default: Same as dyndns_auth
                         </para>
                     </listitem>
                 </varlistentry>

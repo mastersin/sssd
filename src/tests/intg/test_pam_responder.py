@@ -31,6 +31,7 @@ import shutil
 
 import config
 import intg.ds_openldap
+import kdc
 
 import pytest
 
@@ -177,6 +178,78 @@ def format_pam_cert_auth_conf_name_format(config):
     """).format(**locals())
 
 
+def format_pam_krb5_auth(config, kdc_instance):
+    """Format SSSD configuration for krb5 authentication"""
+    return unindent("""\
+        [sssd]
+        debug_level = 10
+        domains = krb5_auth
+        services = pam, nss
+
+        [nss]
+        debug_level = 10
+
+        [pam]
+        debug_level = 10
+
+        [domain/krb5_auth]
+        debug_level = 10
+        id_provider = files
+        auth_provider = krb5
+
+        krb5_realm = PAMKRB5TEST
+        krb5_server = localhost:{kdc_instance.kdc_port}
+    """).format(**locals())
+
+
+def format_pam_krb5_auth_domains(config, kdc_instance):
+    """Format SSSD configuration for krb5 authentication"""
+    return unindent("""\
+        [sssd]
+        debug_level = 10
+        domains = wrong.dom1, wrong.dom2, krb5_auth, wrong.dom3
+        services = pam, nss
+
+        [nss]
+        debug_level = 10
+
+        [pam]
+        debug_level = 10
+
+        [domain/wrong.dom1]
+        debug_level = 10
+        id_provider = files
+        auth_provider = krb5
+
+        krb5_realm = WRONG1REALM
+        krb5_server = localhost:{kdc_instance.kdc_port}
+
+        [domain/wrong.dom2]
+        debug_level = 10
+        id_provider = files
+        auth_provider = krb5
+
+        krb5_realm = WRONG2REALM
+        krb5_server = localhost:{kdc_instance.kdc_port}
+
+        [domain/wrong.dom3]
+        debug_level = 10
+        id_provider = files
+        auth_provider = krb5
+
+        krb5_realm = WRONG3REALM
+        krb5_server = localhost:{kdc_instance.kdc_port}
+
+        [domain/krb5_auth]
+        debug_level = 10
+        id_provider = files
+        auth_provider = krb5
+
+        krb5_realm = PAMKRB5TEST
+        krb5_server = localhost:{kdc_instance.kdc_port}
+    """).format(**locals())
+
+
 def create_conf_file(contents):
     """Create sssd.conf with specified contents"""
     conf = open(config.CONF_PATH, "w")
@@ -240,49 +313,6 @@ def create_sssd_fixture(request):
     request.addfinalizer(cleanup_sssd_process)
 
 
-def create_nssdb():
-    os.mkdir(config.SYSCONFDIR + "/pki")
-    os.mkdir(config.SYSCONFDIR + "/pki/nssdb")
-    if subprocess.call(["certutil", "-N", "-d",
-                        "sql:" + config.SYSCONFDIR + "/pki/nssdb/",
-                        "--empty-password"]) != 0:
-        raise Exception("certutil failed")
-
-    pkcs11_txt = open(config.SYSCONFDIR + "/pki/nssdb/pkcs11.txt", "w")
-    pkcs11_txt.write("library=libsoftokn3.so\nname=soft\n" +
-                     "parameters=configdir='sql:" + config.ABS_BUILDDIR +
-                     "/../test_CA/p11_nssdb' " +
-                     "dbSlotDescription='SSSD Test Slot' " +
-                     "dbTokenDescription='SSSD Test Token' " +
-                     "secmod='secmod.db' flags=readOnly)\n\n")
-    pkcs11_txt.close()
-
-
-def create_nssdb_no_cert():
-    os.mkdir(config.SYSCONFDIR + "/pki")
-    os.mkdir(config.SYSCONFDIR + "/pki/nssdb")
-    if subprocess.call(["certutil", "-N", "-d",
-                        "sql:" + config.SYSCONFDIR + "/pki/nssdb/",
-                        "--empty-password"]) != 0:
-        raise Exception("certutil failed")
-
-
-def cleanup_nssdb():
-    shutil.rmtree(config.SYSCONFDIR + "/pki")
-
-
-def create_nssdb_fixture(request):
-    if 'USE_NSS' in os.environ and os.environ['USE_NSS'] == '1':
-        create_nssdb()
-        request.addfinalizer(cleanup_nssdb)
-
-
-def create_nssdb_no_cert_fixture(request):
-    if 'USE_NSS' in os.environ and os.environ['USE_NSS'] == '1':
-        create_nssdb_no_cert()
-        request.addfinalizer(cleanup_nssdb)
-
-
 @pytest.fixture
 def simple_pam_cert_auth(request, passwd_ops_setup):
     """Setup SSSD with pam_cert_auth=True"""
@@ -290,7 +320,6 @@ def simple_pam_cert_auth(request, passwd_ops_setup):
     conf = format_pam_cert_auth_conf(config)
     create_conf_fixture(request, conf)
     create_sssd_fixture(request)
-    create_nssdb_fixture(request)
     passwd_ops_setup.useradd(**USER1)
     passwd_ops_setup.useradd(**USER2)
     return None
@@ -307,7 +336,6 @@ def simple_pam_cert_auth_no_cert(request, passwd_ops_setup):
     conf = format_pam_cert_auth_conf(config)
     create_conf_fixture(request, conf)
     create_sssd_fixture(request)
-    create_nssdb_no_cert_fixture(request)
 
     os.environ['SOFTHSM2_CONF'] = old_softhsm2_conf
 
@@ -324,7 +352,6 @@ def simple_pam_cert_auth_name_format(request, passwd_ops_setup):
     conf = format_pam_cert_auth_conf_name_format(config)
     create_conf_fixture(request, conf)
     create_sssd_fixture(request)
-    create_nssdb_fixture(request)
     passwd_ops_setup.useradd(**USER1)
     passwd_ops_setup.useradd(**USER2)
     return None
@@ -675,3 +702,126 @@ def test_sc_auth_name_format(simple_pam_cert_auth_name_format, env_for_sssctl):
 
     assert err.find(r"pam_authenticate for user [auth_only\user1]: " +
                     "Success") != -1
+
+
+@pytest.fixture
+def kdc_instance(request):
+    """Kerberos server instance fixture"""
+    kdc_instance = kdc.KDC(config.PREFIX, "PAMKRB5TEST")
+    try:
+        kdc_instance.set_up()
+        kdc_instance.start_kdc()
+    except:
+        kdc_instance.teardown()
+        raise
+    request.addfinalizer(kdc_instance.teardown)
+    return kdc_instance
+
+
+@pytest.fixture
+def setup_krb5(request, kdc_instance, passwd_ops_setup):
+    """
+    Setup SSSD for Kerberos authentication with 2 users with different
+    passwords
+    """
+    conf = format_pam_krb5_auth(config, kdc_instance)
+    create_conf_fixture(request, conf)
+    create_sssd_fixture(request)
+    passwd_ops_setup.useradd(**USER1)
+    passwd_ops_setup.useradd(**USER2)
+    kdc_instance.add_principal("user1", "Secret123User1")
+    kdc_instance.add_principal("user2", "Secret123User2")
+    return None
+
+
+def test_krb5_auth(setup_krb5, env_for_sssctl):
+    """
+    Test basic Kerberos authentication, check for authentication failure when
+    a wrong password is used
+    """
+    sssctl = subprocess.Popen(["sssctl", "user-checks", "user1",
+                               "--action=auth",
+                               "--service=pam_sss_service"],
+                              universal_newlines=True,
+                              env=env_for_sssctl, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    try:
+        out, err = sssctl.communicate(input="Secret123User1")
+    except:
+        sssctl.kill()
+        out, err = sssctl.communicate()
+
+    sssctl.stdin.close()
+    sssctl.stdout.close()
+
+    if sssctl.wait() != 0:
+        raise Exception("sssctl failed")
+
+    assert err.find(r"pam_authenticate for user [user1]: Success") != -1
+
+    sssctl = subprocess.Popen(["sssctl", "user-checks", "user2",
+                               "--action=auth",
+                               "--service=pam_sss_service"],
+                              universal_newlines=True,
+                              env=env_for_sssctl, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    try:
+        out, err = sssctl.communicate(input="Secret123User1")
+    except:
+        sssctl.kill()
+        out, err = sssctl.communicate()
+
+    sssctl.stdin.close()
+    sssctl.stdout.close()
+
+    if sssctl.wait() != 0:
+        raise Exception("sssctl failed")
+
+    assert err.find(r"pam_authenticate for user [user2]: " +
+                    "Authentication failure") != -1
+
+
+@pytest.fixture
+def setup_krb5_domains(request, kdc_instance, passwd_ops_setup):
+    """
+    Setup SSSD for Kerberos authentication with 2 users with different
+    passwords and multiple domains configured in sssd.conf
+    """
+    conf = format_pam_krb5_auth_domains(config, kdc_instance)
+    create_conf_fixture(request, conf)
+    create_sssd_fixture(request)
+    passwd_ops_setup.useradd(**USER1)
+    passwd_ops_setup.useradd(**USER2)
+    kdc_instance.add_principal("user1", "Secret123User1")
+    kdc_instance.add_principal("user2", "Secret123User2")
+    return None
+
+
+def test_krb5_auth_domains(setup_krb5_domains, env_for_sssctl):
+    """
+    Test basic Kerberos authentication with pam_sss 'domains' option, make
+    sure not-matching domains are skipped even if the user exists in that
+    domain
+    """
+    sssctl = subprocess.Popen(["sssctl", "user-checks", "user1",
+                               "--action=auth",
+                               "--service=pam_sss_domains"],
+                              universal_newlines=True,
+                              env=env_for_sssctl, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    try:
+        out, err = sssctl.communicate(input="Secret123User1")
+    except:
+        sssctl.kill()
+        out, err = sssctl.communicate()
+
+    sssctl.stdin.close()
+    sssctl.stdout.close()
+
+    if sssctl.wait() != 0:
+        raise Exception("sssctl failed")
+
+    assert err.find(r"pam_authenticate for user [user1]: Success") != -1

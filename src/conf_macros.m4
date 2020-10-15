@@ -377,10 +377,10 @@ AC_DEFUN([WITH_KRB5_CONF],
 AC_DEFUN([WITH_PYTHON2_BINDINGS],
   [ AC_ARG_WITH([python2-bindings],
                 [AC_HELP_STRING([--with-python2-bindings],
-                                [Whether to build python2 bindings [yes]])
+                                [Whether to build python2 bindings [no]])
                 ],
                 [],
-                [with_python2_bindings=yes]
+                [with_python2_bindings=no]
                )
     if test x"$with_python2_bindings" = xyes; then
         AC_SUBST([HAVE_PYTHON2_BINDINGS], [yes])
@@ -554,34 +554,6 @@ AC_DEFUN([WITH_LIBNL],
         fi
     fi
   ])
-
-AC_DEFUN([WITH_CRYPTO],
-    [ AC_ARG_WITH([crypto],
-                  [AC_HELP_STRING([--with-crypto=CRYPTO_LIB],
-                                  [The cryptographic library to use (libcrypto|nss). The default is libcrypto (OpenSSL). NSS is deprecated.]
-                                 )
-                  ],
-                  [],
-                  with_crypto=libcrypto
-                 )
-
-      cryptolib=""
-      if test x"$with_crypto" != x; then
-          if test x"$with_crypto" = xnss || \
-          test x"$with_crypto" = xlibcrypto; then
-              cryptolib="$with_crypto";
-              if test x"$with_crypto" = xnss; then
-                  AC_MSG_WARN([NSS is deprecated crypto backend and it support will be dropped in upcoming releases.])
-              fi
-          else
-              AC_MSG_ERROR([Illegal value -$with_crypto- for option --with-crypto])
-          fi
-      else
-          cryptolib=libcrypto
-      fi
-      AM_CONDITIONAL([HAVE_NSS], [test x"$cryptolib" = xnss])
-      AM_CONDITIONAL([HAVE_LIBCRYPTO], [test x"$cryptolib" = xlibcrypto])
-    ])
 
 AC_DEFUN([WITH_NOLOGIN_SHELL],
   [ AC_ARG_WITH([nologin-shell],

@@ -287,6 +287,19 @@ _nss_sss_getnetbyaddr_r(uint32_t addr, int type,
     size_t ctr = 0;
     socklen_t addrlen;
 
+    /* addr is in host byte order, but nss_protocol_parse_addr and inet_ntop
+     * expects the buffer in network byte order */
+    addr = htonl(addr);
+
+    if (type == AF_UNSPEC) {
+        char addrbuf[INET_ADDRSTRLEN];
+
+        /* Try to parse to IPv4 */
+        if (inet_ntop(AF_INET, &addr, addrbuf, INET_ADDRSTRLEN)) {
+            type = AF_INET;
+        }
+    }
+
     if (type != AF_INET) {
         *errnop = EAFNOSUPPORT;
         *h_errnop = NETDB_INTERNAL;

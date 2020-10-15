@@ -21,7 +21,19 @@
 #ifndef __AD_SRV_H__
 #define __AD_SRV_H__
 
-struct ad_srv_plugin_ctx;
+struct ad_srv_plugin_ctx {
+    struct be_ctx *be_ctx;
+    struct be_resolv_ctx *be_res;
+    enum host_database *host_dbs;
+    struct sdap_options *opts;
+    const char *hostname;
+    const char *ad_domain;
+    const char *ad_site_override;
+    const char *current_site;
+    const char *current_forest;
+
+    bool renew_site;
+};
 
 struct ad_srv_plugin_ctx *
 ad_srv_plugin_ctx_init(TALLOC_CTX *mem_ctx,
@@ -31,8 +43,7 @@ ad_srv_plugin_ctx_init(TALLOC_CTX *mem_ctx,
                        struct sdap_options *opts,
                        const char *hostname,
                        const char *ad_domain,
-                       const char *ad_site_override,
-                       bool ad_use_ldaps);
+                       const char *ad_site_override);
 
 struct tevent_req *ad_srv_plugin_send(TALLOC_CTX *mem_ctx,
                                        struct tevent_context *ev,
@@ -53,5 +64,15 @@ errno_t ad_srv_plugin_recv(TALLOC_CTX *mem_ctx,
 char *ad_site_dns_discovery_domain(TALLOC_CTX *mem_ctx,
                                    const char *site,
                                    const char *domain);
+
+struct tevent_req *ad_cldap_ping_send(TALLOC_CTX *mem_ctx,
+                                      struct tevent_context *ev,
+                                      struct ad_srv_plugin_ctx *srv_ctx,
+                                      const char *discovery_domain);
+
+errno_t ad_cldap_ping_recv(TALLOC_CTX *mem_ctx,
+                           struct tevent_req *req,
+                           const char **_site,
+                           const char **_forest);
 
 #endif /* __AD_SRV_H__ */

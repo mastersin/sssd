@@ -21,6 +21,7 @@
 #include "util/cert.h"
 #include "util/crypto/sss_crypto.h"
 #include "util/child_common.h"
+#include "lib/certmap/sss_certmap.h"
 
 struct cert_to_ssh_key_state {
     struct tevent_context *ev;
@@ -64,7 +65,7 @@ struct tevent_req *cert_to_ssh_key_send(TALLOC_CTX *mem_ctx,
     }
 
     if (ca_db == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Missing NSS DB.\n");
+        DEBUG(SSSDBG_CRIT_FAILURE, "Missing CA DB path.\n");
         ret = EINVAL;
         goto done;
     }
@@ -101,7 +102,7 @@ struct tevent_req *cert_to_ssh_key_send(TALLOC_CTX *mem_ctx,
     arg_c = 1;
     state->extra_args[arg_c++] = "--certificate";
     state->extra_args[arg_c++] = ca_db;
-    state->extra_args[arg_c++] = "--nssdb";
+    state->extra_args[arg_c++] = "--ca_db";
     if (verify_opts != NULL) {
         state->extra_args[arg_c++] = verify_opts;
         state->extra_args[arg_c++] = "--verify";

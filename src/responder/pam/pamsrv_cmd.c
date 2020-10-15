@@ -752,9 +752,6 @@ static int pam_reply_sr_export_shell(struct pam_auth_req *preq,
     if (preq->cctx->rctx->sr_conf.scope ==
             SESSION_RECORDING_SCOPE_NONE) {
         enabled = false;
-    } else if (preq->cctx->rctx->sr_conf.scope ==
-            SESSION_RECORDING_SCOPE_ALL) {
-        enabled = true;
     } else {
         enabled_str = ldb_msg_find_attr_as_string(preq->user_obj,
                                                   SYSDB_SESSION_RECORDING, NULL);
@@ -982,6 +979,7 @@ static void pam_reply(struct pam_auth_req *preq)
     /* If this was a successful login, save the lastLogin time */
     if (pd->cmd == SSS_PAM_AUTHENTICATE &&
         pd->pam_status == PAM_SUCCESS &&
+        preq->domain &&
         preq->domain->cache_credentials &&
         !pd->offline_auth &&
         !pd->last_auth_saved &&
@@ -1405,7 +1403,7 @@ static errno_t check_cert(TALLOC_CTX *mctx,
     }
 
     req = pam_check_cert_send(mctx, ev,
-                              pctx->nss_db, p11_child_timeout,
+                              pctx->ca_db, p11_child_timeout,
                               cert_verification_opts, pctx->sss_certmap_ctx,
                               uri, pd);
     if (req == NULL) {
@@ -1905,6 +1903,7 @@ static int pam_check_user_search(struct pam_auth_req *preq)
 
     cache_req_data_set_bypass_cache(data, false);
     cache_req_data_set_bypass_dp(data, true);
+    cache_req_data_set_requested_domains(data, preq->pd->requested_domains);
 
     dpreq = cache_req_send(preq,
                            preq->cctx->rctx->ev,
@@ -2013,6 +2012,7 @@ static void pam_check_user_search_next(struct tevent_req *req)
     }
     cache_req_data_set_bypass_cache(data, true);
     cache_req_data_set_bypass_dp(data, false);
+    cache_req_data_set_requested_domains(data, preq->pd->requested_domains);
 
     dpreq = cache_req_send(preq,
                            preq->cctx->rctx->ev,

@@ -167,11 +167,7 @@
 #define CONFDB_SSH_KNOWN_HOSTS_TIMEOUT "ssh_known_hosts_timeout"
 #define CONFDB_DEFAULT_SSH_KNOWN_HOSTS_TIMEOUT 180
 #define CONFDB_SSH_CA_DB "ca_db"
-#ifdef HAVE_NSS
-#define CONFDB_DEFAULT_SSH_CA_DB SYSCONFDIR"/pki/nssdb"
-#else
 #define CONFDB_DEFAULT_SSH_CA_DB SYSCONFDIR"/sssd/pki/sssd_auth_ca_db.pem"
-#endif
 #define CONFDB_SSH_USE_CERT_KEYS "ssh_use_certificate_keys"
 #define CONFDB_DEFAULT_SSH_USE_CERT_KEYS true
 #define CONFDB_SSH_USE_CERT_RULES "ssh_use_certificate_matching_rules"
@@ -190,6 +186,8 @@
 #define CONFDB_SESSION_RECORDING_SCOPE "scope"
 #define CONFDB_SESSION_RECORDING_USERS "users"
 #define CONFDB_SESSION_RECORDING_GROUPS "groups"
+#define CONFDB_SESSION_RECORDING_EXCLUDE_USERS "exclude_users"
+#define CONFDB_SESSION_RECORDING_EXCLUDE_GROUPS "exclude_groups"
 
 /* Domains */
 #define CONFDB_DOMAIN_ENABLED "enabled"
@@ -243,6 +241,7 @@
 #define CONFDB_DOMAIN_PWD_EXPIRATION_WARNING "pwd_expiration_warning"
 #define CONFDB_DOMAIN_REFRESH_EXPIRED_INTERVAL "refresh_expired_interval"
 #define CONFDB_DOMAIN_OFFLINE_TIMEOUT "offline_timeout"
+#define CONFDB_DOMAIN_OFFLINE_TIMEOUT_MAX "offline_timeout_max"
 #define CONFDB_DOMAIN_SUBDOMAIN_INHERIT "subdomain_inherit"
 #define CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT "cached_auth_timeout"
 #define CONFDB_DOMAIN_TYPE "domain_type"

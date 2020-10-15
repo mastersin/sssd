@@ -162,6 +162,9 @@ class SSSDOptions(object):
         'groups': _('A comma-separated list of groups, members of which should have session recording enabled. '
                     'Matches group names as returned by NSS. I.e. after the possible space replacement, case changes, '
                     'etc.'),
+        'exclude_users': _('A comma-separated list of users to be excluded from recording, only when scope=all'),
+        'exclude_groups': _('A comma-separated list of groups, members of which should be excluded from recording, '
+                            ' only when scope=all. '),
 
         # [provider]
         'id_provider': _('Identity provider'),
@@ -319,6 +322,7 @@ class SSSDOptions(object):
         'ad_update_samba_machine_account_password': _('Whether to update the machine account password in the Samba '
                                                       'database'),
         'ad_use_ldaps': _('Use LDAPS port for LDAP and Global Catalog requests'),
+        'ad_allow_remote_domain_local_groups' : _('Do not filter domain local groups from other domains'),
 
         # [provider/krb5]
         'krb5_kdcip': _('Kerberos server address'),
@@ -484,6 +488,7 @@ class SSSDOptions(object):
         'ldap_max_id': _('Set upper boundary for allowed IDs from the LDAP server'),
         'ldap_pwdlockout_dn': _('DN for ppolicy queries'),
         'wildcard_limit': _('How many maximum entries to fetch during a wildcard request'),
+        'ldap_library_debug_level': _('Set libldap debug level'),
 
         # [provider/ldap/auth]
         'ldap_pwd_policy': _('Policy to evaluate the password expiration'),

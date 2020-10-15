@@ -25,15 +25,13 @@
 
 #include <popt.h>
 #include <tevent.h>
-#ifdef HAVE_LIBCRYPTO
 #include <openssl/objects.h>
 #include <openssl/crypto.h>
-#endif
 
 #include "util/cert.h"
 #include "tests/cmocka/common_mock.h"
-#include "util/crypto/nss/nss_util.h"
 #include "util/crypto/sss_crypto.h"
+#include "responder/ssh/ssh_private.h"
 
 #ifdef HAVE_TEST_CA
 #include "tests/test_CA/SSSD_test_cert_pubsshkey_0001.h"
@@ -392,11 +390,7 @@ void test_cert_to_ssh_key_send(void **state)
     assert_non_null(ev);
 
     req = cert_to_ssh_key_send(ts, ev, NULL, P11_CHILD_TIMEOUT,
-#ifdef HAVE_NSS
-                            "sql:" ABS_BUILD_DIR "/src/tests/test_CA/p11_nssdb",
-#else
                             ABS_BUILD_DIR "/src/tests/test_CA/SSSD_test_CA.pem",
-#endif
                             NULL, 1, &val[0], NULL);
     assert_non_null(req);
 
@@ -466,11 +460,7 @@ void test_cert_to_ssh_2keys_send(void **state)
     assert_non_null(ev);
 
     req = cert_to_ssh_key_send(ts, ev, NULL, P11_CHILD_TIMEOUT,
-#ifdef HAVE_NSS
-                            "sql:" ABS_BUILD_DIR "/src/tests/test_CA/p11_nssdb",
-#else
                             ABS_BUILD_DIR "/src/tests/test_CA/SSSD_test_CA.pem",
-#endif
                             NULL, 2, &val[0], NULL);
     assert_non_null(req);
 
@@ -549,11 +539,7 @@ void test_cert_to_ssh_2keys_invalid_send(void **state)
     assert_non_null(ev);
 
     req = cert_to_ssh_key_send(ts, ev, NULL, P11_CHILD_TIMEOUT,
-#ifdef HAVE_NSS
-                            "sql:" ABS_BUILD_DIR "/src/tests/test_CA/p11_nssdb",
-#else
                             ABS_BUILD_DIR "/src/tests/test_CA/SSSD_test_CA.pem",
-#endif
                             NULL, 3, &val[0], NULL);
     assert_non_null(req);
 
@@ -615,11 +601,7 @@ void test_ec_cert_to_ssh_key_send(void **state)
     assert_non_null(ev);
 
     req = cert_to_ssh_key_send(ts, ev, NULL, P11_CHILD_TIMEOUT,
-#ifdef HAVE_NSS
-                    "sql:" ABS_BUILD_DIR "/src/tests/test_ECC_CA/p11_ecc_nssdb",
-#else
                     ABS_BUILD_DIR "/src/tests/test_ECC_CA/SSSD_test_ECC_CA.pem",
-#endif
                     NULL, 1, &val[0], NULL);
     assert_non_null(req);
 
@@ -692,11 +674,7 @@ void test_cert_to_ssh_2keys_with_certmap_send(void **state)
     assert_non_null(ev);
 
     req = cert_to_ssh_key_send(ts, ev, NULL, P11_CHILD_TIMEOUT,
-#ifdef HAVE_NSS
-                            "sql:" ABS_BUILD_DIR "/src/tests/test_CA/p11_nssdb",
-#else
                             ABS_BUILD_DIR "/src/tests/test_CA/SSSD_test_CA.pem",
-#endif
                             ts->sss_certmap_ctx, 2, &val[0], NULL);
     assert_non_null(req);
 
@@ -770,11 +748,7 @@ void test_cert_to_ssh_2keys_with_certmap_2_send(void **state)
     assert_non_null(ev);
 
     req = cert_to_ssh_key_send(ts, ev, NULL, P11_CHILD_TIMEOUT,
-#ifdef HAVE_NSS
-                            "sql:" ABS_BUILD_DIR "/src/tests/test_CA/p11_nssdb",
-#else
                             ABS_BUILD_DIR "/src/tests/test_CA/SSSD_test_CA.pem",
-#endif
                             ts->sss_certmap_ctx, 2, &val[0], NULL);
     assert_non_null(req);
 
@@ -848,15 +822,7 @@ int main(int argc, const char *argv[])
 
     ret = cmocka_run_group_tests(tests, NULL, NULL);
 
-#ifdef HAVE_LIBCRYPTO
     CRYPTO_cleanup_all_ex_data(); /* to make Valgrind happy */
-#endif
-
-#ifdef HAVE_NSS
-    /* Cleanup NSS and NSPR to make Valgrind happy. */
-    nspr_nss_cleanup();
-#endif
-
 
     return ret;
 }

@@ -58,6 +58,7 @@ struct dp_option ad_basic_opts[] = {
     { "ad_machine_account_password_renewal_opts", DP_OPT_STRING, { "86400:750" }, NULL_STRING },
     { "ad_update_samba_machine_account_password", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "ad_use_ldaps", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
+    { "ad_allow_remote_domain_local_groups", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     DP_OPTION_TERMINATOR
 };
 
@@ -160,6 +161,7 @@ struct dp_option ad_def_ldap_opts[] = {
     { "ldap_max_id", DP_OPT_NUMBER, NULL_NUMBER, NULL_NUMBER},
     { "ldap_pwdlockout_dn", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "wildcard_limit", DP_OPT_NUMBER, { .number = 1000 }, NULL_NUMBER},
+    { "ldap_library_debug_level", DP_OPT_NUMBER, NULL_NUMBER, NULL_NUMBER},
     DP_OPTION_TERMINATOR
 };
 
@@ -309,6 +311,7 @@ struct dp_option ad_dyndns_opts[] = {
     { "dyndns_update_ptr", DP_OPT_BOOL, BOOL_TRUE, BOOL_TRUE },
     { "dyndns_force_tcp", DP_OPT_BOOL, BOOL_FALSE, BOOL_FALSE },
     { "dyndns_auth", DP_OPT_STRING, { "gss-tsig" }, NULL_STRING },
+    { "dyndns_auth_ptr", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     { "dyndns_server", DP_OPT_STRING, NULL_STRING, NULL_STRING },
     DP_OPTION_TERMINATOR
 };

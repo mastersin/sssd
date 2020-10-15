@@ -1117,6 +1117,11 @@ host/*
                             your setup does not in fact require the use
                             of referrals, setting this option to false
                             might bring a noticeable performance improvement.
+                            Setting this option to false is therefore recommended
+                            in case the SSSD LDAP provider is used together with
+                            Microsoft Active Directory as a backend. Even if SSSD
+                            would be able to follow the referral to a different AD
+                            DC no additional data would be available.
                         </para>
                         <para>
                             Default: true
@@ -1473,6 +1478,25 @@ ldap_access_filter = (employeeType=admin)
                         </para>
                         <para>
                             Default: 1000 (often the size of one page)
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
+                    <term>ldap_library_debug_level (integer)</term>
+                    <listitem>
+                        <para>
+                            Switches on libldap debugging with the given level.
+                            The libldap debug messages will be written
+                            independent of the general debug_level.
+                        </para>
+                        <para>
+                            OpenLDAP uses a bitmap to enable debugging for
+                            specific components, -1 will enable full debug
+                            output.
+                        </para>
+                        <para>
+                            Default: 0 (libldap debugging disabled)
                         </para>
                     </listitem>
                 </varlistentry>

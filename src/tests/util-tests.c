@@ -445,15 +445,18 @@ START_TEST(test_fd_nonblocking)
     errno_t ret;
 
     fd = open("/dev/null", O_RDONLY);
-    fail_unless(fd > 0);
+    fail_unless(fd > 0,
+                "open failed with errno: %d", errno);
 
     flags = fcntl(fd, F_GETFL, 0);
-    fail_if(flags & O_NONBLOCK);
+    fail_if(flags & O_NONBLOCK,
+            "Unexpected flag O_NONBLOCK[%x] in [%x]", O_NONBLOCK, flags);
 
     ret = sss_fd_nonblocking(fd);
-    fail_unless(ret == EOK);
+    fail_unless(ret == EOK, "sss_fd_nonblocking failed with error: %d", ret);
     flags = fcntl(fd, F_GETFL, 0);
-    fail_unless(flags & O_NONBLOCK);
+    fail_unless(flags & O_NONBLOCK,
+                "Flag O_NONBLOCK[%x] is missing in [%x]", O_NONBLOCK, flags);
     close(fd);
 }
 END_TEST
@@ -472,53 +475,19 @@ START_TEST(test_size_t_overflow)
 }
 END_TEST
 
-START_TEST(test_utf8_lowercase)
-{
-    const uint8_t munchen_utf8_upcase[] = { 'M', 0xC3, 0x9C, 'N', 'C', 'H', 'E', 'N', 0x0 };
-    const uint8_t munchen_utf8_lowcase[] = { 'm', 0xC3, 0xBC, 'n', 'c', 'h', 'e', 'n', 0x0 };
-    uint8_t *lcase;
-    size_t nlen;
-
-    lcase = sss_utf8_tolower(munchen_utf8_upcase,
-                             strlen((const char *)munchen_utf8_upcase),
-                             &nlen);
-    fail_if(strlen((const char *) munchen_utf8_upcase) != nlen); /* This is not true for utf8 strings in general */
-    fail_if(memcmp(lcase, munchen_utf8_lowcase, nlen));
-    sss_utf8_free(lcase);
-}
-END_TEST
-
-START_TEST(test_utf8_talloc_lowercase)
-{
-    const uint8_t munchen_utf8_upcase[] = { 'M', 0xC3, 0x9C, 'N', 'C', 'H', 'E', 'N', 0x0 };
-    const uint8_t munchen_utf8_lowcase[] = { 'm', 0xC3, 0xBC, 'n', 'c', 'h', 'e', 'n', 0x0 };
-    uint8_t *lcase;
-    size_t nsize;
-
-    TALLOC_CTX *test_ctx;
-    test_ctx = talloc_new(NULL);
-    fail_if(test_ctx == NULL);
-
-    lcase = sss_tc_utf8_tolower(test_ctx, munchen_utf8_upcase,
-                                strlen((const char *) munchen_utf8_upcase),
-                                &nsize);
-    fail_if(memcmp(lcase, munchen_utf8_lowcase, nsize));
-    talloc_free(test_ctx);
-}
-END_TEST
-
 START_TEST(test_utf8_talloc_str_lowercase)
 {
-    const uint8_t munchen_utf8_upcase[] = { 'M', 0xC3, 0x9C, 'N', 'C', 'H', 'E', 'N', 0x0 };
-    const uint8_t munchen_utf8_lowcase[] = { 'm', 0xC3, 0xBC, 'n', 'c', 'h', 'e', 'n', 0x0 };
+    const char munchen_utf8_upcase[] = { 'M', 0xC3, 0x9C, 'N', 'C', 'H', 'E', 'N', 0x0 };
+    const char munchen_utf8_lowcase[] = { 'm', 0xC3, 0xBC, 'n', 'c', 'h', 'e', 'n', 0x0 };
     char *lcase;
 
     TALLOC_CTX *test_ctx;
     test_ctx = talloc_new(NULL);
-    fail_if(test_ctx == NULL);
+    fail_if(test_ctx == NULL, "Failed to allocate memory");
 
-    lcase = sss_tc_utf8_str_tolower(test_ctx, (const char *) munchen_utf8_upcase);
-    fail_if(memcmp(lcase, munchen_utf8_lowcase, strlen(lcase)));
+    lcase = sss_tc_utf8_str_tolower(test_ctx, munchen_utf8_upcase);
+    fail_if(memcmp(lcase, munchen_utf8_lowcase, strlen(lcase)),
+            "Unexpected binary values");
     talloc_free(test_ctx);
 }
 END_TEST
@@ -569,7 +538,9 @@ START_TEST(test_murmurhash3_check)
                                  strlen(tests[i]),
                                  0xdeadbeef);
         for (j = 0; j < i; j++) {
-            fail_if(results[i] == results[j]);
+            fail_if(results[i] == results[j],
+                    "Values have to be different. '%"PRIu32"' == '%"PRIu32"'",
+                    results[i], results[j]);
         }
     }
 }
@@ -599,7 +570,7 @@ START_TEST(test_murmurhash3_random)
 
     result1 = murmurhash3(test, len + 1, init_seed);
     result2 = murmurhash3(test, len + 1, init_seed);
-    fail_if(result1 != result2);
+    ck_assert_int_eq(result1, result2);
 }
 END_TEST
 
@@ -651,7 +622,7 @@ START_TEST(test_atomicio_read_from_file)
 
     fail_unless(ret == 0, "Error %d while reading\n", ret);
     fail_unless(numread == bufsize,
-                "Read %d bytes expected %d\n", numread, bufsize);
+                "Read %zd bytes expected %zd\n", numread, bufsize);
     close(fd);
 }
 END_TEST
@@ -673,7 +644,7 @@ START_TEST(test_atomicio_read_from_small_file)
 
     fail_unless(ret == 0, "Error %d while writing\n", ret);
     fail_unless(numwritten == wsize,
-                "Wrote %d bytes expected %d\n", numwritten, wsize);
+                "Wrote %zd bytes expected %zd\n", numwritten, wsize);
 
     fsync(atio_fd);
     lseek(atio_fd, 0, SEEK_SET);
@@ -684,7 +655,7 @@ START_TEST(test_atomicio_read_from_small_file)
 
     fail_unless(ret == 0, "Error %d while reading\n", ret);
     fail_unless(numread == numwritten,
-                "Read %d bytes expected %d\n", numread, numwritten);
+                "Read %zd bytes expected %zd\n", numread, numwritten);
 }
 END_TEST
 
@@ -706,7 +677,7 @@ START_TEST(test_atomicio_read_from_large_file)
 
     fail_unless(ret == 0, "Error %d while writing\n", ret);
     fail_unless(numwritten == wsize,
-                "Wrote %d bytes expected %d\n", numwritten, wsize);
+                "Wrote %zd bytes expected %zd\n", numwritten, wsize);
 
     fsync(atio_fd);
     lseek(atio_fd, 0, SEEK_SET);
@@ -723,7 +694,7 @@ START_TEST(test_atomicio_read_from_large_file)
 
     fail_unless(ret == 0, "Error %d while reading\n", ret);
     fail_unless(total == numwritten,
-                "Read %d bytes expected %d\n", numread, numwritten);
+                "Read %zd bytes expected %zd\n", numread, numwritten);
 }
 END_TEST
 
@@ -744,7 +715,7 @@ START_TEST(test_atomicio_read_exact_sized_file)
 
     fail_unless(ret == 0, "Error %d while writing\n", ret);
     fail_unless(numwritten == wsize,
-                "Wrote %d bytes expected %d\n", numwritten, wsize);
+                "Wrote %zd bytes expected %zd\n", numwritten, wsize);
 
     fsync(atio_fd);
     lseek(atio_fd, 0, SEEK_SET);
@@ -755,7 +726,7 @@ START_TEST(test_atomicio_read_exact_sized_file)
 
     fail_unless(ret == 0, "Error %d while reading\n", ret);
     fail_unless(numread == numwritten,
-                "Read %d bytes expected %d\n", numread, numwritten);
+                "Read %zd bytes expected %zd\n", numread, numwritten);
 
     fail_unless(rbuf[8] == '\0', "String not NULL terminated?");
     fail_unless(strcmp(wbuf, rbuf) == 0, "Read something else than wrote?");
@@ -786,7 +757,7 @@ START_TEST(test_atomicio_read_from_empty_file)
 
     fail_unless(ret == 0, "Error %d while reading\n", ret);
     fail_unless(numread == 0,
-                "Read %d bytes expected 0\n", numread);
+                "Read %zd bytes expected 0\n", numread);
     close(fd);
 }
 END_TEST
@@ -1064,7 +1035,8 @@ static void convert_time_tz(const char* tz)
 
     if (tz) {
         ret = setenv("TZ", tz, 1);
-        fail_if(ret == -1);
+        fail_if(ret == -1,
+                "setenv failed with errno: %d", errno);
     }
 
     ret = sss_utc_to_time_t("20140801115742Z", "%Y%m%d%H%M%SZ", &unix_time);
@@ -1072,9 +1044,12 @@ static void convert_time_tz(const char* tz)
     /* restore */
     if (orig_tz != NULL) {
         ret2 = setenv("TZ", orig_tz, 1);
-        fail_if(ret2 == -1);
+        fail_if(ret2 == -1,
+                "setenv failed with errno: %d", errno);
     }
-    fail_unless(ret == EOK && difftime(1406894262, unix_time) == 0);
+    fail_unless(ret == EOK && difftime(1406894262, unix_time) == 0,
+                "Expecting 1406894262 got: ret[%d] unix_time[%ld]",
+                ret, unix_time);
 }
 
 START_TEST(test_convert_time)
@@ -1084,11 +1059,15 @@ START_TEST(test_convert_time)
     errno_t ret;
 
     ret = sss_utc_to_time_t("20150127133540P", format, &unix_time);
-    fail_unless(ret == ERR_TIMESPEC_NOT_SUPPORTED);
+    fail_unless(ret == ERR_TIMESPEC_NOT_SUPPORTED,
+                "sss_utc_to_time_t must fail with %d. got: %d",
+                ERR_TIMESPEC_NOT_SUPPORTED, ret);
     ret = sss_utc_to_time_t("0Z", format, &unix_time);
-    fail_unless(ret == EINVAL);
+    fail_unless(ret == EINVAL,
+                "sss_utc_to_time_t must fail with EINVAL. got: %d", ret);
     ret = sss_utc_to_time_t("000001010000Z", format, &unix_time);
-    fail_unless(ret == EINVAL);
+    fail_unless(ret == EINVAL,
+                "sss_utc_to_time_t must fail with EINVAL. got: %d", ret);
 
     /* test that results are still same no matter what timezone is set */
     convert_time_tz(NULL);
@@ -1151,8 +1130,6 @@ Suite *util_suite(void)
     tcase_set_timeout(tc_util, 60);
 
     TCase *tc_utf8 = tcase_create("utf8");
-    tcase_add_test (tc_utf8, test_utf8_lowercase);
-    tcase_add_test (tc_utf8, test_utf8_talloc_lowercase);
     tcase_add_test (tc_utf8, test_utf8_talloc_str_lowercase);
     tcase_add_test (tc_utf8, test_utf8_caseeq);
     tcase_add_test (tc_utf8, test_utf8_check);

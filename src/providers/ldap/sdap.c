@@ -501,7 +501,9 @@ int sdap_parse_entry(TALLOC_CTX *memctx,
             goto done;
         }
 
-        if (map) {
+        if (ret == ECANCELED) {
+            store = false;
+        } else if (map) {
             for (i = 1; i < attrs_num; i++) {
                 /* check if this attr is valid with the chosen schema */
                 if (!map[i].name) continue;
@@ -523,11 +525,6 @@ int sdap_parse_entry(TALLOC_CTX *memctx,
         } else {
             name = base_attr;
             store = true;
-        }
-
-        if (ret == ECANCELED) {
-            ret = EOK;
-            store = false;
         }
 
         if (store) {
@@ -773,6 +770,16 @@ errno_t sdap_parse_deref(TALLOC_CTX *mem_ctx,
             goto done;
         }
 
+        /* The dereference control seems to return the DN from the dereference
+         * attribute (e.g. member) so we can use it as key for the hash table
+         * later. */
+        ret = sysdb_attrs_add_string(res[mi]->attrs,
+                                     SYSDB_DN_FOR_MEMBER_HASH_TABLE, orig_dn);
+        if (ret) {
+            DEBUG(SSSDBG_OP_FAILURE, "sysdb_attrs_add_string failed.\n");
+            goto done;
+        }
+
         for (dval = dref->attrVals; dval != NULL; dval = dval->next) {
             DEBUG(SSSDBG_TRACE_INTERNAL,
                   "Dereferenced attribute: %s\n", dval->type);
@@ -814,6 +821,44 @@ errno_t sdap_parse_deref(TALLOC_CTX *mem_ctx,
 done:
     talloc_zfree(tmp_ctx);
     return ret;
+}
+
+static void sss_ldap_debug(const char *buf)
+{
+    sss_debug_fn(__FILE__, __LINE__, __FUNCTION__, SSSDBG_TRACE_ALL,
+                "libldap: %s", buf);
+}
+
+void setup_ldap_debug(struct dp_option *basic_opts)
+{
+    int ret;
+    int ldap_debug_level;
+
+    ldap_debug_level = dp_opt_get_int(basic_opts, SDAP_LIBRARY_DEBUG_LEVEL);
+    if (ldap_debug_level == 0) {
+        return;
+    }
+
+    DEBUG(SSSDBG_CONF_SETTINGS, "Setting LDAP library debug level [%d].\n",
+                                ldap_debug_level);
+
+    ret = ber_set_option(NULL, LBER_OPT_DEBUG_LEVEL, &ldap_debug_level);
+    if (ret != LBER_OPT_SUCCESS) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "Failed to set LBER_OPT_DEBUG_LEVEL, ignored .\n");
+    }
+
+    ret = ber_set_option(NULL,  LBER_OPT_LOG_PRINT_FN, sss_ldap_debug);
+    if (ret != LBER_OPT_SUCCESS) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "Failed to set LBER_OPT_LOG_PRINT_FN, ignored .\n");
+    }
+
+    ret = ldap_set_option(NULL, LDAP_OPT_DEBUG_LEVEL, &ldap_debug_level);
+    if (ret != LDAP_OPT_SUCCESS) {
+        DEBUG(SSSDBG_OP_FAILURE,
+              "Failed to set LDAP_OPT_DEBUG_LEVEL, ignored .\n");
+    }
 }
 
 errno_t setup_tls_config(struct dp_option *basic_opts)

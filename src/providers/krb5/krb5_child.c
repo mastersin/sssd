@@ -804,7 +804,11 @@ static krb5_error_code sss_krb5_responder(krb5_context ctx,
                     return kerr;
                 }
             } else if (strcmp(question_list[c],
-                       KRB5_RESPONDER_QUESTION_PKINIT) == 0) {
+                              KRB5_RESPONDER_QUESTION_PKINIT) == 0
+                        && (sss_authtok_get_type(kr->pd->authtok)
+                                               == SSS_AUTHTOK_TYPE_SC_PIN
+                            || sss_authtok_get_type(kr->pd->authtok)
+                                               == SSS_AUTHTOK_TYPE_SC_KEYPAD)) {
                 return answer_pkinit(ctx, kr, rctx);
             }
         }
@@ -849,7 +853,7 @@ static krb5_error_code sss_krb5_prompter(krb5_context context, void *data,
             }
         }
 
-        DEBUG(SSSDBG_CRIT_FAILURE, "Cannot handle password prompts.\n");
+        DEBUG(SSSDBG_FUNC_DATA, "Prompter interface isn't used for password prompts by SSSD.\n");
         return KRB5_LIBOS_CANTREADPWD;
     }
 
@@ -1286,13 +1290,13 @@ static errno_t add_ticket_times_and_upn_to_response(struct krb5_req *kr)
     ret = pam_add_response(kr->pd, SSS_KRB5_INFO_TGT_LIFETIME,
                            4*sizeof(int64_t), (uint8_t *) t);
     if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "pack_response_packet failed.\n");
+        DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
         goto done;
     }
 
     kerr = krb5_unparse_name_ext(kr->ctx, kr->creds->client, &upn, &upn_len);
     if (kerr != 0) {
-        DEBUG(SSSDBG_OP_FAILURE, "krb5_unparse_name failed.\n");
+        DEBUG(SSSDBG_OP_FAILURE, "krb5_unparse_name_ext failed.\n");
         goto done;
     }
 
@@ -1300,7 +1304,7 @@ static errno_t add_ticket_times_and_upn_to_response(struct krb5_req *kr)
                            (uint8_t *) upn);
     krb5_free_unparsed_name(kr->ctx, upn);
     if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "pack_response_packet failed.\n");
+        DEBUG(SSSDBG_CRIT_FAILURE, "pam_add_response failed.\n");
         goto done;
     }
 
@@ -1402,6 +1406,7 @@ static krb5_error_code validate_tgt(struct krb5_req *kr)
 
 
     krb5_verify_init_creds_opt_init(&opt);
+    krb5_verify_init_creds_opt_set_ap_req_nofail(&opt, TRUE);
     kerr = krb5_verify_init_creds(kr->ctx, kr->creds, validation_princ, keytab,
                                   &validation_ccache, &opt);
 
@@ -2027,7 +2032,7 @@ static errno_t changepw_child(struct krb5_req *kr, bool prelim)
                                        user_resp);
                 if (ret != EOK) {
                     DEBUG(SSSDBG_CRIT_FAILURE,
-                          "pack_response_packet failed.\n");
+                          "pam_add_response failed.\n");
                 }
             }
         }
@@ -2394,6 +2399,27 @@ static errno_t unpack_authtok(struct sss_auth_token *tok,
     return ret;
 }
 
+static const char *krb5_child_command_to_str(int cmd)
+{
+    switch (cmd) {
+    case SSS_PAM_AUTHENTICATE:
+        return "auth";
+    case SSS_PAM_CHAUTHTOK:
+        return "password change";
+    case SSS_PAM_CHAUTHTOK_PRELIM:
+        return "password change checks";
+    case SSS_PAM_ACCT_MGMT:
+        return "account management";
+    case SSS_CMD_RENEW:
+        return "ticket renewal";
+    case SSS_PAM_PREAUTH:
+        return "pre-auth";
+    }
+
+    DEBUG(SSSDBG_MINOR_FAILURE, "Unexpected command %d\n", cmd);
+    return "-unexpected-";
+}
+
 static errno_t unpack_buffer(uint8_t *buf, size_t size,
                              struct krb5_req *kr, uint32_t *offline)
 {
@@ -2436,10 +2462,11 @@ static errno_t unpack_buffer(uint8_t *buf, size_t size,
     p += len;
 
     DEBUG(SSSDBG_CONF_SETTINGS,
-          "cmd [%d] uid [%llu] gid [%llu] validate [%s] "
+          "cmd [%d (%s)] uid [%llu] gid [%llu] validate [%s] "
            "enterprise principal [%s] offline [%s] UPN [%s]\n",
-           pd->cmd, (unsigned long long) kr->uid,
-           (unsigned long long) kr->gid, kr->validate ? "true" : "false",
+           pd->cmd, krb5_child_command_to_str(pd->cmd),
+           (unsigned long long) kr->uid, (unsigned long long) kr->gid,
+           kr->validate ? "true" : "false",
            kr->use_enterprise_princ ? "true" : "false",
            *offline ? "true" : "false", kr->upn ? kr->upn : "none");
 
@@ -3370,6 +3397,8 @@ int main(int argc, const char *argv[])
         goto done;
     }
 
+    DEBUG(SSSDBG_TRACE_FUNC,
+          "Will perform %s\n", krb5_child_command_to_str(kr->pd->cmd));
     switch(kr->pd->cmd) {
     case SSS_PAM_AUTHENTICATE:
         /* If we are offline, we need to create an empty ccache file */
@@ -3382,15 +3411,12 @@ int main(int argc, const char *argv[])
         }
         break;
     case SSS_PAM_CHAUTHTOK:
-        DEBUG(SSSDBG_TRACE_FUNC, "Will perform password change\n");
         ret = changepw_child(kr, false);
         break;
     case SSS_PAM_CHAUTHTOK_PRELIM:
-        DEBUG(SSSDBG_TRACE_FUNC, "Will perform password change checks\n");
         ret = changepw_child(kr, true);
         break;
     case SSS_PAM_ACCT_MGMT:
-        DEBUG(SSSDBG_TRACE_FUNC, "Will perform account management\n");
         ret = kuserok_child(kr);
         break;
     case SSS_CMD_RENEW:
@@ -3399,11 +3425,9 @@ int main(int argc, const char *argv[])
             ret = KRB5_KDC_UNREACH;
             goto done;
         }
-        DEBUG(SSSDBG_TRACE_FUNC, "Will perform ticket renewal\n");
         ret = renew_tgt_child(kr);
         break;
     case SSS_PAM_PREAUTH:
-        DEBUG(SSSDBG_TRACE_FUNC, "Will perform pre-auth\n");
         ret = tgt_req_child(kr);
         break;
     default:

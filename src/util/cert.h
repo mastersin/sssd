@@ -21,7 +21,6 @@
 #include <talloc.h>
 
 #include "util/util.h"
-#include "lib/certmap/sss_certmap.h"
 
 #ifndef __CERT_H__
 #define __CERT_H__
@@ -38,12 +37,6 @@ errno_t sss_cert_derb64_to_pem(TALLOC_CTX *mem_ctx, const char *derb64,
 errno_t sss_cert_pem_to_derb64(TALLOC_CTX *mem_ctx, const char *pem,
                                char **derb64);
 
-errno_t sss_cert_derb64_to_ldap_filter(TALLOC_CTX *mem_ctx, const char *derb64,
-                                       const char *attr_name,
-                                       struct sss_certmap_ctx *certmap_ctx,
-                                       struct sss_domain_info *dom,
-                                       char **ldap_filter);
-
 errno_t bin_to_ldap_filter_value(TALLOC_CTX *mem_ctx,
                                  const uint8_t *blob, size_t blob_size,
                                  char **_str);
@@ -54,16 +47,4 @@ errno_t get_ssh_key_from_cert(TALLOC_CTX *mem_ctx,
 
 errno_t get_ssh_key_from_derb64(TALLOC_CTX *mem_ctx, const char *derb64,
                                 uint8_t **key_blob, size_t *key_size);
-
-struct tevent_req *cert_to_ssh_key_send(TALLOC_CTX *mem_ctx,
-                                        struct tevent_context *ev,
-                                        const char *logfile, time_t timeout,
-                                        const char *ca_db,
-                                        struct sss_certmap_ctx *sss_certmap_ctx,
-                                        size_t cert_count,
-                                        struct ldb_val *bin_certs,
-                                        const char *verify_opts);
-
-errno_t cert_to_ssh_key_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
-                             struct ldb_val **keys, size_t *valid_keys);
 #endif /* __CERT_H__ */
