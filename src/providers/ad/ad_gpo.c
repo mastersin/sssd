@@ -1344,7 +1344,7 @@ ad_gpo_store_policy_settings(struct sss_domain_info *domain,
     ret = ini_config_file_open(filename, 0, &file_ctx);
     if (ret != 0) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "ini_config_file_open failed [%d][%s]\n", ret, strerror(ret));
+              "ini_config_file_open failed [%d][%s][%s]\n", ret, strerror(ret), filename);
         goto done;
     }
 
@@ -1387,8 +1387,8 @@ ad_gpo_store_policy_settings(struct sss_domain_info *domain,
         ret = ini_config_file_open(filename, 0, &file_ctx);
         if (ret != 0) {
             DEBUG(SSSDBG_CRIT_FAILURE,
-                  "ini_config_file_open failed [%d][%s]\n",
-                  ret, strerror(ret));
+                  "ini_config_file_open failed again [%d][%s][%s]\n",
+                  ret, strerror(ret), filename);
             goto done;
         }
 
