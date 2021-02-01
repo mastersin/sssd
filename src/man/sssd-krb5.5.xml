@@ -557,6 +557,22 @@
                 </varlistentry>
 
                 <varlistentry>
+                    <term>krb5_use_subdomain_realm (boolean)</term>
+                    <listitem>
+                        <para>
+                            Specifies use subdomains realms for trusted domain
+                            user authentication. This case should be using for
+                            enterprise principals with upnSuffixes on parent
+                            domain KDC don't found their in Kerberos database.
+                        </para>
+
+                        <para>
+                            Default: false
+                        </para>
+                    </listitem>
+                </varlistentry>
+
+                <varlistentry>
                     <term>krb5_map_user (string)</term>
                     <listitem>
                         <para>
