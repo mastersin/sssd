@@ -368,21 +368,21 @@ ipa_sudo_conv_init(TALLOC_CTX *mem_ctx,
     conv->map_host = map_host;
     conv->map_hostgroup = map_hostgroup;
 
-    ret = sss_hash_create(conv, 20, &conv->rules);
+    ret = sss_hash_create(conv, 0, &conv->rules);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create hash table [%d]: %s\n",
               ret, sss_strerror(ret));
         goto done;
     }
 
-    ret = sss_hash_create(conv, 20, &conv->cmdgroups);
+    ret = sss_hash_create(conv, 0, &conv->cmdgroups);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create hash table [%d]: %s\n",
               ret, sss_strerror(ret));
         goto done;
     }
 
-    ret = sss_hash_create(conv, 20, &conv->cmds);
+    ret = sss_hash_create(conv, 0, &conv->cmds);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create hash table [%d]: %s\n",
               ret, sss_strerror(ret));
@@ -801,7 +801,7 @@ convert_host(TALLOC_CTX *mem_ctx,
         *skip_entry = true;
         return NULL;
     } else if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "ipa_get_rdn() failed on value %s [%d]: %s\n",
+        DEBUG(SSSDBG_CRIT_FAILURE, "ipa_get_rdn() failed on value %s [%d]: %s\n",
               value, ret, sss_strerror(ret));
         return NULL;
     }
@@ -841,7 +841,7 @@ convert_user(TALLOC_CTX *mem_ctx,
         *skip_entry = true;
         return NULL;
     } else if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "ipa_get_rdn() failed on value %s [%d]: %s\n",
+        DEBUG(SSSDBG_CRIT_FAILURE, "ipa_get_rdn() failed on value %s [%d]: %s\n",
               value, ret, sss_strerror(ret));
         return NULL;
     }
@@ -904,7 +904,7 @@ convert_group(TALLOC_CTX *mem_ctx,
         *skip_entry = true;
         return NULL;
     } else if (ret != EOK) {
-        DEBUG(SSSDBG_OP_FAILURE, "ipa_get_rdn() failed on value %s [%d]: %s\n",
+        DEBUG(SSSDBG_CRIT_FAILURE, "ipa_get_rdn() failed on value %s [%d]: %s\n",
               value, ret, sss_strerror(ret));
         return NULL;
     }
@@ -939,6 +939,12 @@ convert_runasextusergroup(TALLOC_CTX *mem_ctx,
                           const char *value,
                           bool *skip_entry)
 {
+    if (value == NULL)
+        return NULL;
+
+    if (value[0] == '%')
+        return talloc_strdup(mem_ctx, value);
+
     return talloc_asprintf(mem_ctx, "%%%s", value);
 }
 

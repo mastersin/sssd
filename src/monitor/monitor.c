@@ -815,6 +815,11 @@ static errno_t add_implicit_services(struct confdb_ctx *cdb, TALLOC_CTX *mem_ctx
     }
 
     for (c = 0; domain_names[c] != NULL; c++) {
+        if (!is_valid_domain_name(domain_names[c])) {
+            DEBUG(SSSDBG_CRIT_FAILURE,
+                  "Skipping invalid domain name '%s'\n", domain_names[c]);
+            continue;
+        }
         conf_path = talloc_asprintf(tmp_ctx, CONFDB_DOMAIN_PATH_TMPL,
                                     domain_names[c]);
         if (conf_path == NULL) {
@@ -1435,7 +1440,7 @@ static void monitor_quit(struct mt_ctx *mt_ctx, int ret)
                         DEBUG(SSSDBG_CRIT_FAILURE,
                               "Child [%s] terminated with a signal\n", svc->name);
                     } else {
-                        DEBUG(SSSDBG_FATAL_FAILURE,
+                        DEBUG(SSSDBG_CRIT_FAILURE,
                               "Child [%s] did not exit cleanly\n", svc->name);
                         /* Forcibly kill this child */
                         kill(-svc->pid, SIGKILL);
@@ -2059,7 +2064,7 @@ static void monitor_sbus_connected(struct tevent_req *req)
 
     ret = sbus_connection_add_path_map(ctx->sbus_conn, paths);
     if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to add paths [%d]: %s\n",
+        DEBUG(SSSDBG_FATAL_FAILURE, "Unable to add paths [%d]: %s\n",
               ret, sss_strerror(ret));
         goto done;
     }
@@ -2271,7 +2276,7 @@ static void mt_svc_restart(struct tevent_context *ev,
         add_new_provider(svc->mt_ctx, svc->name, svc->restarts + 1);
     } else {
         /* Invalid type? */
-        DEBUG(SSSDBG_CRIT_FAILURE,
+        DEBUG(SSSDBG_FATAL_FAILURE,
               "BUG: Invalid child process type [%d]\n", svc->type);
     }
 
@@ -2580,14 +2585,14 @@ int main(int argc, const char *argv[])
         switch (ret) {
         case EPERM:
         case EACCES:
-            DEBUG(SSSDBG_CRIT_FAILURE,
+            DEBUG(SSSDBG_FATAL_FAILURE,
                   CONF_FILE_PERM_ERROR_MSG, config_file);
-            sss_log(SSS_LOG_ALERT, CONF_FILE_PERM_ERROR_MSG, config_file);
+            sss_log(SSS_LOG_CRIT, CONF_FILE_PERM_ERROR_MSG, config_file);
             break;
         default:
-            DEBUG(SSSDBG_CRIT_FAILURE,
+            DEBUG(SSSDBG_FATAL_FAILURE,
                  "SSSD couldn't load the configuration database.\n");
-            sss_log(SSS_LOG_ALERT,
+            sss_log(SSS_LOG_CRIT,
                    "SSSD couldn't load the configuration database [%d]: %s.\n",
                     ret, strerror(ret));
             break;

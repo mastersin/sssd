@@ -506,7 +506,13 @@ struct tevent_req *ipa_get_subdom_acct_send(TALLOC_CTX *memctx,
             break;
         default:
             ret = EINVAL;
-            DEBUG(SSSDBG_OP_FAILURE, "Invalid sub-domain request type.\n");
+            if (state->entry_type > BE_REQ__LAST) {
+                DEBUG(SSSDBG_OP_FAILURE, "Invalid sub-domain request type %d.\n",
+                      state->entry_type);
+            } else {
+                DEBUG(SSSDBG_TRACE_FUNC, "Unhandled sub-domain request type %d.\n",
+                      state->entry_type);
+            }
     }
     if (ret != EOK) goto fail;
 
@@ -1027,6 +1033,9 @@ apply_subdomain_homedir(TALLOC_CTX *mem_ctx, struct sss_domain_info *dom,
     const char *homedir = NULL;
     struct ldb_message_element *msg_el = NULL;
     size_t c;
+    const char *category = NULL;
+    size_t length = 0;
+    bool user_class = true;
 
     msg_el = ldb_msg_find_element(msg, SYSDB_OBJECTCATEGORY);
     if (msg_el == NULL) {
@@ -1039,12 +1048,15 @@ apply_subdomain_homedir(TALLOC_CTX *mem_ctx, struct sss_domain_info *dom,
      * case of a MPG group lookup if SYSDB_OBJECTCATEGORY is SYSDB_GROUP_CLASS.
      */
     for (c = 0; c < msg_el->num_values; c++) {
-        if (strncmp(SYSDB_USER_CLASS, (const char *)msg_el->values[c].data,
-                    msg_el->values[c].length) == 0
-                || (sss_domain_is_mpg(dom)
-                    && strncmp(SYSDB_GROUP_CLASS,
-                               (const char *)msg_el->values[c].data,
-                               msg_el->values[c].length) == 0)) {
+        category = (const char *)msg_el->values[c].data;
+        length = msg_el->values[c].length;
+        if (strncmp(SYSDB_USER_CLASS, category, length) == 0) {
+            user_class = true;
+            break;
+        }
+        if (sss_domain_is_mpg(dom)
+               && strncmp(SYSDB_GROUP_CLASS, category, length) == 0) {
+            user_class = false;
             break;
         }
     }
@@ -1064,8 +1076,12 @@ apply_subdomain_homedir(TALLOC_CTX *mem_ctx, struct sss_domain_info *dom,
 
     uid = ldb_msg_find_attr_as_uint64(msg, SYSDB_UIDNUM, 0);
     if (uid == 0) {
-        DEBUG(SSSDBG_OP_FAILURE, "UID for user [%s] is not known.\n",
-                                  fqname);
+        if (user_class) {
+            DEBUG(SSSDBG_OP_FAILURE, "UID for user [%s] is unknown\n", fqname);
+        } else {
+            DEBUG(SSSDBG_TRACE_INTERNAL,
+                  "No UID for object [%s], perhaps mpg\n", fqname);
+        }
         ret = ENOENT;
         goto done;
     }
@@ -1309,7 +1325,7 @@ ipa_get_ad_acct_ad_part_done(struct tevent_req *subreq)
 
         state->object_sid = talloc_strdup(state, sid);
         if (state->object_sid == NULL) {
-            DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
+            DEBUG(SSSDBG_CRIT_FAILURE, "talloc_strdup failed.\n");
             ret = ENOMEM;
             goto fail;
         }
@@ -1521,7 +1537,7 @@ static errno_t ipa_get_ad_apply_override_step(struct tevent_req *req)
 
         state->ar->filter_value = talloc_strdup(state->ar, obj_name);
         if (state->ar->filter_value == NULL) {
-            DEBUG(SSSDBG_OP_FAILURE, "talloc_strdup failed.\n");
+            DEBUG(SSSDBG_CRIT_FAILURE, "talloc_strdup failed.\n");
             return ENOMEM;
         }
         state->ar->filter_type = BE_FILTER_NAME;

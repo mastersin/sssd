@@ -560,10 +560,13 @@
                     <term>krb5_use_subdomain_realm (boolean)</term>
                     <listitem>
                         <para>
-                            Specifies use subdomains realms for trusted domain
-                            user authentication. This case should be using for
-                            enterprise principals with upnSuffixes on parent
-                            domain KDC don't found their in Kerberos database.
+                            Specifies to use subdomains realms for the
+                            authentication of users from trusted domains. This
+                            option can be set to 'true' if enterprise principals
+                            are used with upnSuffixes which are not known on the
+                            parent domain KDCs. If the option is set to 'true'
+                            SSSD will try to send the request directly to a KDC
+                            of the trusted domain the user is coming from.
                         </para>
 
                         <para>

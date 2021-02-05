@@ -270,7 +270,7 @@ static errno_t call_pam_stack(const char *pam_target, struct pam_data *pd)
                 }
                 break;
             default:
-                DEBUG(SSSDBG_CRIT_FAILURE, "unknown PAM call\n");
+                DEBUG(SSSDBG_CRIT_FAILURE, "unknown PAM call %d\n", pd->cmd);
                 pam_status=PAM_ABORT;
         }
 
@@ -383,13 +383,13 @@ proxy_cli_init(struct pc_ctx *ctx)
     ret = sss_iface_connect_address(ctx, ctx->ev, sbus_cliname, sbus_address,
                                     NULL, &ctx->conn);
     if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to connect to %s\n", sbus_address);
+        DEBUG(SSSDBG_FATAL_FAILURE, "Unable to connect to %s\n", sbus_address);
         goto done;
     }
 
     ret = sbus_connection_add_path_map(ctx->conn, paths);
     if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to add paths [%d]: %s\n",
+        DEBUG(SSSDBG_FATAL_FAILURE, "Unable to add paths [%d]: %s\n",
               ret, sss_strerror(ret));
         goto done;
     }
@@ -499,6 +499,20 @@ int main(int argc, const char *argv[])
     /* Set debug level to invalid value so we can decide if -d 0 was used. */
     debug_level = SSSDBG_INVALID;
 
+    ret = chdir("/");
+    if (ret != 0) {
+        fprintf(stderr, "\nFailed to chdir()\n\n");
+        return 1;
+    }
+
+    ret = clearenv();
+    if (ret != 0) {
+        fprintf(stderr, "\nFailed to clear env.\n\n");
+        return 1;
+    }
+
+    umask(SSS_DFL_UMASK);
+
     pc = poptGetContext(argv[0], argc, argv, long_options, 0);
     while((opt = poptGetNextOpt(pc)) != -1) {
         switch(opt) {
@@ -515,6 +529,10 @@ int main(int argc, const char *argv[])
                         "--domain is a mandatory option.\n\n");
             poptPrintUsage(pc, stderr, 0);
             return 1;
+    }
+    if (!is_valid_domain_name(domain)) {
+        fprintf(stderr, "\nInvalid --domain option.\n\n");
+        return 1;
     }
 
     if (id == 0) {
@@ -546,12 +564,6 @@ int main(int argc, const char *argv[])
         return 2;
     }
 
-    ret = unsetenv("_SSS_LOOPS");
-    if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to unset _SSS_LOOPS, "
-                  "pam modules might not work as expected.\n");
-    }
-
     ret = confdb_get_string(main_ctx->confdb_ctx, main_ctx, conf_entry,
                             CONFDB_PROXY_PAM_TARGET, NULL, &pam_target);
     if (ret != EOK) {
@@ -580,7 +592,7 @@ int main(int argc, const char *argv[])
         return 3;
     }
 
-    DEBUG(SSSDBG_CRIT_FAILURE,
+    DEBUG(SSSDBG_IMPORTANT_INFO,
           "Proxy child for domain [%s] started!\n", domain);
 
     /* loop on main */

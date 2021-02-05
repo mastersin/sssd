@@ -568,7 +568,7 @@ ipa_pam_session_handler_done(struct tevent_req *subreq)
     talloc_free(subreq);
 
     if (ret == ENOENT) {
-        DEBUG(SSSDBG_IMPORTANT_INFO, "No Desktop Profile rules found\n");
+        DEBUG(SSSDBG_FUNC_DATA, "No Desktop Profile rules found\n");
         if (!state->session_ctx->no_rules_found) {
             state->session_ctx->no_rules_found = true;
             state->session_ctx->last_request = time(NULL);
@@ -666,7 +666,7 @@ ipa_pam_session_handler_get_deskprofile_user_info(TALLOC_CTX *mem_ctx,
 
     if (res->count != 1) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "sysdb_getpwnam() got more users than expected. "
+              "sysdb_getpwnam() returned unexpected amount of users. "
               "Expected [%d], got [%d]\n", 1, res->count);
         ret = EINVAL;
         goto done;

@@ -95,6 +95,15 @@ if HAVE_SYSTEMD_UNIT
 ifp_exec_cmd = $(sssdlibexecdir)/sssd_ifp --uid 0 --gid 0 --dbus-activated
 ifp_systemdservice = SystemdService=sssd-ifp.service
 ifp_restart = Restart=on-failure
+# If sssd is configured with --enable-files-domain, the service is
+# able to start even without a configuration file.  Otherwise, sssd
+# requires a configuration file (either /etc/sssd/sssd.conf, or some
+# snippet under /etc/sssd/sssd.conf.d/) to be present.
+if ADD_FILES_DOMAIN
+condconfigexists =
+else
+condconfigexists = ConditionPathExists=\|/etc/sssd/sssd.conf\nConditionDirectoryNotEmpty=\|/etc/sssd/conf.d/
+endif
 else
 ifp_exec_cmd = $(sssdlibexecdir)/sss_signal
 ifp_systemdservice =
@@ -311,7 +320,7 @@ endif   # HAVE_INOTIFY
 
 if BUILD_KCM
 non_interactive_cmocka_based_tests += \
-	test_kcm_json \
+	test_kcm_marshalling \
 	test_kcm_queue \
         $(NULL)
 endif   # BUILD_KCM
@@ -1586,12 +1595,14 @@ sssd_pam_SOURCES = \
     src/responder/pam/pamsrv_cmd.c \
     src/responder/pam/pamsrv_p11.c \
     src/responder/pam/pamsrv_dp.c \
+    src/responder/pam/pamsrv_gssapi.c \
     src/responder/pam/pam_prompting_config.c \
     src/sss_client/pam_sss_prompt_config.c \
     src/responder/pam/pam_helpers.c \
     $(SSSD_RESPONDER_OBJ)
 sssd_pam_CFLAGS = \
     $(AM_CFLAGS) \
+    $(GSSAPI_KRB5_CFLAGS) \
     $(NULL)
 sssd_pam_LDADD = \
     $(LIBADD_DL) \
@@ -1600,6 +1611,7 @@ sssd_pam_LDADD = \
     $(SELINUX_LIBS) \
     $(PAM_LIBS) \
     $(SYSTEMD_DAEMON_LIBS) \
+    $(GSSAPI_KRB5_LIBS) \
     libsss_certmap.la \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_iface.la \
@@ -1818,8 +1830,10 @@ sssd_kcm_SOURCES = \
     src/responder/kcm/kcm.c \
     src/responder/kcm/kcmsrv_cmd.c \
     src/responder/kcm/kcmsrv_ccache.c \
+    src/responder/kcm/kcmsrv_ccache_binary.c \
     src/responder/kcm/kcmsrv_ccache_mem.c \
     src/responder/kcm/kcmsrv_ccache_json.c \
+    src/responder/kcm/kcmsrv_ccache_key.c \
     src/responder/kcm/kcmsrv_ccache_secdb.c \
     src/responder/kcm/kcmsrv_ops.c \
     src/responder/kcm/kcmsrv_op_queue.c \
@@ -2709,6 +2723,7 @@ pam_srv_tests_SOURCES = \
     src/sss_client/pam_message.c \
     src/responder/pam/pamsrv_cmd.c \
     src/responder/pam/pamsrv_p11.c \
+    src/responder/pam/pamsrv_gssapi.c \
     src/responder/pam/pam_helpers.c \
     src/responder/pam/pamsrv_dp.c \
     src/responder/pam/pam_LOCAL_domain.c \
@@ -2720,6 +2735,7 @@ pam_srv_tests_CFLAGS = \
     -I$(abs_builddir)/src \
     $(AM_CFLAGS) \
     $(CMOCKA_CFLAGS) \
+    $(GSSAPI_KRB5_CFLAGS) \
     $(NULL)
 pam_srv_tests_LDFLAGS = \
     -Wl,-wrap,sss_packet_get_body \
@@ -2735,6 +2751,7 @@ pam_srv_tests_LDADD = \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     $(SYSTEMD_DAEMON_LIBS) \
+    $(GSSAPI_KRB5_LIBS) \
     libsss_test_common.la \
     libsss_idmap.la \
     libsss_certmap.la \
@@ -3701,6 +3718,7 @@ test_cert_utils_CFLAGS = \
     -U SSSD_LIBEXEC_PATH -DSSSD_LIBEXEC_PATH=\"$(abs_builddir)\" \
     -I$(abs_builddir)/src \
     $(CRYPTO_CFLAGS) \
+    $(CMOCKA_CFLAGS) \
     $(NULL)
 test_cert_utils_LDADD = \
     $(CMOCKA_LIBS) \
@@ -3928,18 +3946,20 @@ test_sssd_krb5_locator_plugin_LDADD = \
     $(NULL)
 
 if BUILD_KCM
-test_kcm_json_SOURCES = \
-    src/tests/cmocka/test_kcm_json_marshalling.c \
+test_kcm_marshalling_SOURCES = \
+    src/tests/cmocka/test_kcm_marshalling.c \
+    src/responder/kcm/kcmsrv_ccache_binary.c \
     src/responder/kcm/kcmsrv_ccache_json.c \
+    src/responder/kcm/kcmsrv_ccache_key.c \
     src/responder/kcm/kcmsrv_ccache.c \
     src/util/sss_krb5.c \
     src/util/sss_iobuf.c \
     $(NULL)
-test_kcm_json_CFLAGS = \
+test_kcm_marshalling_CFLAGS = \
     $(AM_CFLAGS) \
     $(UUID_CFLAGS) \
     $(NULL)
-test_kcm_json_LDADD = \
+test_kcm_marshalling_LDADD = \
     $(JANSSON_LIBS) \
     $(UUID_LIBS) \
     $(KRB5_LIBS) \
@@ -4146,6 +4166,28 @@ pam_sss_la_LDFLAGS = \
     -avoid-version \
     -Wl,--version-script,$(srcdir)/src/sss_client/sss_pam.exports
 
+pamlib_LTLIBRARIES += pam_sss_gss.la
+pam_sss_gss_la_SOURCES = \
+    src/sss_client/pam_sss_gss.c \
+    src/sss_client/common.c \
+    $(NULL)
+
+pam_sss_gss_la_CFLAGS = \
+    $(AM_CFLAGS) \
+    $(GSSAPI_KRB5_CFLAGS) \
+    $(NULL)
+
+pam_sss_gss_la_LIBADD = \
+    $(CLIENT_LIBS) \
+    $(PAM_LIBS) \
+    $(GSSAPI_KRB5_LIBS) \
+    $(NULL)
+
+pam_sss_gss_la_LDFLAGS = \
+    -module \
+    -avoid-version \
+    -Wl,--version-script,$(srcdir)/src/sss_client/pam_sss_gss.exports
+
 if BUILD_SUDO
 
 libsss_sudo_la_SOURCES = \
@@ -4184,7 +4226,10 @@ endif
 
 dist_noinst_DATA += \
     src/sss_client/sss_nss.exports \
-    src/sss_client/sss_pam.exports
+    src/sss_client/sss_pam.exports \
+    src/sss_client/pam_sss_gss.exports \
+    $(NULL)
+
 if BUILD_SUDO
 dist_noinst_DATA += src/sss_client/sss_sudo.exports
 endif
@@ -5077,7 +5122,8 @@ edit_cmd = $(SED) \
         -e 's|@libexecdir[@]|$(libexecdir)|g' \
         -e 's|@pipepath[@]|$(pipepath)|g' \
         -e 's|@prefix[@]|$(prefix)|g' \
-        -e 's|@SSSD_USER[@]|$(SSSD_USER)|g'
+        -e 's|@SSSD_USER[@]|$(SSSD_USER)|g' \
+        -e 's|@condconfigexists[@]|$(condconfigexists)|g'
 
 replace_script = \
     @rm -f $@ $@.tmp; \

@@ -138,7 +138,7 @@ static void inform_user(struct pam_data* pd, const char *pam_message)
     ret = pack_user_info_msg(pd, pam_message, &msg_len, &msg);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
-              "pack_user_info_account_expired failed.\n");
+              "pack_user_info_msg failed.\n");
     } else {
         ret = pam_add_response(pd, SSS_PAM_USER_INFO, msg_len, msg);
         if (ret != EOK) {
@@ -1258,7 +1258,7 @@ static errno_t pam_forwarder_parse_data(struct cli_ctx *cctx, struct pam_data *p
                     || sss_authtok_get_type(pd->authtok)
                                                == SSS_AUTHTOK_TYPE_SC_KEYPAD)) {
             ret = sss_authtok_get_sc(pd->authtok, NULL, NULL, NULL, NULL, NULL,
-                                     NULL, &key_id, NULL);
+                                     NULL, &key_id, NULL, NULL, NULL);
             if (ret != EOK) {
                 DEBUG(SSSDBG_OP_FAILURE, "sss_authtok_get_sc failed.\n");
                 goto done;
@@ -1941,7 +1941,7 @@ static void pam_check_user_search_next(struct tevent_req *req)
     talloc_zfree(req);
     if (ret != EOK && ret != ENOENT) {
         DEBUG(SSSDBG_OP_FAILURE, "Cache lookup failed, trying to get fresh "
-                                 "data from the backened.\n");
+                                 "data from the backend.\n");
     }
 
     DEBUG(SSSDBG_TRACE_ALL, "PAM initgroups scheme [%s].\n",
@@ -2274,7 +2274,8 @@ static void pam_dom_forwarder(struct pam_auth_req *preq)
                                  SSS_AUTHTOK_TYPE_SC_PIN, NULL, 0,
                                  sss_cai_get_token_name(preq->current_cert), 0,
                                  sss_cai_get_module_name(preq->current_cert), 0,
-                                 sss_cai_get_key_id(preq->current_cert), 0);
+                                 sss_cai_get_key_id(preq->current_cert), 0,
+                                 sss_cai_get_label(preq->current_cert), 0);
                         if (ret != EOK) {
                             DEBUG(SSSDBG_OP_FAILURE,
                                   "sss_authtok_set_sc failed, Smartcard "
@@ -2401,6 +2402,8 @@ struct sss_cmd_table *get_pam_cmds(void)
         {SSS_PAM_CHAUTHTOK, pam_cmd_chauthtok},
         {SSS_PAM_CHAUTHTOK_PRELIM, pam_cmd_chauthtok_prelim},
         {SSS_PAM_PREAUTH, pam_cmd_preauth},
+        {SSS_GSSAPI_INIT, pam_cmd_gssapi_init},
+        {SSS_GSSAPI_SEC_CTX, pam_cmd_gssapi_sec_ctx},
         {SSS_CLI_NULL, NULL}
     };
 

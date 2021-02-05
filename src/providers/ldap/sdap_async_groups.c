@@ -883,10 +883,7 @@ static int sdap_save_grpmem(TALLOC_CTX *memctx,
     const char *check_name;
 
     if (dom->ignore_group_members) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
-              "Group members are ignored, nothing to do. If you see this " \
-              "message it might indicate an error in the group processing " \
-              "logic.\n");
+        DEBUG(SSSDBG_TRACE_FUNC, "Group members are ignored, nothing to do.\n");
         return EOK;
     }
 
@@ -978,7 +975,12 @@ static int sdap_save_grpmem(TALLOC_CTX *memctx,
         ret = sysdb_remove_attrs(group_dom, group_name, SYSDB_MEMBER_GROUP,
                                  discard_const(remove_attrs));
         if (ret != EOK) {
-            DEBUG(SSSDBG_OP_FAILURE, "sysdb_remove_attrs failed.\n");
+            if (ret != ENOENT) {
+                DEBUG(SSSDBG_OP_FAILURE, "sysdb_remove_attrs failed.\n");
+            } else {
+                DEBUG(SSSDBG_MINOR_FAILURE,
+                      "sysdb_remove_attrs failed for missing entry\n");
+            }
             goto fail;
         }
     } else {
@@ -1014,7 +1016,7 @@ static int sdap_save_grpmem(TALLOC_CTX *memctx,
     return EOK;
 
 fail:
-    DEBUG(SSSDBG_OP_FAILURE,
+    DEBUG(SSSDBG_MINOR_FAILURE,
            "Failed to save members of group %s\n", group_name);
     return ret;
 }
@@ -1130,8 +1132,13 @@ static int sdap_save_groups(TALLOC_CTX *memctx,
             /* Do not fail completely on errors.
              * Just report the failure to save and go on */
             if (ret) {
-                DEBUG(SSSDBG_OP_FAILURE,
-                      "Failed to store group %d members.\n", i);
+                if (ret != ENOENT) {
+                    DEBUG(SSSDBG_OP_FAILURE,
+                          "Failed to store group %d members: %d\n", i, ret);
+                } else {
+                    DEBUG(SSSDBG_FUNC_DATA,
+                          "Can't save members of missing group %d\n", i);
+                }
             } else {
                 DEBUG(SSSDBG_TRACE_ALL, "Group %d members processed!\n", i);
             }
@@ -1270,7 +1277,7 @@ sdap_process_group_send(TALLOC_CTX *memctx,
 
     /* Group without members */
     if (el->num_values == 0) {
-        DEBUG(SSSDBG_OP_FAILURE, "No Members. Done!\n");
+        DEBUG(SSSDBG_FUNC_DATA, "No Members. Done!\n");
         ret = EOK;
         goto done;
     }
@@ -2249,7 +2256,7 @@ static void sdap_nested_done(struct tevent_req *subreq)
 
     if (hash_count(state->missing_external) == 0) {
         /* No external members. Processing complete */
-        DEBUG(SSSDBG_TRACE_INTERNAL, "No external members, done");
+        DEBUG(SSSDBG_TRACE_INTERNAL, "No external members, done\n");
         tevent_req_done(req);
         return;
     }

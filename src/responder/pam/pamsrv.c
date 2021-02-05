@@ -154,6 +154,18 @@ static errno_t get_app_services(struct pam_ctx *pctx)
     return EOK;
 }
 
+static void pam_get_domains_callback(void *pvt)
+{
+    struct pam_ctx *pctx;
+    int ret;
+
+    pctx = talloc_get_type(pvt, struct pam_ctx);
+    ret = p11_refresh_certmap_ctx(pctx, pctx->rctx->domains);
+    if (ret != EOK) {
+        DEBUG(SSSDBG_OP_FAILURE, "p11_refresh_certmap_ctx failed.\n");
+    }
+}
+
 static int pam_process_init(TALLOC_CTX *mem_ctx,
                             struct tevent_context *ev,
                             struct confdb_ctx *cdb,
@@ -225,7 +237,7 @@ static int pam_process_init(TALLOC_CTX *mem_ctx,
     }
 
     /* Create table for initgroup lookups */
-    ret = sss_hash_create(pctx, 10, &pctx->id_table);
+    ret = sss_hash_create(pctx, 0, &pctx->id_table);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE,
               "Could not create initgroups hash table: [%s]\n",
@@ -246,7 +258,8 @@ static int pam_process_init(TALLOC_CTX *mem_ctx,
     }
     responder_set_fd_limit(fd_limit);
 
-    ret = schedule_get_domains_task(rctx, rctx->ev, rctx, pctx->rctx->ncache);
+    ret = schedule_get_domains_task(rctx, rctx->ev, rctx, pctx->rctx->ncache,
+                                    pam_get_domains_callback, pctx);
     if (ret != EOK) {
         DEBUG(SSSDBG_FATAL_FAILURE, "schedule_get_domains_tasks failed.\n");
         goto done;

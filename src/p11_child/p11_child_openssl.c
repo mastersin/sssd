@@ -226,7 +226,7 @@ static char *get_issuer_subject_str(TALLOC_CTX *mem_ctx, X509 *cert)
 
     bio_mem = BIO_new(BIO_s_mem());
     if (bio_mem == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "BIO_new failed.\n");
+        DEBUG(SSSDBG_CRIT_FAILURE, "BIO_new failed.\n");
         return NULL;
     }
 
@@ -591,7 +591,7 @@ errno_t init_p11_ctx(TALLOC_CTX *mem_ctx, const char *ca_db,
     ret = SSL_library_init();
 #endif
     if (ret != 1) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Failed to initialize OpenSSL.\n");
+        DEBUG(SSSDBG_FATAL_FAILURE, "Failed to initialize OpenSSL.\n");
         return EIO;
     }
 
@@ -1587,7 +1587,8 @@ static errno_t wait_for_card(CK_FUNCTION_LIST *module, CK_SLOT_ID *slot_id)
 errno_t do_card(TALLOC_CTX *mem_ctx, struct p11_ctx *p11_ctx,
                 enum op_mode mode, const char *pin,
                 const char *module_name_in, const char *token_name_in,
-                const char *key_id_in, const char *uri_str, char **_multi)
+                const char *key_id_in, const char *label_in,
+                const char *uri_str, char **_multi)
 {
     int ret;
     size_t c;
@@ -1845,11 +1846,13 @@ errno_t do_card(TALLOC_CTX *mem_ctx, struct p11_ctx *p11_ctx,
     DLIST_FOR_EACH(item, all_cert_list) {
         /* Check if we found the certificates we needed for authentication or
          * the requested ones for pre-auth. For authentication all attributes
-         * must be given and match, for pre-auth only the given ones must
-         * match. */
-        DEBUG(SSSDBG_TRACE_ALL, "%s %s %s %s %s %s.\n",
+         * except the label must be given and match. The label is optional for
+         * authentication but if given it must match as well. For pre-auth
+         * only the given ones must match. */
+        DEBUG(SSSDBG_TRACE_ALL, "%s %s %s %s %s %s %s.\n",
               module_name_in, module_file_name, token_name_in, token_name,
-              key_id_in, item->id);
+              key_id_in, label_in == NULL ? "- no label given-" : label_in,
+              item->id);
 
         if ((mode == OP_AUTH
                 && module_name_in != NULL
@@ -1857,6 +1860,9 @@ errno_t do_card(TALLOC_CTX *mem_ctx, struct p11_ctx *p11_ctx,
                 && key_id_in != NULL
                 && item->id != NULL
                 && strcmp(key_id_in, item->id) == 0
+                && (label_in == NULL
+                    || (label_in != NULL && item->label != NULL
+                        && strcmp(label_in, item->label) == 0))
                 && strcmp(token_name_in, token_name) == 0
                 && strcmp(module_name_in, module_file_name) == 0)
             || (mode == OP_PREAUTH

@@ -221,6 +221,7 @@ static errno_t merge_res_sysdb_attrs(TALLOC_CTX *mem_ctx,
                                      const char *attrs[])
 {
     errno_t ret;
+    size_t ts_cache_res_count = 0;
     struct ldb_result *ts_cache_res = NULL;
 
     if (ts_res == NULL || ctx->ldb_ts == NULL) {
@@ -231,7 +232,6 @@ static errno_t merge_res_sysdb_attrs(TALLOC_CTX *mem_ctx,
     if (ts_cache_res == NULL) {
         return ENOMEM;
     }
-    ts_cache_res->count = ts_res->count;
     ts_cache_res->msgs = talloc_zero_array(ts_cache_res,
                                            struct ldb_message *,
                                            ts_res->count);
@@ -244,15 +244,18 @@ static errno_t merge_res_sysdb_attrs(TALLOC_CTX *mem_ctx,
         ret = merge_msg_sysdb_attrs(ts_cache_res->msgs,
                                     ctx,
                                     ts_res->msgs[c],
-                                    &ts_cache_res->msgs[c], attrs);
-        if (ret != EOK) {
+                                    &ts_cache_res->msgs[ts_cache_res_count],
+                                    attrs);
+        if ((ret != EOK) || (ts_cache_res->msgs[ts_cache_res_count] == NULL)) {
             DEBUG(SSSDBG_MINOR_FAILURE,
                   "Cannot merge sysdb cache values for %s\n",
                   ldb_dn_get_linearized(ts_res->msgs[c]->dn));
-            /* non-fatal, we just get only the non-timestamp attrs */
+            /* non-fatal, just skip */
             continue;
         }
+        ts_cache_res_count += 1;
     }
+    ts_cache_res->count = ts_cache_res_count;
 
     *_ts_cache_res = ts_cache_res;
     return EOK;
@@ -2390,7 +2393,7 @@ errno_t sysdb_get_direct_parents(TALLOC_CTX *mem_ctx,
     } else if (mtype == SYSDB_MEMBER_GROUP) {
         dn = sysdb_group_strdn(tmp_ctx, dom->name, name);
     } else {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Unknown member type\n");
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unknown member type %d\n", mtype);
         ret = EINVAL;
         goto done;
     }
@@ -2450,13 +2453,14 @@ errno_t sysdb_get_direct_parents(TALLOC_CTX *mem_ctx,
         tmp_str = ldb_msg_find_attr_as_string(direct_sysdb_groups[i],
                                                 SYSDB_NAME, NULL);
         if (!tmp_str) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "A group with no name?\n");
             /* This should never happen, but if it does, just continue */
             continue;
         }
 
         direct_parents[pi] = talloc_strdup(direct_parents, tmp_str);
         if (!direct_parents[pi]) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "A group with no name?\n");
+            DEBUG(SSSDBG_CRIT_FAILURE, "talloc_strdup() failed\n");
             ret = EIO;
             goto done;
         }
@@ -2519,8 +2523,13 @@ errno_t sysdb_get_real_name(TALLOC_CTX *mem_ctx,
         }
         if (ret != EOK) {
             /* User cannot be found in cache */
-            DEBUG(SSSDBG_OP_FAILURE, "Cannot find user [%s] in cache\n",
-                                     name_or_upn_or_sid);
+            if (ret != ENOENT) {
+                DEBUG(SSSDBG_OP_FAILURE, "Failed to find user [%s] in cache: %d\n",
+                                         name_or_upn_or_sid, ret);
+            } else {
+                DEBUG(SSSDBG_TRACE_FUNC, "User [%s] is missing in cache\n",
+                                         name_or_upn_or_sid);
+            }
             goto done;
         }
     } else if (res->count == 1) {
@@ -2534,7 +2543,8 @@ errno_t sysdb_get_real_name(TALLOC_CTX *mem_ctx,
 
     cname = ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
     if (!cname) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "A user with no name?\n");
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "User '%s' without a name?\n", name_or_upn_or_sid);
         ret = ENOENT;
         goto done;
     }

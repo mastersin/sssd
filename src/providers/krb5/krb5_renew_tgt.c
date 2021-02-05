@@ -29,8 +29,6 @@
 #include "providers/krb5/krb5_utils.h"
 #include "providers/krb5/krb5_ccache.h"
 
-#define INITIAL_TGT_TABLE_SIZE 10
-
 struct renew_tgt_ctx {
     hash_table_t *tgt_table;
     struct be_ctx *be_ctx;
@@ -405,7 +403,7 @@ static errno_t check_ccache_files(struct renew_tgt_ctx *renew_tgt_ctx)
 
     base_dn = sysdb_user_base_dn(tmp_ctx, renew_tgt_ctx->be_ctx->domain);
     if (base_dn == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE, "sysdb_base_dn failed.\n");
+        DEBUG(SSSDBG_CRIT_FAILURE, "sysdb_base_dn failed.\n");
         ret = ENOMEM;
         goto done;
     }
@@ -440,7 +438,7 @@ static errno_t check_ccache_files(struct renew_tgt_ctx *renew_tgt_ctx)
 
         ret = sss_parse_internal_fqname(tmp_ctx, user_name, NULL, &user_dom);
         if (ret != EOK) {
-            DEBUG(SSSDBG_OP_FAILURE,
+            DEBUG(SSSDBG_CRIT_FAILURE,
                   "Cannot parse internal fqname [%d]: %s\n",
                   ret, sss_strerror(ret));
             goto done;
@@ -484,7 +482,7 @@ errno_t init_renew_tgt(struct krb5_ctx *krb5_ctx, struct be_ctx *be_ctx,
         return ENOMEM;
     }
 
-    ret = sss_hash_create_ex(krb5_ctx->renew_tgt_ctx, INITIAL_TGT_TABLE_SIZE,
+    ret = sss_hash_create_ex(krb5_ctx->renew_tgt_ctx, 0,
                              &krb5_ctx->renew_tgt_ctx->tgt_table, 0, 0, 0, 0,
                              renew_del_cb, NULL);
     if (ret != EOK) {

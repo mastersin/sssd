@@ -374,7 +374,7 @@ static void te_server_hup(struct tevent_context *ev,
     struct logrotate_ctx *lctx =
             talloc_get_type(private_data, struct logrotate_ctx);
 
-    DEBUG(SSSDBG_CRIT_FAILURE, "Received SIGHUP. Rotating logfiles.\n");
+    DEBUG(SSSDBG_IMPORTANT_INFO, "Received SIGHUP. Rotating logfiles.\n");
 
     ret = server_common_rotate_logs(lctx->confdb, lctx->confdb_path);
     if (ret != EOK) {
@@ -462,6 +462,7 @@ int server_setup(const char *name, int flags,
     int watchdog_interval;
     pid_t my_pid;
     char *pidfile_name;
+    int cfg_debug_level = SSSDBG_INVALID;
 
     my_pid = getpid();
     ret = setpgid(my_pid, my_pid);
@@ -588,20 +589,20 @@ int server_setup(const char *name, int flags,
         /* set debug level if any in conf_entry */
         ret = confdb_get_int(ctx->confdb_ctx, conf_entry,
                              CONFDB_SERVICE_DEBUG_LEVEL,
-                             SSSDBG_UNRESOLVED,
-                             &debug_level);
+                             SSSDBG_INVALID,
+                             &cfg_debug_level);
         if (ret != EOK) {
             DEBUG(SSSDBG_FATAL_FAILURE, "Error reading from confdb (%d) "
                                          "[%s]\n", ret, strerror(ret));
             return ret;
         }
 
-        if (debug_level == SSSDBG_UNRESOLVED) {
+        if (cfg_debug_level == SSSDBG_INVALID) {
             /* Check for the `debug` alias */
             ret = confdb_get_int(ctx->confdb_ctx, conf_entry,
                     CONFDB_SERVICE_DEBUG_LEVEL_ALIAS,
                     SSSDBG_DEFAULT,
-                    &debug_level);
+                    &cfg_debug_level);
             if (ret != EOK) {
                 DEBUG(SSSDBG_FATAL_FAILURE, "Error reading from confdb (%d) "
                                             "[%s]\n", ret, strerror(ret));
@@ -609,7 +610,7 @@ int server_setup(const char *name, int flags,
             }
         }
 
-        debug_level = debug_convert_old_level(debug_level);
+        debug_level = debug_convert_old_level(cfg_debug_level);
     }
 
     /* same for debug timestamps */
@@ -678,6 +679,8 @@ int server_setup(const char *name, int flags,
             return ret;
         }
     }
+    DEBUG(SSSDBG_IMPORTANT_INFO,
+          "Starting with debug level = %#.4x\n", debug_level);
 
     /* Setup the internal watchdog */
     ret = confdb_get_int(ctx->confdb_ctx, conf_entry,

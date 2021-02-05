@@ -201,7 +201,7 @@ static void debug_printf(const char *format, ...)
 }
 
 #ifdef WITH_JOURNALD
-errno_t journal_send(const char *file,
+static errno_t journal_send(const char *file,
         long line,
         const char *function,
         int level,
@@ -250,7 +250,7 @@ errno_t journal_send(const char *file,
             "MESSAGE=%s", message,
             "PRIORITY=%i", LOG_DEBUG,
             "SSSD_DOMAIN=%s", domain,
-            "SSSD_PRG_NAME=%s", debug_prg_name,
+            "SSSD_PRG_NAME=sssd[%s]", debug_prg_name,
             "SSSD_DEBUG_LEVEL=%x", level,
             NULL);
     ret = -res;

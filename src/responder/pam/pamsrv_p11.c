@@ -425,7 +425,7 @@ bool may_do_cert_auth(struct pam_ctx *pctx, struct pam_data *pd)
         }
     }
     if (pctx->smartcard_services[c] == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE,
+        DEBUG(SSSDBG_CONF_SETTINGS,
               "Smartcard authentication for service [%s] not supported.\n",
               pd->service);
         return false;
@@ -727,6 +727,7 @@ struct tevent_req *pam_check_cert_send(TALLOC_CTX *mem_ctx,
     const char *module_name = NULL;
     const char *token_name = NULL;
     const char *key_id = NULL;
+    const char *label = NULL;
 
     req = tevent_req_create(mem_ctx, &state, struct pam_check_cert_state);
     if (req == NULL) {
@@ -766,7 +767,8 @@ struct tevent_req *pam_check_cert_send(TALLOC_CTX *mem_ctx,
     if (sss_authtok_get_type(pd->authtok) == SSS_AUTHTOK_TYPE_SC_PIN
             || sss_authtok_get_type(pd->authtok) == SSS_AUTHTOK_TYPE_SC_KEYPAD) {
         ret = sss_authtok_get_sc(pd->authtok, NULL, NULL, &token_name, NULL,
-                                 &module_name, NULL, &key_id, NULL);
+                                 &module_name, NULL, &key_id, NULL,
+                                 &label, NULL);
         if (ret != EOK) {
             DEBUG(SSSDBG_OP_FAILURE, "sss_authtok_get_sc failed.\n");
             goto done;
@@ -783,6 +785,10 @@ struct tevent_req *pam_check_cert_send(TALLOC_CTX *mem_ctx,
         if (key_id != NULL && *key_id != '\0') {
             extra_args[arg_c++] = key_id;
             extra_args[arg_c++] = "--key_id";
+        }
+        if (label != NULL && *label != '\0') {
+            extra_args[arg_c++] = label;
+            extra_args[arg_c++] = "--label";
         }
     }
 
@@ -804,7 +810,7 @@ struct tevent_req *pam_check_cert_send(TALLOC_CTX *mem_ctx,
     } else if (pd->cmd == SSS_PAM_PREAUTH) {
         extra_args[arg_c++] = "--pre";
     } else {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Unexpected PAM command [%d}.\n", pd->cmd);
+        DEBUG(SSSDBG_CRIT_FAILURE, "Unexpected PAM command [%d].\n", pd->cmd);
         ret = EINVAL;
         goto done;
     }
@@ -1080,11 +1086,13 @@ static errno_t pack_cert_data(TALLOC_CTX *mem_ctx, const char *sysdb_username,
     const char *token_name;
     const char *module_name;
     const char *key_id;
+    const char *label;
     char *prompt;
     size_t user_len;
     size_t token_len;
     size_t module_len;
     size_t key_id_len;
+    size_t label_len;
     size_t prompt_len;
     size_t nss_name_len;
     const char *username = "";
@@ -1107,16 +1115,18 @@ static errno_t pack_cert_data(TALLOC_CTX *mem_ctx, const char *sysdb_username,
     token_name = sss_cai_get_token_name(cert_info);
     module_name = sss_cai_get_module_name(cert_info);
     key_id = sss_cai_get_key_id(cert_info);
+    label = sss_cai_get_label(cert_info);
 
     user_len = strlen(username) + 1;
     token_len = strlen(token_name) + 1;
     module_len = strlen(module_name) + 1;
     key_id_len = strlen(key_id) + 1;
+    label_len = strlen(label) + 1;
     prompt_len = strlen(prompt) + 1;
     nss_name_len = strlen(nss_username) +1;
 
-    msg_len = user_len + token_len + module_len + key_id_len + prompt_len
-                       + nss_name_len;
+    msg_len = user_len + token_len + module_len + key_id_len + label_len
+                       + prompt_len + nss_name_len;
 
     msg = talloc_zero_size(mem_ctx, msg_len);
     if (msg == NULL) {
@@ -1130,8 +1140,11 @@ static errno_t pack_cert_data(TALLOC_CTX *mem_ctx, const char *sysdb_username,
     memcpy(msg + user_len + token_len, module_name, module_len);
     memcpy(msg + user_len + token_len + module_len, key_id, key_id_len);
     memcpy(msg + user_len + token_len + module_len + key_id_len,
+           label, label_len);
+    memcpy(msg + user_len + token_len + module_len + key_id_len + label_len,
            prompt, prompt_len);
-    memcpy(msg + user_len + token_len + module_len + key_id_len + prompt_len,
+    memcpy(msg + user_len + token_len + module_len + key_id_len + label_len
+               + prompt_len,
            nss_username, nss_name_len);
     talloc_free(prompt);
 

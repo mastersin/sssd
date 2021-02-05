@@ -974,6 +974,13 @@ static void cache_req_search_domains_done(struct tevent_req *subreq)
     case ERR_ID_OUTSIDE_RANGE:
     case ENOENT:
         if (state->check_next == false) {
+            if (state->cr->data->propogate_offline_status && !state->dp_success) {
+                /* Not found and data provider request failed so we were
+                 * unable to fetch the data. */
+                ret = ERR_OFFLINE;
+                goto done;
+            }
+
             /* Not found. */
             ret = ENOENT;
             goto done;
@@ -1002,6 +1009,12 @@ done:
     case EAGAIN:
         break;
     default:
+        if (ret == ENOENT && state->cr->data->propogate_offline_status
+                && !state->dp_success) {
+            /* Not found and data provider request failed so we were
+             * unable to fetch the data. */
+            ret = ERR_OFFLINE;
+        }
         tevent_req_error(req, ret);
         break;
     }
@@ -1174,7 +1187,7 @@ static errno_t cache_req_process_input(TALLOC_CTX *mem_ctx,
     subreq = sss_parse_inp_send(mem_ctx, cr->rctx, default_domain,
                                 cr->data->name.input);
     if (subreq == NULL) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to create tevent request!\n");
+        DEBUG(SSSDBG_CRIT_FAILURE, "sss_parse_inp_send() failed\n");
         return ENOMEM;
     }
 

@@ -75,6 +75,10 @@
 #define MAX(a, b)  (((a) > (b)) ? (a) : (b))
 #endif
 
+#ifndef ALLPERMS
+#define ALLPERMS (S_ISUID|S_ISGID|S_ISVTX|S_IRWXU|S_IRWXG|S_IRWXO)/* 07777 */
+#endif
+
 #define SSSD_MAIN_OPTS SSSD_DEBUG_OPTS
 
 #define SSSD_SERVER_OPTS(uid, gid) \
@@ -527,6 +531,8 @@ int domain_to_basedn(TALLOC_CTX *memctx, const char *domain, char **basedn);
 
 bool is_host_in_domain(const char *host, const char *domain);
 
+bool is_valid_domain_name(const char *domain);
+
 /* This is simple wrapper around libc rand() intended to avoid calling srand()
  * explicitly, thus *not* suitable to be used in security relevant context.
  * If CS properties are desired (security relevant functionality/FIPS/etc) then
@@ -565,7 +571,11 @@ struct sss_domain_info *get_domains_head(struct sss_domain_info *domain);
 
 #define SSS_GND_DESCEND 0x01
 #define SSS_GND_INCLUDE_DISABLED 0x02
+/* Descend to sub-domains of current domain but do not go to next parent */
+#define SSS_GND_SUBDOMAINS 0x04
 #define SSS_GND_ALL_DOMAINS (SSS_GND_DESCEND | SSS_GND_INCLUDE_DISABLED)
+#define SSS_GND_ALL_SUBDOMAINS (SSS_GND_SUBDOMAINS | SSS_GND_INCLUDE_DISABLED)
+
 struct sss_domain_info *get_next_domain(struct sss_domain_info *domain,
                                         uint32_t gnd_flags);
 struct sss_domain_info *find_domain_by_name(struct sss_domain_info *domain,

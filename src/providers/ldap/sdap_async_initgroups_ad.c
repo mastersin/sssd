@@ -378,7 +378,7 @@ static void sdap_ad_resolve_sids_done(struct tevent_req *subreq)
         /* Group was not found, we will ignore the error and continue with
          * next group. This may happen for example if the group is built-in,
          * but a custom search base is provided. */
-        DEBUG(SSSDBG_CRIT_FAILURE,
+        DEBUG(SSSDBG_MINOR_FAILURE,
               "Unable to resolve SID %s - will try next sid.\n",
               state->current_sid);
     } else if (ret != EOK || sdap_error != EOK || dp_error != DP_ERR_OK) {
@@ -1210,7 +1210,7 @@ sdap_ad_get_domain_local_groups_send(TALLOC_CTX *mem_ctx,
     state->groups = groups;
     state->num_groups = num_groups;
 
-    ret = sss_hash_create(state, 32, &state->group_hash);
+    ret = sss_hash_create(state, 0, &state->group_hash);
     if (ret != EOK) {
         DEBUG(SSSDBG_OP_FAILURE, "sss_hash_create failed.\n");
         goto fail;

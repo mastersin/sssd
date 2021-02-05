@@ -84,7 +84,7 @@ cache_req_autofs_entry_by_name_dp_send(TALLOC_CTX *mem_ctx,
 
     return sbus_call_dp_autofs_GetEntry_send(mem_ctx, be_conn->conn,
                                              be_conn->bus_name, SSS_BUS_PATH,
-                                             DP_FAST_REPLY, data->name.name,
+                                             0, data->name.name,
                                              data->autofs_entry_name);
 }
 
@@ -92,7 +92,15 @@ bool
 cache_req_autofs_entry_by_name_dp_recv(struct tevent_req *subreq,
                                        struct cache_req *cr)
 {
-    return sbus_call_dp_autofs_GetEntry_recv(subreq) == EOK;
+    errno_t ret;
+
+    ret = sbus_call_dp_autofs_GetEntry_recv(subreq);
+
+    if (ret == ERR_MISSING_DP_TARGET) {
+        ret = EOK;
+    }
+
+    return ret == EOK;
 }
 
 const struct cache_req_plugin cache_req_autofs_entry_by_name = {
@@ -141,6 +149,8 @@ cache_req_autofs_entry_by_name_send(TALLOC_CTX *mem_ctx,
     if (data == NULL) {
         return NULL;
     }
+
+    cache_req_data_set_propogate_offline_status(data, true);
 
     return cache_req_steal_data_and_send(mem_ctx, ev, rctx, ncache,
                                          cache_refresh_percent,

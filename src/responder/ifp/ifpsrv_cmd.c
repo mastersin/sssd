@@ -130,7 +130,8 @@ static void ifp_user_get_attr_done(struct tevent_req *subreq)
     }
 
     if (state->search_type == SSS_DP_USER) {
-        /* throw away the result and perform attr search */
+        /* throw away the result but keep the fqdn and perform attr search */
+        fqdn = talloc_steal(state, fqdn);
         talloc_zfree(state->res);
 
         ret = sysdb_get_user_attr_with_views(state, state->dom, fqdn,

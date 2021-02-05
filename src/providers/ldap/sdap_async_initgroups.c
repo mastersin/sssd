@@ -345,7 +345,7 @@ int sdap_initgr_common_store(struct sysdb_ctx *sysdb,
                                          add_groups, ldap_groups,
                                          ldap_groups_count);
         if (ret != EOK) {
-            DEBUG(SSSDBG_CRIT_FAILURE, "Adding incomplete users failed\n");
+            DEBUG(SSSDBG_CRIT_FAILURE, "Adding incomplete groups failed\n");
             goto done;
         }
     }
@@ -1043,6 +1043,10 @@ static void sdap_initgr_nested_search(struct tevent_req *subreq)
         state->groups[state->groups_cur] = talloc_steal(state->groups,
                                                         groups[0]);
         state->groups_cur++;
+    } else if (count == 0) {
+        /* this might be HBAC or sudo rule */
+        DEBUG(SSSDBG_FUNC_DATA, "Object %s not found. Skipping\n",
+              state->group_dns[state->cur]);
     } else {
         DEBUG(SSSDBG_OP_FAILURE,
               "Search for group %s, returned %zu results. Skipping\n",
@@ -1628,7 +1632,7 @@ static struct tevent_req *sdap_initgr_rfc2307bis_send(
         goto done;
     }
 
-    ret = sss_hash_create(state, 32, &state->group_hash);
+    ret = sss_hash_create(state, 0, &state->group_hash);
     if (ret != EOK) {
         talloc_free(req);
         return NULL;

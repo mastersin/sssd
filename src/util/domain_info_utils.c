@@ -39,16 +39,20 @@ struct sss_domain_info *get_next_domain(struct sss_domain_info *domain,
                                         uint32_t gnd_flags)
 {
     struct sss_domain_info *dom;
-    bool descend = gnd_flags & SSS_GND_DESCEND;
+    bool descend = gnd_flags & (SSS_GND_DESCEND | SSS_GND_SUBDOMAINS);
     bool include_disabled = gnd_flags & SSS_GND_INCLUDE_DISABLED;
+    bool only_subdomains = gnd_flags & SSS_GND_SUBDOMAINS;
 
     dom = domain;
     while (dom) {
         if (descend && dom->subdomains) {
             dom = dom->subdomains;
-        } else if (dom->next) {
+        } else if (dom->next && only_subdomains && IS_SUBDOMAIN(dom)) {
             dom = dom->next;
-        } else if (descend && IS_SUBDOMAIN(dom) && dom->parent->next) {
+        } else if (dom->next && !only_subdomains) {
+            dom = dom->next;
+        } else if (descend && !only_subdomains && IS_SUBDOMAIN(dom)
+                            && dom->parent->next) {
             dom = dom->parent->next;
         } else {
             dom = NULL;
@@ -203,7 +207,7 @@ find_domain_by_object_name_ex(struct sss_domain_info *domain,
     ret = sss_parse_internal_fqname(tmp_ctx, object_name,
                                     NULL, &domainname);
     if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to parse name '%s' [%d]: %s\n",
+        DEBUG(SSSDBG_MINOR_FAILURE, "Unable to parse name '%s' [%d]: %s\n",
                                     object_name, ret, sss_strerror(ret));
         goto done;
     }

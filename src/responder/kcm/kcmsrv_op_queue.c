@@ -23,8 +23,6 @@
 #include "util/util_creds.h"
 #include "responder/kcm/kcmsrv_pvt.h"
 
-#define QUEUE_HASH_SIZE      32
-
 struct kcm_ops_queue_entry {
     struct tevent_req *req;
 
@@ -68,7 +66,7 @@ struct kcm_ops_queue_ctx *kcm_ops_queue_create(TALLOC_CTX *mem_ctx,
         return NULL;
     }
 
-    ret = sss_hash_create_ex(mem_ctx, QUEUE_HASH_SIZE,
+    ret = sss_hash_create_ex(mem_ctx, 0,
                              &queue_ctx->wait_queue_hash, 0, 0, 0, 0,
                              NULL, NULL);
     if (ret != EOK) {
@@ -122,14 +120,11 @@ static int kcm_op_queue_entry_destructor(struct kcm_ops_queue_entry *entry)
 {
     struct kcm_ops_queue_entry *next_entry;
     struct tevent_immediate *imm;
-    bool terminating;
-
-    terminating = entry->queue->qctx->kctx->rctx->shutting_down;
 
     if (entry == NULL) {
         return 1;
     /* Prevent use-after-free of req when shutting down with non-empty queue */
-    } else if (terminating) {
+    } else if (entry->queue->qctx->kctx->rctx->shutting_down) {
         return 0;
     }
 

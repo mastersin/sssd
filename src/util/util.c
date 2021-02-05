@@ -234,7 +234,7 @@ errno_t diff_string_lists(TALLOC_CTX *memctx,
         list2 = _list2;
     }
 
-    error = hash_create(10, &table, NULL, NULL);
+    error = hash_create(0, &table, NULL, NULL);
     if (error != HASH_SUCCESS) {
         talloc_free(tmp_ctx);
         return EIO;
@@ -1048,4 +1048,21 @@ errno_t sss_canonicalize_ip_address(TALLOC_CTX *mem_ctx,
     }
 
     return EOK;
+}
+
+/* According to the https://tools.ietf.org/html/rfc2181#section-11.
+ * practically no restrictions are imposed to a domain name per se.
+ *
+ * But since SSSD uses this name as a part of log file name,
+ * it is still required to avoid '/' as a safety measure.
+ */
+bool is_valid_domain_name(const char *domain)
+{
+    if (strchr(domain, '/') != NULL) {
+        DEBUG(SSSDBG_CRIT_FAILURE,
+              "Forbidden symbol '/' in the domain name '%s'\n", domain);
+        return false;
+    }
+
+    return true;
 }

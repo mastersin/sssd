@@ -51,6 +51,7 @@
 #define ONLINE_CB_RETRY 3
 #define ONLINE_CB_RETRY_MAX_DELAY 4
 
+#define OFFLINE_TIMEOUT_RANDOM_OFFSET 30
 #define OFFLINE_TIMEOUT_DEFAULT 60
 #define OFFLINE_TIMEOUT_MAX_DEFAULT 3600
 
@@ -152,9 +153,13 @@ void be_mark_offline(struct be_ctx *ctx)
         offline_timeout = get_offline_timeout(ctx);
         offline_timeout_max = get_offline_timeout_max(ctx);
 
-        ret = be_ptask_create_sync(ctx, ctx,
-                                   offline_timeout, offline_timeout,
-                                   offline_timeout, 30, offline_timeout,
+        ret = be_ptask_create_sync(ctx,
+                                   ctx,
+                                   offline_timeout,
+                                   offline_timeout,
+                                   offline_timeout,
+                                   OFFLINE_TIMEOUT_RANDOM_OFFSET,
+                                   offline_timeout,
                                    offline_timeout_max,
                                    try_to_go_online,
                                    ctx, "Check if online (periodic)",
@@ -402,7 +407,7 @@ static void check_if_online(struct be_ctx *be_ctx, int delay)
                                   check_if_online_delayed, be_ctx);
 
     if (time_event == NULL) {
-        DEBUG(SSSDBG_OP_FAILURE,
+        DEBUG(SSSDBG_CRIT_FAILURE,
               "Scheduling check_if_online_delayed failed.\n");
         goto failed;
     }
@@ -415,7 +420,6 @@ static void check_if_online(struct be_ctx *be_ctx, int delay)
 
 failed:
     be_ctx->check_online_ref_count--;
-    DEBUG(SSSDBG_CRIT_FAILURE, "Failed to run a check_online test.\n");
 
     if (be_ctx->check_online_ref_count == 0) {
         reset_fo(be_ctx);
@@ -561,7 +565,15 @@ errno_t be_process_init(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    req = dp_init_send(be_ctx, be_ctx->ev, be_ctx, be_ctx->uid, be_ctx->gid);
+    be_ctx->sbus_name = sss_iface_domain_bus(be_ctx, be_ctx->domain);
+    if (be_ctx->sbus_name == NULL) {
+        DEBUG(SSSDBG_FATAL_FAILURE, "Could not get sbus backend name.\n");
+        ret = ENOMEM;
+        goto done;
+    }
+
+    req = dp_init_send(be_ctx, be_ctx->ev, be_ctx, be_ctx->uid, be_ctx->gid,
+                       be_ctx->sbus_name);
     if (req == NULL) {
         ret = ENOMEM;
         goto done;
@@ -608,7 +620,7 @@ static void dp_initialized(struct tevent_req *req)
 
     be_ctx = tevent_req_callback_data(req, struct be_ctx);
 
-    ret = dp_init_recv(be_ctx, req, &be_ctx->sbus_name);
+    ret = dp_init_recv(be_ctx, req);
     talloc_zfree(req);
     if (ret !=  EOK) {
         goto done;
@@ -624,7 +636,7 @@ static void dp_initialized(struct tevent_req *req)
 
     ret = be_register_monitor_iface(be_ctx->mon_conn, be_ctx);
     if (ret != EOK) {
-        DEBUG(SSSDBG_CRIT_FAILURE, "Unable to register monitor interface "
+        DEBUG(SSSDBG_FATAL_FAILURE, "Unable to register monitor interface "
               "[%d]: %s\n", ret, sss_strerror(ret));
         goto done;
     }
@@ -718,6 +730,10 @@ int main(int argc, const char *argv[])
         fprintf(stderr, "\nMissing option, --domain is a mandatory option.\n\n");
             poptPrintUsage(pc, stderr, 0);
             return 1;
+    }
+    if (!is_valid_domain_name(be_domain)) {
+        fprintf(stderr, "\nInvalid --domain option.\n\n");
+        return 1;
     }
 
     poptFreeContext(pc);
